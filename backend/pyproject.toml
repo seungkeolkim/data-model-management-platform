@@ -1,0 +1,104 @@
+[project]
+name = "mlplatform-backend"
+version = "0.1.0"
+description = "데이터 관리 & 학습 자동화 플랫폼 - Backend"
+requires-python = ">=3.11"
+
+dependencies = [
+    # -------------------------------------------------------------------------
+    # Web Framework
+    # -------------------------------------------------------------------------
+    "fastapi>=0.111.0",
+    "uvicorn[standard]>=0.29.0",
+
+    # -------------------------------------------------------------------------
+    # Database
+    # -------------------------------------------------------------------------
+    "sqlalchemy[asyncio]>=2.0.30",
+    "asyncpg>=0.29.0",          # async PostgreSQL driver
+    "psycopg2-binary>=2.9.9",   # sync driver (Alembic, Celery용)
+    "alembic>=1.13.1",
+
+    # -------------------------------------------------------------------------
+    # Validation & Settings
+    # -------------------------------------------------------------------------
+    "pydantic>=2.7.0",
+    "pydantic-settings>=2.3.0",
+    "python-multipart>=0.0.9",
+
+    # -------------------------------------------------------------------------
+    # Task Queue
+    # -------------------------------------------------------------------------
+    "celery>=5.4.0",
+    "sqlalchemy-celery-beat>=0.9.0",  # DB 기반 스케줄러 (선택)
+
+    # -------------------------------------------------------------------------
+    # Image Processing
+    # -------------------------------------------------------------------------
+    "opencv-python-headless>=4.9.0",
+    "Pillow>=10.3.0",
+    "numpy>=1.26.0",
+
+    # -------------------------------------------------------------------------
+    # Data Processing
+    # -------------------------------------------------------------------------
+    "pycocotools>=2.0.7",       # COCO 포맷 처리
+    "pandas>=2.2.0",            # EDA 통계
+
+    # -------------------------------------------------------------------------
+    # Config
+    # -------------------------------------------------------------------------
+    "python-dotenv>=1.0.0",
+    "configparser>=5.3.0",
+
+    # -------------------------------------------------------------------------
+    # Utilities
+    # -------------------------------------------------------------------------
+    "python-jose[cryptography]>=3.3.0",  # JWT (향후 인증)
+    "httpx>=0.27.0",            # 비동기 HTTP 클라이언트
+    "tenacity>=8.3.0",          # 재시도 로직
+    "structlog>=24.2.0",        # 구조화 로깅
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=5.0.0",
+    "httpx>=0.27.0",           # TestClient용
+    "factory-boy>=3.3.0",      # 테스트 픽스처
+    "ruff>=0.4.0",              # 린터 + 포맷터
+    "mypy>=1.10.0",
+    "pre-commit>=3.7.0",
+]
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=8.2.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=5.0.0",
+    "httpx>=0.27.0",
+    "ruff>=0.4.0",
+    "mypy>=1.10.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B"]
+ignore = ["B008"]  # FastAPI Depends() 패턴 허용
+
+[tool.mypy]
+python_version = "3.11"
+strict = false
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

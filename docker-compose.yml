@@ -1,0 +1,253 @@
+# =============================================================================
+# ML Platform - Docker Compose
+# 
+# 사용법:
+#   개발: docker compose up -d
+#   중단: docker compose down
+#   로그: docker compose logs -f [service]
+#   재빌드: docker compose up -d --build [service]
+#
+# Phase별 서비스 활성화 상태:
+#   Phase 0~1: postgres, backend, frontend, nginx  ← 현재 활성
+#   Phase 2:   celery-worker 주석 해제
+#   Phase 5:   mlflow 주석 해제
+#   2차 이후:  prometheus, grafana 주석 해제
+# =============================================================================
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL - 메타데이터 DB + Celery broker/backend 통합
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: mlplatform-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mlplatform}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mlplatform_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-mlplatform}
+      # 성능 튜닝 (운영 환경에 맞게 조정)
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    volumes:
+      # 옵션 A (기본): Docker named volume - 이식성 높음
+      - postgres_data:/var/lib/postgresql/data
+      # 옵션 B: 호스트 경로 직접 마운트 - 백업/직접접근 편함
+      # 아래 주석 해제 후 옵션 A 주석처리하여 전환
+      # - ${POSTGRES_DATA_DIR:-./data/postgres}:/var/lib/postgresql/data
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      # 개발 시 외부 접근용 (운영 시 주석처리 권장)
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mlplatform} -d ${POSTGRES_DB:-mlplatform}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - mlplatform-net
+
+  # ---------------------------------------------------------------------------
+  # Backend - FastAPI 애플리케이션
+  # ---------------------------------------------------------------------------
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: development  # 운영 시: production
+    container_name: mlplatform-backend
+    restart: unless-stopped
+    environment:
+      # .env 파일에서 주입
+      DATABASE_URL: ${DATABASE_URL}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND}
+      STORAGE_BACKEND: ${STORAGE_BACKEND:-local}
+      LOCAL_STORAGE_BASE: /mnt/datasets   # 컨테이너 내부 경로 (고정)
+      LOCAL_EDA_BASE: /mnt/eda            # 컨테이너 내부 경로 (고정)
+      APP_ENV: ${APP_ENV:-development}
+      APP_DEBUG: ${APP_DEBUG:-true}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-key}
+    volumes:
+      # NAS 마운트 (호스트 경로는 .env의 LOCAL_STORAGE_BASE)
+      - ${LOCAL_STORAGE_BASE:-./data/datasets}:/mnt/datasets
+      - ${LOCAL_EDA_BASE:-./data/eda}:/mnt/eda
+      # 개발 시 소스코드 hot reload
+      - ./backend:/app
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - mlplatform-net
+    command: >
+      sh -c "
+        echo 'Waiting for DB...' &&
+        python -m alembic upgrade head &&
+        echo 'DB migration done' &&
+        uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+      "
+
+  # ---------------------------------------------------------------------------
+  # Celery Worker - 비동기 파이프라인/EDA 작업 처리
+  # Phase 2에서 활성화: 아래 전체 주석 해제
+  # ---------------------------------------------------------------------------
+  # celery-worker:
+  #   build:
+  #     context: ./backend
+  #     dockerfile: Dockerfile
+  #     target: development
+  #   container_name: mlplatform-celery
+  #   restart: unless-stopped
+  #   environment:
+  #     DATABASE_URL: ${DATABASE_URL}
+  #     CELERY_BROKER_URL: ${CELERY_BROKER_URL}
+  #     CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND}
+  #     STORAGE_BACKEND: ${STORAGE_BACKEND:-local}
+  #     LOCAL_STORAGE_BASE: /mnt/datasets
+  #     LOCAL_EDA_BASE: /mnt/eda
+  #     APP_ENV: ${APP_ENV:-development}
+  #   volumes:
+  #     - ${LOCAL_STORAGE_BASE:-./data/datasets}:/mnt/datasets
+  #     - ${LOCAL_EDA_BASE:-./data/eda}:/mnt/eda
+  #     - ./backend:/app
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #   networks:
+  #     - mlplatform-net
+  #   command: >
+  #     celery -A app.tasks.celery_app worker
+  #       --loglevel=info
+  #       --concurrency=4
+  #       --queues=pipeline,eda,default
+  #   # GPU 접근이 필요한 경우 (2차 이후):
+  #   # deploy:
+  #   #   resources:
+  #   #     reservations:
+  #   #       devices:
+  #   #         - driver: nvidia
+  #   #           count: all
+  #   #           capabilities: [gpu]
+
+  # ---------------------------------------------------------------------------
+  # Frontend - React (개발 서버)
+  # 운영 시: Nginx가 빌드 결과물을 static으로 서빙
+  # ---------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: development
+    container_name: mlplatform-frontend
+    restart: unless-stopped
+    environment:
+      VITE_API_BASE_URL: /api/v1
+      NODE_ENV: development
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules  # node_modules는 컨테이너 내부 유지
+    ports:
+      - "5173:5173"
+    networks:
+      - mlplatform-net
+    command: npm run dev -- --host 0.0.0.0
+
+  # ---------------------------------------------------------------------------
+  # Nginx - 리버스 프록시
+  # /api/*  → backend:8000
+  # /static/* → NAS 직접 서빙
+  # /*      → frontend:5173 (개발) or static files (운영)
+  # ---------------------------------------------------------------------------
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: mlplatform-nginx
+    restart: unless-stopped
+    volumes:
+      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./infra/nginx/conf.d:/etc/nginx/conf.d:ro
+      # NAS 파일 직접 서빙 (샘플 이미지 등)
+      - ${LOCAL_STORAGE_BASE:-./data/datasets}:/mnt/datasets:ro
+      - ${LOCAL_EDA_BASE:-./data/eda}:/mnt/eda:ro
+    ports:
+      - "80:80"
+      # HTTPS 설정 시 (운영):
+      # - "443:443"
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - mlplatform-net
+
+  # ---------------------------------------------------------------------------
+  # MLflow - 실험 추적 서버
+  # Phase 5에서 활성화: 아래 전체 주석 해제
+  # ---------------------------------------------------------------------------
+  # mlflow:
+  #   image: ghcr.io/mlflow/mlflow:v2.14.1
+  #   container_name: mlplatform-mlflow
+  #   restart: unless-stopped
+  #   environment:
+  #     MLFLOW_BACKEND_STORE_URI: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+  #     MLFLOW_DEFAULT_ARTIFACT_ROOT: /mnt/mlflow-artifacts
+  #   volumes:
+  #     - ${LOCAL_STORAGE_BASE:-./data/datasets}/../mlflow-artifacts:/mnt/mlflow-artifacts
+  #   ports:
+  #     - "5000:5000"
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #   networks:
+  #     - mlplatform-net
+  #   command: >
+  #     mlflow server
+  #       --backend-store-uri postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+  #       --default-artifact-root /mnt/mlflow-artifacts
+  #       --host 0.0.0.0
+  #       --port 5000
+
+  # ---------------------------------------------------------------------------
+  # Prometheus + Grafana (2차 이후 활성화)
+  # ---------------------------------------------------------------------------
+  # prometheus:
+  #   image: prom/prometheus:v2.52.0
+  #   container_name: mlplatform-prometheus
+  #   volumes:
+  #     - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+  #     - prometheus_data:/prometheus
+  #   ports:
+  #     - "9090:9090"
+  #   networks:
+  #     - mlplatform-net
+  #
+  # grafana:
+  #   image: grafana/grafana:10.4.0
+  #   container_name: mlplatform-grafana
+  #   environment:
+  #     GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+  #   volumes:
+  #     - grafana_data:/var/lib/grafana
+  #     - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+  #   ports:
+  #     - "3000:3000"
+  #   networks:
+  #     - mlplatform-net
+
+# =============================================================================
+# Volumes
+# =============================================================================
+volumes:
+  postgres_data:
+    name: mlplatform-postgres-data
+  # prometheus_data:  # 2차 이후 활성화
+  # grafana_data:     # 2차 이후 활성화
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  mlplatform-net:
+    name: mlplatform-net
+    driver: bridge
