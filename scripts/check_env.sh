@@ -88,11 +88,12 @@ if [[ -f "${ENV_FILE}" ]]; then
     required_vars=(
         "POSTGRES_USER"
         "POSTGRES_PASSWORD"
-        "DATABASE_URL"
-        "CELERY_BROKER_URL"
-        "CELERY_RESULT_BACKEND"
+        "POSTGRES_DB"
+        "POSTGRES_HOST"
+        "POSTGRES_PORT"
         "STORAGE_BACKEND"
         "LOCAL_STORAGE_BASE"
+        "LOCAL_EDA_BASE"
     )
     
     for var in "${required_vars[@]}"; do

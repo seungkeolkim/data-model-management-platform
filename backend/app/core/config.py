@@ -39,20 +39,13 @@ class Settings(BaseSettings):
     )
 
     # -------------------------------------------------------------------------
-    # PostgreSQL
+    # PostgreSQL 개별 접속 정보 (.env에서 이 값들만 수정하면 됨)
     # -------------------------------------------------------------------------
     postgres_user: str = "mlplatform"
     postgres_password: str = "mlplatform_secret"
     postgres_db: str = "mlplatform"
     postgres_host: str = "postgres"
     postgres_port: int = 5432
-
-    # FastAPI용 async URL
-    database_url: str = "postgresql+asyncpg://mlplatform:mlplatform_secret@postgres:5432/mlplatform"
-
-    # Celery용 sync URL
-    celery_broker_url: str = "db+postgresql://mlplatform:mlplatform_secret@postgres:5432/mlplatform"
-    celery_result_backend: str = "db+postgresql://mlplatform:mlplatform_secret@postgres:5432/mlplatform"
 
     # -------------------------------------------------------------------------
     # 스토리지
@@ -103,6 +96,31 @@ class Settings(BaseSettings):
         if isinstance(v, str):
             return [origin.strip() for origin in v.split(",")]
         return v
+
+    # -------------------------------------------------------------------------
+    # DB URL 자동 조립 (개별 postgres_* 값으로 생성, .env에서 중복 없음)
+    # -------------------------------------------------------------------------
+
+    @property
+    def database_url(self) -> str:
+        """FastAPI용 async PostgreSQL URL."""
+        return (
+            f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}"
+            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+        )
+
+    @property
+    def celery_broker_url(self) -> str:
+        """Celery broker URL (PostgreSQL, db+ prefix 필수)."""
+        return (
+            f"db+postgresql://{self.postgres_user}:{self.postgres_password}"
+            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+        )
+
+    @property
+    def celery_result_backend(self) -> str:
+        """Celery result backend URL."""
+        return self.celery_broker_url
 
     @property
     def is_development(self) -> bool:
