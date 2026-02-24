@@ -22,9 +22,9 @@ NC='\033[0m'
 PASS=0
 FAIL=0
 
-check_ok()   { echo -e "${GREEN}[✓]${NC} $*"; ((PASS++)); }
+check_ok()   { echo -e "${GREEN}[✓]${NC} $*"; PASS=$((PASS + 1)); }
 check_warn() { echo -e "${YELLOW}[!]${NC} $*"; }
-check_fail() { echo -e "${RED}[✗]${NC} $*"; ((FAIL++)); }
+check_fail() { echo -e "${RED}[✗]${NC} $*"; FAIL=$((FAIL + 1)); }
 
 echo ""
 echo "========================================================"
@@ -194,4 +194,4 @@ fi
 echo "========================================================"
 echo ""
 
-exit ${FAIL}
+exit $([[ ${FAIL} -eq 0 ]] && echo 0 || echo 1)

@@ -8,19 +8,25 @@ Phase 0(인프라) 구축 완료 상태.
 ## 빠른 시작
 
 ```bash
-# 1. 환경 파일 복사 및 수정
+# 1. 저장소 클론
+git clone https://github.com/seungkeolkim/data-model-management-platform.git
+cd data-model-management-platform
+
+# 2. 환경 파일 복사 및 수정
 cp .env.example .env
-# .env에서 POSTGRES_PASSWORD, LOCAL_STORAGE_BASE 등 수정
+# .env에서 아래 항목 확인/수정:
+#   LOCAL_STORAGE_BASE  ← NAS 마운트 경로 (개발: ./data/datasets)
+#   LOCAL_EDA_BASE      ← EDA 저장 경로  (개발: ./data/eda)
+#   POSTGRES_PASSWORD   ← DB 비밀번호
+#   SECRET_KEY          ← 랜덤 시크릿 키
 
-# 2. 환경 검사
-make check
+# 3. 환경 사전 검사
+./scripts/check_env.sh
 
-# 3. 서비스 시작
-make up
+# 4. 서비스 시작
+docker compose up -d
 
-# 4. 헬스체크
-make health
-# 또는
+# 5. 헬스체크
 curl http://localhost/health
 ```
 
@@ -28,6 +34,14 @@ curl http://localhost/health
 - **웹 UI**: http://localhost
 - **API 문서**: http://localhost/api/docs
 - **ReDoc**: http://localhost/api/redoc
+
+> **Makefile 사용 시** (make 설치 필요)
+> ```bash
+> make check   # 환경 검사
+> make up      # 서비스 시작
+> make health  # 헬스체크
+> make help    # 전체 명령어
+> ```
 
 ---
 
