@@ -77,6 +77,8 @@ services:
       - ${LOCAL_EDA_BASE:-./data/eda}:/mnt/eda
       # 개발 시 소스코드 hot reload
       - ./backend:/app
+      # .venv를 named volume으로 분리 → 호스트 마운트로 덮어써지지 않게 보호
+      - backend_venv:/app/.venv
     ports:
       - "${APP_PORT:-8000}:8000"
     depends_on:
@@ -87,9 +89,9 @@ services:
     command: >
       sh -c "
         echo 'Waiting for DB...' &&
-        python -m alembic upgrade head &&
+        /app/.venv/bin/alembic upgrade head &&
         echo 'DB migration done' &&
-        uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+        /app/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
       "
 
   # ---------------------------------------------------------------------------
@@ -245,6 +247,8 @@ services:
 volumes:
   postgres_data:
     name: mlplatform-postgres-data
+  backend_venv:
+    name: mlplatform-backend-venv
   # prometheus_data:  # 2차 이후 활성화
   # grafana_data:     # 2차 이후 활성화
 
