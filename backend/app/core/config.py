@@ -10,7 +10,6 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # 프로젝트 루트 (config.ini 위치)
@@ -71,7 +70,10 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     app_port: int = 8000
 
-    cors_origins: list[str] = ["http://localhost:3000", "http://localhost:5173"]
+    # pydantic-settings v2는 list 필드에 JSON decode를 먼저 시도하므로
+    # 환경변수로 "http://a,http://b" 형태가 오면 파싱 에러 발생.
+    # str로 받아서 validator에서 분리하는 방식으로 우회.
+    cors_origins: str = "http://localhost:3000,http://localhost:5173"
     api_v1_prefix: str = "/api/v1"
     secret_key: str = "dev-secret-key-change-in-production"
 
@@ -90,12 +92,10 @@ class Settings(BaseSettings):
     # -------------------------------------------------------------------------
     mlflow_tracking_uri: str | None = None
 
-    @field_validator("cors_origins", mode="before")
-    @classmethod
-    def parse_cors(cls, v: str | list) -> list[str]:
-        if isinstance(v, str):
-            return [origin.strip() for origin in v.split(",")]
-        return v
+    @property
+    def cors_origins_list(self) -> list[str]:
+        """CORS origins를 리스트로 반환. CORSMiddleware에는 이 property 사용."""
+        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
     # -------------------------------------------------------------------------
     # DB URL 자동 조립 (개별 postgres_* 값으로 생성, .env에서 중복 없음)
