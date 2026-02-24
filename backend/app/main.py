@@ -31,7 +31,7 @@ app = FastAPI(
     version="0.1.0",
     docs_url="/api/docs",
     redoc_url="/api/redoc",
-    openapi_url="/api/openapi.json",
+    openapi_url="/openapi.json",   # Swagger UI가 root-relative로 요청하므로 루트에 등록
     lifespan=lifespan,
 )
 

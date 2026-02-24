@@ -24,7 +24,7 @@ cp .env.example .env
 ./scripts/check_env.sh
 
 # 4. 서비스 시작
-docker compose up -d
+docker compose up -d --build
 
 # 5. 헬스체크
 curl http://localhost/health
@@ -95,9 +95,12 @@ curl http://localhost/health
 
 ### `.env` (민감 정보)
 ```ini
-POSTGRES_PASSWORD=...          # DB 비밀번호
-DATABASE_URL=...               # FastAPI용 async DB URL
-CELERY_BROKER_URL=...          # Celery broker (PostgreSQL)
+# PostgreSQL 개별 변수만 설정하면 DATABASE_URL은 config.py에서 자동 조립
+POSTGRES_USER=mlplatform
+POSTGRES_PASSWORD=...          # 변경 포인트
+POSTGRES_DB=mlplatform
+POSTGRES_HOST=postgres
+POSTGRES_PORT=5432
 LOCAL_STORAGE_BASE=/mnt/nas/datasets  # NAS 마운트 경로 ← 변경 포인트
 LOCAL_EDA_BASE=/mnt/nas/eda
 SECRET_KEY=...
@@ -185,6 +188,9 @@ make help         # 전체 명령어 목록
 | GET | `/api/v1/datasets` | Dataset 목록 |
 | GET | `/api/v1/manipulators` | Manipulator 목록 |
 
+> 현재 라우터는 모두 stub 상태(`"Phase 1에서 구현 예정"` 응답).  
+> 실제 CRUD 구현은 Phase 1에서 진행.
+
 ---
 
 ## 기술 스택
@@ -194,6 +200,74 @@ make help         # 전체 명령어 목록
 - **Storage**: NAS 직접 마운트 (StorageClient 추상화로 향후 S3 전환 가능)
 - **Frontend**: React 18, TypeScript, Vite, Ant Design, TanStack Query, Zustand
 - **Infra**: Docker, Docker Compose, Nginx
+
+---
+
+## 현재 작업 내용 요약 (2026-02-24)
+
+### 수정된 파일
+
+| 파일 | 변경 내용 |
+|------|-----------|
+| `backend/app/main.py` | `openapi_url` 를 `/api/openapi.json` → `/openapi.json` 으로 변경 |
+| `infra/nginx/conf.d/default.conf` | `/openapi.json` 경로 백엔드 프록시 블록 추가 |
+
+### 버그 원인 및 수정 상세
+
+**증상**: `http://localhost/api/docs` 에서 502 Bad Gateway  
+**실제 동작**: `GET /api/docs` 는 200 OK, `GET /openapi.json` 은 404 → Swagger UI 화면 렌더링 실패  
+
+**원인**: FastAPI Swagger UI 는 `openapi_url` 을 HTML 내 스크립트에 삽입할 때
+root-relative URL 로 처리함. `openapi_url="/api/openapi.json"` 으로 설정하면
+브라우저가 `/openapi.json` 을 요청하고, nginx 에는 해당 경로 프록시가 없어 프론트엔드(Vite)로 넘어가 404가 발생.
+
+**수정 내용**:
+1. `main.py`: `openapi_url="/openapi.json"` (루트 등록)
+2. `nginx/default.conf`: `location /openapi.json` 블록 추가 → `backend:8000/openapi.json` 프록시
+
+---
+
+## TODO (다음 작업 항목)
+
+### 🔴 즉시 필요 (Phase 1 착수 전)
+
+- [ ] **API 라우터 실제 구현**: 현재 모든 라우터가 stub. Dataset Group, Dataset CRUD 구현 필요
+  - `backend/app/api/v1/dataset_groups/router.py`
+  - `backend/app/api/v1/datasets/router.py`
+- [ ] **서비스 레이어 구현**: `dataset_service.py` 의 실제 DB 쿼리 작성
+- [ ] **Pydantic 스키마 보완**: `schemas/dataset.py` 에 응답 스키마 추가 (현재 Request만 있음)
+
+### 🟡 Phase 1 - Dataset CRUD GUI
+
+- [ ] **프론트엔드 DatasetListPage 구현**: 실제 API 연동, 테이블 렌더링
+- [ ] **DatasetDetailPage 구현**: 데이터셋 상세 정보, 이미지 샘플 뷰어
+- [ ] **DatasetGroup 등록 폼**: NAS 경로 입력 → 경로 검증 → 등록 플로우
+- [ ] **API 클라이언트 완성**: `frontend/src/api/dataset.ts` 실제 엔드포인트 연동
+
+### 🟡 Phase 1 - Lineage 시각화
+
+- [ ] **Lineage 조회 API 구현**: `GET /api/v1/lineage/{dataset_id}`
+- [ ] **Lineage 그래프 UI**: React Flow 또는 Ant Design Graph 컴포넌트로 시각화
+
+### ⏳ Phase 2 - 파이프라인 & EDA
+
+- [ ] **Celery 워커 활성화**: `docker-compose.yml` celery-worker 서비스 주석 해제
+- [ ] **Manipulator 실제 구현**: `backend/app/pipeline/manipulator.py` 에 OpenCV 기반 변환 로직
+- [ ] **EDA 태스크 구현**: `backend/app/tasks/eda_tasks.py` — COCO 통계 분석, 차트 생성
+- [ ] **파이프라인 실행 API**: `POST /api/v1/pipelines` → Celery 태스크 dispatch
+
+### ⏳ Phase 3 - 학습 자동화
+
+- [ ] **GPU 스케줄러**: TrainingJob 생성 → Docker container dispatch
+- [ ] **MLflow 연동**: 실험 추적, 모델 레지스트리
+- [ ] **학습 현황 대시보드**: Prometheus + Grafana 활성화
+
+### 🔧 기술 부채
+
+- [ ] **테스트 코드 작성**: `backend/tests/` 디렉토리 없음. pytest 기반 API 테스트 필요
+- [ ] **타입 정의 보완**: `frontend/src/types/` 에 API 응답 타입 자동 생성 (openapi-typescript)
+- [ ] **에러 핸들링**: FastAPI 전역 예외 핸들러 추가
+- [ ] **로깅 개선**: structlog 구조화 로그 → 표준 포맷 통일
 
 ---
 
