@@ -8,6 +8,7 @@ Create Date: 2026-02-19
 """
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime
 from typing import Sequence, Union
@@ -26,15 +27,16 @@ _NOW = datetime.utcnow().isoformat()
 
 def _m(name, category, scope, task_types, annotation_fmts,
         output_fmt=None, params_schema=None, description="", status="ACTIVE"):
+    """psycopg2는 dict/list를 JSONB로 자동 변환하지 않으므로 json.dumps() 직렬화 필요."""
     return {
         "id": str(uuid.uuid4()),
         "name": name,
         "category": category,
-        "scope": scope,
-        "compatible_task_types": task_types,
-        "compatible_annotation_fmts": annotation_fmts,
+        "scope": json.dumps(scope),
+        "compatible_task_types": json.dumps(task_types) if task_types is not None else None,
+        "compatible_annotation_fmts": json.dumps(annotation_fmts) if annotation_fmts is not None else None,
         "output_annotation_fmt": output_fmt,
-        "params_schema": params_schema or {},
+        "params_schema": json.dumps(params_schema or {}),
         "description": description,
         "status": status,
         "version": "1.0.0",
