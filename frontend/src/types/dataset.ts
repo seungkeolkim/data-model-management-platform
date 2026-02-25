@@ -6,7 +6,8 @@
 // Enums / Union Types
 // =============================================================================
 
-export type DatasetType = 'RAW' | 'SOURCE' | 'PROCESSED' | 'FUSION'
+// Phase 1: object_detection 만 허용
+export type DatasetType = 'object_detection'
 export type AnnotationFormat = 'COCO' | 'YOLO' | 'ATTR_JSON' | 'CLS_FOLDER' | 'CUSTOM' | 'NONE'
 export type TaskType = 'DETECTION' | 'SEGMENTATION' | 'ATTR_CLASSIFICATION' | 'ZERO_SHOT' | 'CLASSIFICATION'
 export type Modality = 'RGB' | 'THERMAL' | 'DEPTH' | 'MULTISPECTRAL'
@@ -89,14 +90,15 @@ export interface DatasetRegisterRequest {
   // 그룹
   group_id?: string
   group_name?: string
-  dataset_type: DatasetType
-  annotation_format?: AnnotationFormat
-  task_types?: TaskType[]
+  // Phase 1 고정값
+  dataset_type: 'object_detection'
+  annotation_format: 'COCO'
+  task_types: ['DETECTION']
   modality?: Modality
   source_origin?: string
   description?: string
   // Dataset
-  split?: Split
+  split: Split
   version?: string
   storage_uri: string
 }
@@ -111,6 +113,11 @@ export interface DatasetValidateResponse {
   images_dir_exists: boolean
   annotation_exists: boolean
   image_count: number
+  // COCO 검증 결과
+  coco_valid: boolean
+  coco_categories: string[]
+  coco_annotation_count: number
+  error: string | null
 }
 
 // =============================================================================
