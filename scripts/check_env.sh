@@ -62,7 +62,7 @@ fi
 if command -v nvidia-smi &>/dev/null; then
     GPU_INFO=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 || echo "unknown")
     check_ok "NVIDIA GPU: ${GPU_INFO}"
-    
+
     if docker info 2>/dev/null | grep -q "nvidia"; then
         check_ok "NVIDIA Container Toolkit 설치됨"
     else
@@ -83,7 +83,7 @@ echo "[ 환경 설정 ]"
 ENV_FILE="${PROJECT_ROOT}/.env"
 if [[ -f "${ENV_FILE}" ]]; then
     check_ok ".env 파일 존재"
-    
+
     # 필수 환경변수 확인
     required_vars=(
         "POSTGRES_USER"
@@ -95,7 +95,7 @@ if [[ -f "${ENV_FILE}" ]]; then
         "LOCAL_STORAGE_BASE"
         "LOCAL_EDA_BASE"
     )
-    
+
     for var in "${required_vars[@]}"; do
         if grep -q "^${var}=" "${ENV_FILE}" 2>/dev/null; then
             check_ok "  ${var} 설정됨"
@@ -103,7 +103,7 @@ if [[ -f "${ENV_FILE}" ]]; then
             check_fail "  ${var} 없음 → .env 파일에 추가 필요"
         fi
     done
-    
+
     # 기본값 경고
     if grep -q "mlplatform_secret_change_me" "${ENV_FILE}"; then
         check_warn "  POSTGRES_PASSWORD가 기본값입니다. 운영 환경에서는 반드시 변경하세요."
@@ -123,33 +123,58 @@ echo ""
 echo "[ 스토리지 경로 ]"
 
 if [[ -f "${ENV_FILE}" ]]; then
-    LOCAL_STORAGE_BASE=$(grep "^LOCAL_STORAGE_BASE=" "${ENV_FILE}" | cut -d'=' -f2 | tr -d '"' | tr -d "'")
+    LOCAL_STORAGE_BASE=$(grep "^LOCAL_STORAGE_BASE=" "${ENV_FILE}" | cut -d'=' -f2 | tr -d '"' | tr -d "'" 2>/dev/null || echo "")
     LOCAL_EDA_BASE=$(grep "^LOCAL_EDA_BASE=" "${ENV_FILE}" | cut -d'=' -f2 | tr -d '"' | tr -d "'" 2>/dev/null || echo "")
 
-    if [[ -n "${LOCAL_STORAGE_BASE}" ]]; then
+    # -------------------------------------------------------------------------
+    # LOCAL_STORAGE_BASE 검사
+    # 이 값은 docker-compose.yml 볼륨 마운트 소스 경로로 직접 사용됩니다.
+    # 비어 있으면 docker compose up 자체가 실패합니다.
+    # -------------------------------------------------------------------------
+    if [[ -z "${LOCAL_STORAGE_BASE}" ]]; then
+        check_fail "LOCAL_STORAGE_BASE 값이 비어 있음"
+        echo ""
+        echo -e "  ${RED}!! docker compose up 이 실패합니다 !!${NC}"
+        echo "  .env 파일에 아래 항목을 추가하세요:"
+        echo ""
+        echo "    # NAS 실서버 환경:"
+        echo "    LOCAL_STORAGE_BASE=/mnt/nas/datasets"
+        echo ""
+        echo "    # 로컬 개발 환경 예시:"
+        echo "    LOCAL_STORAGE_BASE=./data/virtual_nas"
+        echo ""
+    else
         if [[ -d "${LOCAL_STORAGE_BASE}" ]]; then
             check_ok "LOCAL_STORAGE_BASE 접근 가능: ${LOCAL_STORAGE_BASE}"
-            
+
             # 하위 디렉토리 확인
             for subdir in raw source processed fusion; do
                 if [[ -d "${LOCAL_STORAGE_BASE}/${subdir}" ]]; then
                     check_ok "  ${subdir}/ 디렉토리 존재"
                 else
-                    check_warn "  ${subdir}/ 없음 → docker compose 시작 시 자동 마운트"
+                    check_warn "  ${subdir}/ 없음 (데이터 등록 전 생성 필요)"
                 fi
             done
         else
-            check_warn "LOCAL_STORAGE_BASE 경로 없음: ${LOCAL_STORAGE_BASE}"
-            echo "         개발 환경에서는 ./data/datasets 사용 가능"
-            echo "         운영 환경에서는 NAS 마운트 후 .env 수정 필요"
+            check_fail "LOCAL_STORAGE_BASE 경로가 존재하지 않음: ${LOCAL_STORAGE_BASE}"
+            echo ""
+            echo "  경로를 생성하거나 .env 의 LOCAL_STORAGE_BASE 값을 수정하세요."
+            echo "  NAS 환경이면 먼저 마운트 후 재시도하세요."
+            echo ""
         fi
     fi
 
-    if [[ -n "${LOCAL_EDA_BASE}" ]] && [[ "${LOCAL_EDA_BASE}" != "/mnt/nas/eda" ]]; then
+    # -------------------------------------------------------------------------
+    # LOCAL_EDA_BASE 검사
+    # -------------------------------------------------------------------------
+    if [[ -z "${LOCAL_EDA_BASE}" ]]; then
+        check_fail "LOCAL_EDA_BASE 값이 비어 있음"
+        echo "  예) LOCAL_EDA_BASE=./data/eda"
+    else
         if [[ -d "${LOCAL_EDA_BASE}" ]]; then
             check_ok "LOCAL_EDA_BASE 접근 가능: ${LOCAL_EDA_BASE}"
         else
-            check_warn "LOCAL_EDA_BASE 경로 없음: ${LOCAL_EDA_BASE}"
+            check_warn "LOCAL_EDA_BASE 경로 없음: ${LOCAL_EDA_BASE} (EDA 기능 사용 시 생성 필요)"
         fi
     fi
 fi

@@ -131,7 +131,22 @@ export default function DatasetRegisterModal({
     if (!validateResult) return null
 
     if (!validateResult.path_exists)
-      return <Alert type="error" message={`경로가 존재하지 않습니다: ${validateResult.storage_uri}`} showIcon />
+      return (
+        <Alert
+          type="error"
+          showIcon
+          message="경로를 찾을 수 없습니다"
+          description={
+            <span>
+              <Text code>{validateResult.storage_uri}</Text> 경로가 존재하지 않습니다.<br />
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                .env의 LOCAL_STORAGE_BASE 기준 상대경로인지 확인하세요.<br />
+                예) LOCAL_STORAGE_BASE=./data/my_nas 이면 → <Text code>raw/dataset_name/train/v1.0.0</Text> 형식
+              </Text>
+            </span>
+          }
+        />
+      )
 
     if (!validateResult.images_dir_exists)
       return <Alert type="error" message="images/ 디렉토리가 없습니다. 이미지를 images/ 폴더에 넣어주세요." showIcon />
@@ -140,7 +155,18 @@ export default function DatasetRegisterModal({
       return <Alert type="error" message="annotation.json 파일이 없습니다. COCO 형식 annotation.json을 배치해주세요." showIcon />
 
     if (!validateResult.coco_valid)
-      return <Alert type="error" message={`COCO 검증 실패: ${validateResult.error}`} showIcon />
+      return (
+        <Alert
+          type="error"
+          showIcon
+          message="COCO annotation 검증 실패"
+          description={
+            validateResult.error
+              ? validateResult.error
+              : 'annotation.json이 COCO 형식이 아닙니다. (images, annotations, categories 키 필수)'
+          }
+        />
+      )
 
     return (
       <Alert
@@ -183,13 +209,21 @@ export default function DatasetRegisterModal({
         message="사전 준비 사항"
         description={
           <ul style={{ margin: '4px 0', paddingLeft: 20 }}>
-            <li>NAS 마운트 경로 아래에 폴더를 생성하세요.</li>
+            <li>
+              <Text strong>.env</Text>의 <Text code>LOCAL_STORAGE_BASE</Text> 경로 아래에 데이터 폴더를 배치하세요.
+            </li>
             <li>
               폴더 구조:{' '}
               <Text code>{'<storage_uri>/images/'}</Text> 와{' '}
               <Text code>{'<storage_uri>/annotation.json'}</Text>
             </li>
-            <li>annotation.json은 COCO 형식이어야 합니다. (images, annotations, categories 키 필수)</li>
+            <li>
+              경로 입력 예시: <Text code>LOCAL_STORAGE_BASE</Text>가{' '}
+              <Text code>./data/my_nas</Text>이고 실제 경로가{' '}
+              <Text code>./data/my_nas/raw/coco/train/v1.0.0</Text>이면{' '}
+              <Text code>raw/coco/train/v1.0.0</Text>을 입력
+            </li>
+            <li>annotation.json은 COCO 형식 (images, annotations, categories 키 필수)</li>
           </ul>
         }
         style={{ marginBottom: 20 }}
