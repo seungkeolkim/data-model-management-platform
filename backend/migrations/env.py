@@ -1,18 +1,16 @@
 """
 Alembic env.py - 마이그레이션 환경 설정
+Alembic은 동기(sync) 드라이버로 실행. psycopg2 사용.
 """
 from __future__ import annotations
 
-import asyncio
-import os
 import sys
 from logging.config import fileConfig
 from pathlib import Path
 
 from alembic import context
-from sqlalchemy import pool
+from sqlalchemy import create_engine, pool
 from sqlalchemy.engine import Connection
-from sqlalchemy.ext.asyncio import async_engine_from_config
 
 # 프로젝트 패스 추가
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -44,8 +42,11 @@ if config.config_file_name is not None:
 # 메타데이터 (자동 마이그레이션 감지용)
 target_metadata = Base.metadata
 
-# 환경변수에서 DB URL 덮어쓰기
-config.set_main_option("sqlalchemy.url", settings.database_url)
+# asyncpg URL → psycopg2 URL 변환 (Alembic은 sync 드라이버 사용)
+_sync_url = settings.database_url.replace(
+    "postgresql+asyncpg://", "postgresql+psycopg2://"
+)
+config.set_main_option("sqlalchemy.url", _sync_url)
 
 
 def run_migrations_offline() -> None:
@@ -74,27 +75,15 @@ def do_run_migrations(connection: Connection) -> None:
         context.run_migrations()
 
 
-async def run_async_migrations() -> None:
-    """온라인 모드: 실제 DB에 적용"""
-    # asyncpg URL을 psycopg2 URL로 변환 (Alembic은 sync 드라이버 사용)
-    sync_url = settings.database_url.replace(
-        "postgresql+asyncpg://", "postgresql+psycopg2://"
-    )
-
-    connectable = async_engine_from_config(
-        {"sqlalchemy.url": sync_url},
-        prefix="sqlalchemy.",
+def run_migrations_online() -> None:
+    """온라인 모드: psycopg2 동기 엔진으로 실제 DB에 적용"""
+    connectable = create_engine(
+        _sync_url,
         poolclass=pool.NullPool,
     )
-
-    async with connectable.connect() as connection:
-        await connection.run_sync(do_run_migrations)
-
-    await connectable.dispose()
-
-
-def run_migrations_online() -> None:
-    asyncio.run(run_async_migrations())
+    with connectable.connect() as connection:
+        do_run_migrations(connection)
+    connectable.dispose()
 
 
 if context.is_offline_mode():
