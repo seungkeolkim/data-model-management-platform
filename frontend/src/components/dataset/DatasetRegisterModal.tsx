@@ -83,6 +83,7 @@ export default function DatasetRegisterModal({
   const [validateResult, setValidateResult] = useState<DatasetValidateResponse | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
+  const [selectedTaskTypes, setSelectedTaskTypes] = useState<TaskType[]>([])
 
   // ── Step 1: 경로 존재 여부만 확인 (정합성 체크 없음) ──────────────────────
   const handleValidate = async () => {
@@ -152,6 +153,7 @@ export default function DatasetRegisterModal({
     setValidateStatus('idle')
     setValidateResult(null)
     setSubmitError(null)
+    setSelectedTaskTypes([])
     onClose()
   }
 
@@ -241,7 +243,8 @@ export default function DatasetRegisterModal({
           <Select
             mode="multiple"
             placeholder="사용 목적을 선택하세요"
-            onChange={() => {
+            onChange={(values: TaskType[]) => {
+              setSelectedTaskTypes(values)
               // task_types 변경 시 이후 스텝 초기화
               if (currentStep > 0) {
                 setCurrentStep(1)
@@ -262,9 +265,9 @@ export default function DatasetRegisterModal({
         </Form.Item>
 
         <Button
-          type="default"
+          type="primary"
           block
-          disabled={!form.getFieldValue('task_types')?.length}
+          disabled={selectedTaskTypes.length === 0}
           onClick={() => {
             form.validateFields(['task_types']).then(() => setCurrentStep(1)).catch(() => {})
           }}
