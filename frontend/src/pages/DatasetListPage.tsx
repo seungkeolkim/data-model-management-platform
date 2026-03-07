@@ -61,7 +61,7 @@ export default function DatasetListPage() {
     queryKey: ['dataset-groups', page, pageSize, search],
     queryFn: () =>
       datasetGroupsApi
-        .list({ page, page_size: pageSize, search: search || undefined, dataset_type: 'object_detection' })
+        .list({ page, page_size: pageSize, search: search || undefined })
         .then(r => r.data),
   })
 
@@ -92,11 +92,30 @@ export default function DatasetListPage() {
       ),
     },
     {
-      title: '유형',
-      dataIndex: 'dataset_type',
-      key: 'dataset_type',
-      width: 140,
-      render: (v: string) => <Tag color="purple">{v}</Tag>,
+      title: '사용 목적',
+      key: 'task_types',
+      width: 200,
+      render: (_: unknown, record: DatasetGroup) => (
+        <Space wrap size={4}>
+          {(record.task_types ?? []).map(t => (
+            <Tag key={t} color="purple" style={{ margin: 0 }}>{t}</Tag>
+          ))}
+          {!record.task_types?.length && <Text type="secondary">-</Text>}
+        </Space>
+      ),
+    },
+    {
+      title: '포맷',
+      dataIndex: 'annotation_format',
+      key: 'annotation_format',
+      width: 110,
+      render: (v: string) => {
+        const color: Record<string, string> = {
+          COCO: 'green', YOLO: 'orange', ATTR_JSON: 'cyan',
+          CLS_FOLDER: 'geekblue', CUSTOM: 'purple', NONE: 'default',
+        }
+        return <Tag color={color[v] ?? 'default'}>{v ?? 'NONE'}</Tag>
+      },
     },
     {
       title: 'Split',
@@ -174,7 +193,7 @@ export default function DatasetListPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
         <div>
           <Title level={3} style={{ margin: 0 }}>데이터셋</Title>
-          <Text type="secondary">Object Detection 데이터셋을 관리합니다. (COCO 형식)</Text>
+          <Text type="secondary">등록된 데이터셋 그룹 목록입니다.</Text>
         </div>
         <Space>
           <Tooltip title="새로고침">
@@ -237,7 +256,7 @@ export default function DatasetListPage() {
                 <span>
                   등록된 데이터셋이 없습니다.<br />
                   <Text type="secondary" style={{ fontSize: 12 }}>
-                    "데이터셋 등록" 버튼을 눌러 COCO 데이터셋을 등록하세요.
+                    "데이터셋 등록" 버튼을 눌러 데이터셋을 등록하세요.
                   </Text>
                 </span>
               }
