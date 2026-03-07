@@ -67,8 +67,8 @@ export const systemApi = {
 // Manipulators
 export const manipulatorsApi = {
   list: (params?: { category?: string; scope?: string; status?: string }) =>
-    api.get('/api/v1/manipulators', { params }),
+    api.get('/manipulators', { params }),
 
   get: (manipulatorId: string) =>
-    api.get(`/api/v1/manipulators/${manipulatorId}`),
+    api.get(`/manipulators/${manipulatorId}`),
 }

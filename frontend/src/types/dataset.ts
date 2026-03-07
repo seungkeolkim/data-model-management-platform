@@ -6,6 +6,7 @@
 // Enums / Union Types
 // =============================================================================
 
+// DatasetGroup의 dataset_type: 데이터 가공 단계 표현
 export type DatasetType = 'RAW' | 'SOURCE' | 'PROCESSED' | 'FUSION'
 export type AnnotationFormat = 'COCO' | 'YOLO' | 'ATTR_JSON' | 'CLS_FOLDER' | 'CUSTOM' | 'NONE'
 export type TaskType = 'DETECTION' | 'SEGMENTATION' | 'ATTR_CLASSIFICATION' | 'ZERO_SHOT' | 'CLASSIFICATION'
@@ -34,7 +35,7 @@ export interface DatasetGroup {
 
 export interface DatasetGroupCreate {
   name: string
-  dataset_type: DatasetType
+  dataset_type?: DatasetType          // 미지정 시 백엔드에서 RAW 기본값 사용
   annotation_format?: AnnotationFormat
   task_types?: TaskType[]
   modality?: Modality
@@ -71,6 +72,7 @@ export interface DatasetSummary {
   status: DatasetStatus
   image_count: number | null
   class_count: number | null
+  annotation_format: AnnotationFormat | null
   storage_uri: string
   created_at: string
 }
@@ -89,14 +91,15 @@ export interface DatasetRegisterRequest {
   // 그룹
   group_id?: string
   group_name?: string
-  dataset_type: DatasetType
-  annotation_format?: AnnotationFormat
-  task_types?: TaskType[]
+  // 사용 목적 (드롭다운 필수 선택)
+  task_types: TaskType[]
+  // 어노테이션 포맷 (등록 후 선택, 미정이면 NONE)
+  annotation_format: AnnotationFormat
   modality?: Modality
   source_origin?: string
   description?: string
   // Dataset
-  split?: Split
+  split: Split
   version?: string
   storage_uri: string
 }
@@ -111,6 +114,11 @@ export interface DatasetValidateResponse {
   images_dir_exists: boolean
   annotation_exists: boolean
   image_count: number
+  // COCO 검증 결과
+  coco_valid: boolean
+  coco_categories: string[]
+  coco_annotation_count: number
+  error: string | null
 }
 
 // =============================================================================
