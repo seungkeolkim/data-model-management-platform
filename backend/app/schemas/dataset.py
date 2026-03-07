@@ -83,6 +83,7 @@ class DatasetSummary(BaseModel):
     status: str
     image_count: int | None
     class_count: int | None
+    annotation_format: str | None
     storage_uri: str
     created_at: datetime
 

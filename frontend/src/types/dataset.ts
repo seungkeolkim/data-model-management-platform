@@ -6,8 +6,8 @@
 // Enums / Union Types
 // =============================================================================
 
-// Phase 1: object_detection 만 허용
-export type DatasetType = 'object_detection'
+// DatasetGroup의 dataset_type: 데이터 가공 단계 표현
+export type DatasetType = 'RAW' | 'SOURCE' | 'PROCESSED' | 'FUSION'
 export type AnnotationFormat = 'COCO' | 'YOLO' | 'ATTR_JSON' | 'CLS_FOLDER' | 'CUSTOM' | 'NONE'
 export type TaskType = 'DETECTION' | 'SEGMENTATION' | 'ATTR_CLASSIFICATION' | 'ZERO_SHOT' | 'CLASSIFICATION'
 export type Modality = 'RGB' | 'THERMAL' | 'DEPTH' | 'MULTISPECTRAL'
@@ -35,7 +35,7 @@ export interface DatasetGroup {
 
 export interface DatasetGroupCreate {
   name: string
-  dataset_type: DatasetType
+  dataset_type?: DatasetType          // 미지정 시 백엔드에서 RAW 기본값 사용
   annotation_format?: AnnotationFormat
   task_types?: TaskType[]
   modality?: Modality
@@ -72,6 +72,7 @@ export interface DatasetSummary {
   status: DatasetStatus
   image_count: number | null
   class_count: number | null
+  annotation_format: AnnotationFormat | null
   storage_uri: string
   created_at: string
 }

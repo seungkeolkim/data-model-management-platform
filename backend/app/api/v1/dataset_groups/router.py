@@ -32,7 +32,7 @@ router = APIRouter()
 # =============================================================================
 
 @router.post("/validate-path", response_model=DatasetValidateResponse)
-async def validate_storage_path(
+def validate_storage_path(
     req: DatasetValidateRequest,
     db: AsyncSession = Depends(get_db),
 ):
@@ -41,7 +41,7 @@ async def validate_storage_path(
 
     - 경로 존재 여부 확인
     - images/ 디렉토리 존재 여부 확인
-    - annotation.json 존재 및 COCO 포맷 검증
+    - annotation.json 존재 및 COCO 포맷 검증 (COCO 선택 시)
     """
     svc = DatasetGroupService(db)
     return svc.validate_storage_uri(req.storage_uri)

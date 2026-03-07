@@ -120,11 +120,21 @@ export default function DatasetListPage() {
     {
       title: 'Split',
       key: 'splits',
-      width: 200,
+      width: 220,
       render: (_: unknown, record: DatasetGroup) => (
         <Space wrap size={4}>
           {record.datasets.map(d => (
-            <Tooltip key={d.id} title={`${d.version} · ${d.image_count?.toLocaleString() ?? '-'}장`}>
+            <Tooltip
+              key={d.id}
+              title={
+                <span>
+                  버전: {d.version}<br />
+                  이미지: {d.image_count?.toLocaleString() ?? '-'}장<br />
+                  포맷: {d.annotation_format ?? 'NONE'}<br />
+                  상태: {d.status}
+                </span>
+              }
+            >
               <Tag color={SPLIT_COLOR[d.split] ?? 'default'}>
                 {d.split}
               </Tag>
@@ -193,7 +203,7 @@ export default function DatasetListPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
         <div>
           <Title level={3} style={{ margin: 0 }}>데이터셋</Title>
-          <Text type="secondary">등록된 데이터셋 그룹 목록입니다.</Text>
+          <Text type="secondary">등록된 데이터셋 그룹 목록입니다. 그룹 행을 클릭하면 상세 페이지로 이동합니다.</Text>
         </div>
         <Space>
           <Tooltip title="새로고침">
