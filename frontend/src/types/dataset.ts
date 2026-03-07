@@ -90,10 +90,10 @@ export interface DatasetRegisterRequest {
   // 그룹
   group_id?: string
   group_name?: string
-  // Phase 1 고정값
-  dataset_type: 'object_detection'
-  annotation_format: 'COCO'
-  task_types: ['DETECTION']
+  // 사용 목적 (드롭다운 필수 선택)
+  task_types: TaskType[]
+  // 어노테이션 포맷 (등록 후 선택, 미정이면 NONE)
+  annotation_format: AnnotationFormat
   modality?: Modality
   source_origin?: string
   description?: string

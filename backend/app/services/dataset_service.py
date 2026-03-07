@@ -110,11 +110,16 @@ class DatasetGroupService:
         await self.db.flush()
 
     # -------------------------------------------------------------------------
-    # NAS 경로 + COCO 검증
+    # NAS 경로 검증 (COCO 정합성 별도 코드 포함)
     # -------------------------------------------------------------------------
 
     def validate_storage_uri(self, storage_uri: str) -> DatasetValidateResponse:
-        """NAS 경로 구조 + COCO annotation 유효성 검사."""
+        """
+        NAS 경로 구조 검증.
+        - 경로 존재 여부
+        - images/ 디렉토리 존재 여부
+        - annotation.json 존재 여부 + COCO 정합성 (coco_valid 필드에 결과 저장)
+        """
         base = Path(settings.local_storage_base)
         full_path = base / storage_uri
 
@@ -196,11 +201,11 @@ class DatasetGroupService:
     async def register_dataset(self, req: DatasetRegisterRequest) -> tuple[DatasetGroup, Dataset]:
         """
         GUI Dataset 등록.
-        1. NAS 경로 검증 (경로 존재 + COCO annotation 유효성)
+        1. NAS 경로 존재 여부만 검증 (annotation 정합성 코드는 유지하되 실행 안 함)
         2. DatasetGroup 신규 생성 또는 기존 그룹에 추가
         3. Dataset(split/version) DB 저장
         """
-        # NAS 경로 검증
+        # NAS 경로 존재 여부만 검사
         validation = self.validate_storage_uri(req.storage_uri)
 
         if not validation.path_exists:
@@ -208,20 +213,15 @@ class DatasetGroupService:
                 f"경로가 존재하지 않습니다: {req.storage_uri}\n"
                 f"NAS 마운트 기준 경로를 확인하세요. (기준: {settings.local_storage_base})"
             )
-        if not validation.images_dir_exists:
-            raise ValueError(
-                f"images 디렉토리가 없습니다: {req.storage_uri}/images\n"
-                f"이미지를 images/ 폴더에 배치한 후 다시 시도하세요."
-            )
-        if not validation.annotation_exists:
-            raise ValueError(
-                f"annotation.json 파일이 없습니다: {req.storage_uri}/annotation.json\n"
-                f"COCO 형식의 annotation.json 파일을 배치한 후 다시 시도하세요."
-            )
-        if not validation.coco_valid:
-            raise ValueError(
-                f"COCO annotation 검증 실패: {validation.error}"
-            )
+
+        # ------------------------------------------------------------------
+        # [TODO] COCO / YOLO / ATTR_JSON 정합성 체크 타이밍
+        # annotation_format 선택 이후 별도 단계에서 수행
+        # 아래 코드 예시:
+        # if req.annotation_format == "COCO" and validation.annotation_exists:
+        #     if not validation.coco_valid:
+        #         raise ValueError(f"COCO annotation 검증 실패: {validation.error}")
+        # ------------------------------------------------------------------
 
         # 그룹 처리
         if req.group_id:
@@ -244,7 +244,7 @@ class DatasetGroupService:
             group = DatasetGroup(
                 id=str(uuid.uuid4()),
                 name=req.group_name,
-                dataset_type=req.dataset_type,
+                dataset_type="RAW",          # raw 등록 시 항상 RAW
                 annotation_format=req.annotation_format,
                 task_types=req.task_types,
                 modality=req.modality,
@@ -279,7 +279,7 @@ class DatasetGroupService:
             storage_uri=req.storage_uri,
             status="READY",
             image_count=validation.image_count,
-            class_count=len(validation.coco_categories),
+            class_count=None,  # annotation 정합성 쭔크 전에는 미정
         )
         self.db.add(dataset)
         await self.db.flush()

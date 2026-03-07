@@ -13,8 +13,25 @@ from pydantic import BaseModel, Field, model_validator
 # 허용 상수
 # =============================================================================
 
-# Phase 1: object_detection 만 허용
-ALLOWED_DATASET_TYPES = Literal["object_detection"]
+# 데이터셋 task 유형 (DB: task_types JSONB 컬럼)
+ALLOWED_TASK_TYPES = Literal[
+    "DETECTION",           # 객체 탐지
+    "SEGMENTATION",        # 세그멘테이션
+    "CLASSIFICATION",      # 이미지 분류
+    "ATTR_CLASSIFICATION", # 속성 분류
+    "ZERO_SHOT",           # 제로샷
+]
+
+# 어노테이션 포맷 (DB: annotation_format 컬럼)
+ALLOWED_ANNOTATION_FORMATS = Literal[
+    "COCO",        # COCO JSON
+    "YOLO",        # YOLO txt
+    "ATTR_JSON",   # 속성 JSON (커스텀)
+    "CLS_FOLDER",  # 분류 폴더 구조
+    "CUSTOM",      # 기타 커스텀
+    "NONE",        # 미지정
+]
+
 ALLOWED_SPLITS = Literal["TRAIN", "VAL", "TEST", "NONE"]
 
 
@@ -24,9 +41,18 @@ ALLOWED_SPLITS = Literal["TRAIN", "VAL", "TEST", "NONE"]
 
 class DatasetGroupBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=255, description="데이터셋 그룹명")
-    dataset_type: str = Field(..., description="데이터셋 유형 (현재: object_detection)")
-    annotation_format: str = Field(default="NONE", description="COCO | YOLO | ATTR_JSON | CLS_FOLDER | CUSTOM | NONE")
-    task_types: list[str] | None = Field(default=None)
+    dataset_type: str = Field(
+        ...,
+        description="데이터셋 원본 유형: RAW | SOURCE | PROCESSED | FUSION",
+    )
+    annotation_format: str = Field(
+        default="NONE",
+        description="COCO | YOLO | ATTR_JSON | CLS_FOLDER | CUSTOM | NONE",
+    )
+    task_types: list[str] | None = Field(
+        default=None,
+        description="사용 목적: DETECTION | SEGMENTATION | CLASSIFICATION | ATTR_CLASSIFICATION | ZERO_SHOT",
+    )
     modality: str = Field(default="RGB")
     source_origin: str | None = Field(default=None, max_length=500)
     description: str | None = Field(default=None)
@@ -103,26 +129,27 @@ class DatasetCreate(DatasetBase):
 class DatasetRegisterRequest(BaseModel):
     """
     GUI Dataset 등록 요청.
-    - dataset_type: 현재 object_detection 고정
-    - annotation_format: COCO 고정
+    - task_types: 사용자가 드롭다운으로 선택 (DETECTION / SEGMENTATION / CLASSIFICATION 등)
+    - annotation_format: 등록 후 선택 (COCO / YOLO / ATTR_JSON / CLS_FOLDER / CUSTOM / NONE)
     - storage_uri: NAS 마운트 기준 상대경로 (예: raw/my_dataset/train/v1.0.0)
+    - 경로 존재 여부만 검사. annotation 정합성 체크는 별도 단계에서 수행.
     """
     # 그룹 정보
     group_id: str | None = Field(default=None, description="기존 그룹 ID (새 그룹이면 None)")
     group_name: str | None = Field(default=None, description="새 그룹 생성 시 그룹명")
 
-    # Phase 1: object_detection 고정
-    dataset_type: ALLOWED_DATASET_TYPES = Field(
-        default="object_detection",
-        description="데이터셋 유형 (현재 object_detection만 지원)",
-    )
-    # Phase 1: COCO 고정
-    annotation_format: Literal["COCO"] = Field(
-        default="COCO",
-        description="어노테이션 포맷 (현재 COCO만 지원)",
+    # 사용 목적 (드롭다운 선택)
+    task_types: list[str] = Field(
+        ...,
+        description="사용 목적 (DETECTION | SEGMENTATION | CLASSIFICATION | ATTR_CLASSIFICATION | ZERO_SHOT)",
     )
 
-    task_types: list[str] = Field(default=["DETECTION"])
+    # 어노테이션 포맷 (등록 후 선택, 미정이면 NONE)
+    annotation_format: str = Field(
+        default="NONE",
+        description="COCO | YOLO | ATTR_JSON | CLS_FOLDER | CUSTOM | NONE",
+    )
+
     modality: str = Field(default="RGB")
     source_origin: str | None = None
     description: str | None = None

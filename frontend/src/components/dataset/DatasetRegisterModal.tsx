@@ -1,11 +1,13 @@
 /**
  * 데이터셋 등록 모달
  *
- * 등록 과정:
- * 1. 사용자가 NAS에 미리 이미지/annotation.json 업로드
- * 2. 이 폼에서 경로, split, 그룹명 입력
- * 3. "경로 검증" 버튼 → COCO annotation 유효성 확인
- * 4. "등록" 버튼 → DB 저장
+ * 등록 흐름:
+ *   Step 0. 사용 목적(task_types) 선택 (드롭다운)
+ *   Step 1. NAS 경로 입력 → "경로 확인" → 경로 존재 여부만 검사
+ *   Step 2. 그룹명 + annotation format 선택 → "등록"
+ *
+ * 주의: annotation 정합성 체크는 이 단계에서 수행하지 않음.
+ *       추후 별도 단계에서 포맷별로 수행 예정.
  */
 import { useState } from 'react'
 import {
@@ -28,9 +30,10 @@ import {
   CheckCircleOutlined,
   LoadingOutlined,
   InfoCircleOutlined,
+  AppstoreOutlined,
 } from '@ant-design/icons'
 import { datasetGroupsApi } from '../../api/dataset'
-import type { DatasetGroup, DatasetValidateResponse } from '../../types/dataset'
+import type { DatasetGroup, DatasetValidateResponse, TaskType, AnnotationFormat } from '../../types/dataset'
 
 const { Text } = Typography
 const { Option } = Select
@@ -45,7 +48,28 @@ interface Props {
 
 type ValidateStatus = 'idle' | 'loading' | 'success' | 'error'
 
+// ─── 상수 정의 ────────────────────────────────────────────────────────────────
+
+const TASK_TYPE_OPTIONS: { value: TaskType; label: string; desc: string }[] = [
+  { value: 'DETECTION',           label: 'Object Detection',       desc: '바운딩 박스 기반 객체 탐지' },
+  { value: 'SEGMENTATION',        label: 'Segmentation',           desc: '픽셀 단위 영역 분할' },
+  { value: 'CLASSIFICATION',      label: 'Classification',         desc: '이미지 전체 분류' },
+  { value: 'ATTR_CLASSIFICATION', label: 'Attribute Classification', desc: '객체별 속성 분류' },
+  { value: 'ZERO_SHOT',           label: 'Zero-Shot',              desc: '제로샷 인식' },
+]
+
+const ANNOTATION_FORMAT_OPTIONS: { value: AnnotationFormat; label: string; desc: string }[] = [
+  { value: 'COCO',       label: 'COCO JSON',      desc: 'instances_*.json, COCO 표준 포맷' },
+  { value: 'YOLO',       label: 'YOLO txt',        desc: '클래스별 .txt 라벨 파일' },
+  { value: 'ATTR_JSON',  label: 'Attribute JSON',  desc: '속성 분류용 커스텀 JSON' },
+  { value: 'CLS_FOLDER', label: 'Class Folder',    desc: '폴더명 = 클래스명 구조' },
+  { value: 'CUSTOM',     label: 'Custom',          desc: '기타 포맷 (직접 관리)' },
+  { value: 'NONE',       label: '미정',            desc: '포맷 미확정 (나중에 설정)' },
+]
+
 const SPLIT_OPTIONS = ['TRAIN', 'VAL', 'TEST', 'NONE'] as const
+
+// ─── 컴포넌트 ─────────────────────────────────────────────────────────────────
 
 export default function DatasetRegisterModal({
   open,
@@ -60,7 +84,7 @@ export default function DatasetRegisterModal({
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
 
-  // 경로 검증
+  // ── Step 1: 경로 존재 여부만 확인 (정합성 체크 없음) ──────────────────────
   const handleValidate = async () => {
     const storageUri = form.getFieldValue('storage_uri')
     if (!storageUri?.trim()) {
@@ -74,15 +98,20 @@ export default function DatasetRegisterModal({
     try {
       const res = await datasetGroupsApi.validatePath({ storage_uri: storageUri.trim() })
       setValidateResult(res.data)
-      setValidateStatus(res.data.coco_valid ? 'success' : 'error')
-      if (res.data.coco_valid) setCurrentStep(1)
-    } catch (err: any) {
+
+      if (res.data.path_exists) {
+        setValidateStatus('success')
+        setCurrentStep(2)
+      } else {
+        setValidateStatus('error')
+      }
+    } catch {
       setValidateStatus('error')
       setValidateResult(null)
     }
   }
 
-  // 데이터셋 등록
+  // ── Step 2: 등록 ──────────────────────────────────────────────────────────
   const handleSubmit = async () => {
     try {
       await form.validateFields()
@@ -96,15 +125,14 @@ export default function DatasetRegisterModal({
 
     try {
       const payload = {
-        group_id: existingGroup?.id,
-        group_name: existingGroup ? undefined : values.group_name,
-        dataset_type: 'object_detection' as const,
-        annotation_format: 'COCO' as const,
-        task_types: ['DETECTION'] as ['DETECTION'],
-        modality: 'RGB',
-        description: values.description,
-        split: values.split,
-        storage_uri: values.storage_uri.trim(),
+        group_id:          existingGroup?.id,
+        group_name:        existingGroup ? undefined : values.group_name,
+        task_types:        values.task_types as TaskType[],
+        annotation_format: (values.annotation_format ?? 'NONE') as AnnotationFormat,
+        modality:          'RGB',
+        description:       values.description,
+        split:             values.split,
+        storage_uri:       values.storage_uri.trim(),
       }
 
       const res = await datasetGroupsApi.register(payload)
@@ -127,6 +155,7 @@ export default function DatasetRegisterModal({
     onClose()
   }
 
+  // ── 경로 검증 결과 렌더링 ──────────────────────────────────────────────────
   const renderValidateResult = () => {
     if (!validateResult) return null
 
@@ -140,7 +169,7 @@ export default function DatasetRegisterModal({
             <span>
               <Text code>{validateResult.storage_uri}</Text> 경로가 존재하지 않습니다.<br />
               <Text type="secondary" style={{ fontSize: 12 }}>
-                .env의 LOCAL_STORAGE_BASE 기준 상대경로인지 확인하세요.<br />
+                .env의 <Text code>LOCAL_STORAGE_BASE</Text> 기준 상대경로인지 확인하세요.<br />
                 예) LOCAL_STORAGE_BASE=./data/my_nas 이면 → <Text code>raw/dataset_name/train/v1.0.0</Text> 형식
               </Text>
             </span>
@@ -148,45 +177,29 @@ export default function DatasetRegisterModal({
         />
       )
 
-    if (!validateResult.images_dir_exists)
-      return <Alert type="error" message="images/ 디렉토리가 없습니다. 이미지를 images/ 폴더에 넣어주세요." showIcon />
-
-    if (!validateResult.annotation_exists)
-      return <Alert type="error" message="annotation.json 파일이 없습니다. COCO 형식 annotation.json을 배치해주세요." showIcon />
-
-    if (!validateResult.coco_valid)
-      return (
-        <Alert
-          type="error"
-          showIcon
-          message="COCO annotation 검증 실패"
-          description={
-            validateResult.error
-              ? validateResult.error
-              : 'annotation.json이 COCO 형식이 아닙니다. (images, annotations, categories 키 필수)'
-          }
-        />
-      )
-
+    // 경로 존재 → 추가 정보 표시 (images/, annotation.json 존재 여부는 참고용)
     return (
       <Alert
         type="success"
         showIcon
-        message="경로 검증 완료"
+        message="경로 확인 완료"
         description={
-          <Descriptions size="small" column={2} style={{ marginTop: 8 }}>
-            <Descriptions.Item label="이미지 수">{validateResult.image_count.toLocaleString()}장</Descriptions.Item>
-            <Descriptions.Item label="Annotation 수">{validateResult.coco_annotation_count.toLocaleString()}개</Descriptions.Item>
-            <Descriptions.Item label="클래스 수" span={2}>
-              {validateResult.coco_categories.length}개{' '}
-              {validateResult.coco_categories.slice(0, 8).map(c => (
-                <Tag key={c} color="blue" style={{ marginLeft: 4 }}>{c}</Tag>
-              ))}
-              {validateResult.coco_categories.length > 8 && (
-                <Text type="secondary"> 외 {validateResult.coco_categories.length - 8}개</Text>
+          <Space direction="vertical" size={2} style={{ marginTop: 4 }}>
+            <Text>
+              이미지:{' '}
+              <Text strong>{validateResult.image_count.toLocaleString()}장</Text>
+              {!validateResult.images_dir_exists && (
+                <Text type="secondary"> (images/ 폴더 없음 — 나중에 추가 가능)</Text>
               )}
-            </Descriptions.Item>
-          </Descriptions>
+            </Text>
+            <Text>
+              annotation.json:{' '}
+              {validateResult.annotation_exists
+                ? <Text strong style={{ color: '#52c41a' }}>존재</Text>
+                : <Text type="secondary">없음 (나중에 추가 가능)</Text>
+              }
+            </Text>
+          </Space>
         }
       />
     )
@@ -197,100 +210,164 @@ export default function DatasetRegisterModal({
       title="데이터셋 등록"
       open={open}
       onCancel={handleClose}
-      width={640}
+      width={660}
       footer={null}
       destroyOnClose
     >
-      {/* 안내 메시지 */}
-      <Alert
-        type="info"
-        showIcon
-        icon={<InfoCircleOutlined />}
-        message="사전 준비 사항"
-        description={
-          <ul style={{ margin: '4px 0', paddingLeft: 20 }}>
-            <li>
-              <Text strong>.env</Text>의 <Text code>LOCAL_STORAGE_BASE</Text> 경로 아래에 데이터 폴더를 배치하세요.
-            </li>
-            <li>
-              폴더 구조:{' '}
-              <Text code>{'<storage_uri>/images/'}</Text> 와{' '}
-              <Text code>{'<storage_uri>/annotation.json'}</Text>
-            </li>
-            <li>
-              경로 입력 예시: <Text code>LOCAL_STORAGE_BASE</Text>가{' '}
-              <Text code>./data/my_nas</Text>이고 실제 경로가{' '}
-              <Text code>./data/my_nas/raw/coco/train/v1.0.0</Text>이면{' '}
-              <Text code>raw/coco/train/v1.0.0</Text>을 입력
-            </li>
-            <li>annotation.json은 COCO 형식 (images, annotations, categories 키 필수)</li>
-          </ul>
-        }
-        style={{ marginBottom: 20 }}
-      />
-
       <Steps
         current={currentStep}
         size="small"
         style={{ marginBottom: 24 }}
         items={[
-          { title: '경로 입력 & 검증', icon: validateStatus === 'loading' ? <LoadingOutlined /> : undefined },
-          { title: '그룹 정보 입력' },
-          { title: '등록 완료' },
+          { title: '사용 목적 선택', icon: <AppstoreOutlined /> },
+          { title: '경로 입력 & 확인', icon: validateStatus === 'loading' ? <LoadingOutlined /> : undefined },
+          { title: '포맷 & 등록' },
         ]}
       />
 
       <Form form={form} layout="vertical">
-        {/* Step 0: 경로 입력 */}
-        <Form.Item
-          label="NAS 경로 (storage_uri)"
-          name="storage_uri"
-          rules={[{ required: true, message: 'NAS 경로를 입력하세요.' }]}
-          extra={
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              LOCAL_STORAGE_BASE 기준 상대경로 (예: raw/my_dataset/train/v1.0.0)
-            </Text>
-          }
-        >
-          <Input
-            prefix={<FolderOpenOutlined />}
-            placeholder="raw/my_dataset/train/v1.0.0"
-            onChange={() => {
-              setValidateStatus('idle')
-              setValidateResult(null)
-              setCurrentStep(0)
-            }}
-          />
-        </Form.Item>
 
-        <Form.Item label="Split (데이터 분할)" name="split" initialValue="NONE" rules={[{ required: true }]}>
-          <Radio.Group>
-            {SPLIT_OPTIONS.map(s => (
-              <Radio.Button key={s} value={s}>{s}</Radio.Button>
+        {/* ── Step 0: 사용 목적 선택 ── */}
+        <Form.Item
+          label={
+            <Space>
+              <Text strong>사용 목적 (Task Type)</Text>
+              <Text type="secondary" style={{ fontSize: 12 }}>필수 · 복수 선택 가능</Text>
+            </Space>
+          }
+          name="task_types"
+          rules={[{ required: true, message: '사용 목적을 하나 이상 선택하세요.' }]}
+        >
+          <Select
+            mode="multiple"
+            placeholder="사용 목적을 선택하세요"
+            onChange={() => {
+              // task_types 변경 시 이후 스텝 초기화
+              if (currentStep > 0) {
+                setCurrentStep(1)
+                setValidateStatus('idle')
+                setValidateResult(null)
+              }
+            }}
+          >
+            {TASK_TYPE_OPTIONS.map(opt => (
+              <Option key={opt.value} value={opt.value}>
+                <Space>
+                  <Text strong>{opt.label}</Text>
+                  <Text type="secondary" style={{ fontSize: 12 }}>— {opt.desc}</Text>
+                </Space>
+              </Option>
             ))}
-          </Radio.Group>
+          </Select>
         </Form.Item>
 
         <Button
           type="default"
-          icon={validateStatus === 'loading' ? <LoadingOutlined /> : <CheckCircleOutlined />}
-          loading={validateStatus === 'loading'}
-          onClick={handleValidate}
           block
+          disabled={!form.getFieldValue('task_types')?.length}
+          onClick={() => {
+            form.validateFields(['task_types']).then(() => setCurrentStep(1)).catch(() => {})
+          }}
+          style={{ marginBottom: 20 }}
         >
-          경로 검증 (COCO annotation 확인)
+          다음 단계 →
         </Button>
 
-        {/* 검증 결과 */}
-        <div style={{ marginTop: 12, marginBottom: 4 }}>
-          {renderValidateResult()}
-        </div>
+        {/* ── Step 1: NAS 경로 입력 (task_types 선택 후 표시) ── */}
+        {currentStep >= 1 && (
+          <>
+            <Divider style={{ margin: '4px 0 16px' }} />
 
-        {/* Step 1: 그룹 정보 (검증 성공 후) */}
+            <Alert
+              type="info"
+              showIcon
+              icon={<InfoCircleOutlined />}
+              message="경로 입력 안내"
+              description={
+                <ul style={{ margin: '4px 0', paddingLeft: 20, fontSize: 12 }}>
+                  <li>.env의 <Text code>LOCAL_STORAGE_BASE</Text> 기준 <Text strong>상대경로</Text>를 입력하세요.</li>
+                  <li>폴더 구조: <Text code>{'<경로>/images/'}</Text> 와 <Text code>{'<경로>/annotation.json'}</Text></li>
+                  <li>예) LOCAL_STORAGE_BASE=./data/my_nas 이고 실제 경로가 <Text code>./data/my_nas/raw/coco/train/v1.0.0</Text> 이면 → <Text code>raw/coco/train/v1.0.0</Text> 입력</li>
+                </ul>
+              }
+              style={{ marginBottom: 16 }}
+            />
+
+            <Form.Item
+              label="NAS 경로 (storage_uri)"
+              name="storage_uri"
+              rules={[{ required: true, message: 'NAS 경로를 입력하세요.' }]}
+              extra={<Text type="secondary" style={{ fontSize: 12 }}>LOCAL_STORAGE_BASE 기준 상대경로</Text>}
+            >
+              <Input
+                prefix={<FolderOpenOutlined />}
+                placeholder="raw/my_dataset/train/v1.0.0"
+                onChange={() => {
+                  setValidateStatus('idle')
+                  setValidateResult(null)
+                  if (currentStep > 1) setCurrentStep(1)
+                }}
+              />
+            </Form.Item>
+
+            <Form.Item label="Split (데이터 분할)" name="split" initialValue="NONE" rules={[{ required: true }]}>
+              <Radio.Group>
+                {SPLIT_OPTIONS.map(s => (
+                  <Radio.Button key={s} value={s}>{s}</Radio.Button>
+                ))}
+              </Radio.Group>
+            </Form.Item>
+
+            <Button
+              type="default"
+              icon={validateStatus === 'loading' ? <LoadingOutlined /> : <CheckCircleOutlined />}
+              loading={validateStatus === 'loading'}
+              onClick={handleValidate}
+              block
+            >
+              경로 확인
+            </Button>
+
+            <div style={{ marginTop: 12, marginBottom: 4 }}>
+              {renderValidateResult()}
+            </div>
+          </>
+        )}
+
+        {/* ── Step 2: Annotation format + 그룹 정보 (경로 확인 성공 후) ── */}
         {validateStatus === 'success' && (
           <>
-            <Divider />
+            <Divider style={{ margin: '16px 0' }} />
 
+            {/* Annotation Format 선택 */}
+            <Form.Item
+              label={
+                <Space>
+                  <Text strong>Annotation Format</Text>
+                  <Text type="secondary" style={{ fontSize: 12 }}>미정이면 "미정(NONE)" 선택 가능</Text>
+                </Space>
+              }
+              name="annotation_format"
+              initialValue="NONE"
+              rules={[{ required: true, message: 'Annotation 포맷을 선택하세요.' }]}
+            >
+              <Select placeholder="포맷을 선택하세요">
+                {ANNOTATION_FORMAT_OPTIONS.map(opt => (
+                  <Option key={opt.value} value={opt.value}>
+                    <Space>
+                      <Tag color={opt.value === 'NONE' ? 'default' : 'blue'} style={{ margin: 0 }}>
+                        {opt.value}
+                      </Tag>
+                      <Text type="secondary" style={{ fontSize: 12 }}>{opt.desc}</Text>
+                    </Space>
+                  </Option>
+                ))}
+              </Select>
+            </Form.Item>
+
+            <Divider dashed style={{ margin: '12px 0' }} />
+
+            {/* 그룹 정보 */}
             {existingGroup ? (
               <Alert
                 type="info"
@@ -302,7 +379,7 @@ export default function DatasetRegisterModal({
                 label="데이터셋 그룹명"
                 name="group_name"
                 rules={[{ required: !existingGroup, message: '그룹명을 입력하세요.' }]}
-                extra={<Text type="secondary" style={{ fontSize: 12 }}>같은 데이터셋의 TRAIN/VAL/TEST를 묶는 단위입니다.</Text>}
+                extra={<Text type="secondary" style={{ fontSize: 12 }}>같은 데이터셋의 TRAIN/VAL/TEST를 묶는 단위</Text>}
               >
                 <Input placeholder="예: coco2017_detection" />
               </Form.Item>
@@ -312,28 +389,27 @@ export default function DatasetRegisterModal({
               <Input.TextArea rows={2} placeholder="데이터셋 설명을 입력하세요." />
             </Form.Item>
 
-            {/* 고정값 안내 */}
+            {/* 선택 요약 */}
             <Descriptions size="small" bordered column={2} style={{ marginBottom: 16 }}>
-              <Descriptions.Item label="데이터셋 유형">
-                <Tag color="blue">object_detection</Tag>
+              <Descriptions.Item label="사용 목적">
+                <Space wrap size={4}>
+                  {(form.getFieldValue('task_types') ?? []).map((t: string) => (
+                    <Tag key={t} color="purple">{t}</Tag>
+                  ))}
+                </Space>
               </Descriptions.Item>
-              <Descriptions.Item label="Annotation 포맷">
-                <Tag color="green">COCO</Tag>
+              <Descriptions.Item label="데이터 유형">
+                <Tag color="blue">RAW</Tag>
               </Descriptions.Item>
             </Descriptions>
 
-            {/* 오류 메시지 */}
             {submitError && (
               <Alert type="error" message={submitError} showIcon style={{ marginBottom: 16 }} />
             )}
 
             <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
               <Button onClick={handleClose}>취소</Button>
-              <Button
-                type="primary"
-                loading={submitting}
-                onClick={handleSubmit}
-              >
+              <Button type="primary" loading={submitting} onClick={handleSubmit}>
                 데이터셋 등록
               </Button>
             </Space>
