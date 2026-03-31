@@ -118,6 +118,36 @@ class StorageClient(ABC):
         cfg = get_app_config()
         return self.resolve_path(storage_uri) / cfg.annotation_filename
 
+    @abstractmethod
+    def copy_image_directory(self, source_abs: Path, dest_storage_uri: str) -> int:
+        """
+        이미지 폴더를 관리 스토리지의 images/ 로 복사.
+
+        Args:
+            source_abs: 원본 이미지 폴더 절대경로
+            dest_storage_uri: 복사 대상 dataset storage_uri (예: "raw/my_data/train/v1.0.0")
+
+        Returns:
+            복사된 이미지 파일 수
+        """
+        ...
+
+    @abstractmethod
+    def copy_annotation_files(
+        self, source_abs_paths: list[Path], dest_storage_uri: str
+    ) -> list[str]:
+        """
+        어노테이션 파일들을 관리 스토리지의 dataset 루트로 복사. 원본 파일명 유지.
+
+        Args:
+            source_abs_paths: 원본 어노테이션 파일 절대경로 목록
+            dest_storage_uri: 복사 대상 dataset storage_uri (예: "raw/my_data/train/v1.0.0")
+
+        Returns:
+            복사된 파일명 목록 (원본 파일명 그대로)
+        """
+        ...
+
 
 class LocalStorageClient(StorageClient):
     """
@@ -159,6 +189,28 @@ class LocalStorageClient(StorageClient):
         path = self._eda_base / dataset_id
         path.mkdir(parents=True, exist_ok=True)
         return path
+
+    def copy_image_directory(self, source_abs: Path, dest_storage_uri: str) -> int:
+        """이미지 폴더를 {dest_storage_uri}/images/ 로 복사."""
+        cfg = get_app_config()
+        dest = self.resolve_path(dest_storage_uri) / cfg.images_dirname
+        shutil.copytree(source_abs, dest)
+        return sum(
+            1 for p in dest.rglob("*")
+            if p.is_file() and p.suffix.lower() in cfg.allowed_image_extensions
+        )
+
+    def copy_annotation_files(
+        self, source_abs_paths: list[Path], dest_storage_uri: str
+    ) -> list[str]:
+        """어노테이션 파일들을 {dest_storage_uri}/ 로 복사. 원본 파일명 유지."""
+        dest_dir = self.resolve_path(dest_storage_uri)
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        filenames = []
+        for src in source_abs_paths:
+            shutil.copy2(src, dest_dir / src.name)
+            filenames.append(src.name)
+        return filenames
 
     def count_images(self, storage_uri: str) -> int:
         """이미지 파일 수 카운트."""
@@ -219,6 +271,14 @@ class S3StorageClient(StorageClient):
         raise NotImplementedError
 
     def get_eda_path(self, dataset_id: str) -> Path:
+        raise NotImplementedError
+
+    def copy_image_directory(self, source_abs: Path, dest_storage_uri: str) -> int:
+        raise NotImplementedError
+
+    def copy_annotation_files(
+        self, source_abs_paths: list[Path], dest_storage_uri: str
+    ) -> list[str]:
         raise NotImplementedError
 
 

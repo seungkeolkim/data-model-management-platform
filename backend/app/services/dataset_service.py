@@ -3,10 +3,9 @@ DatasetGroup 비즈니스 로직 서비스
 """
 from __future__ import annotations
 
-import json
+import shutil
 import uuid
 from pathlib import Path
-from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,12 +13,11 @@ from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.core.storage import get_storage_client
-from app.models.all_models import Dataset, DatasetGroup, DatasetLineage
+from app.models.all_models import Dataset, DatasetGroup
 from app.schemas.dataset import (
     DatasetGroupCreate,
     DatasetGroupUpdate,
     DatasetRegisterRequest,
-    DatasetValidateResponse,
 )
 
 
@@ -110,120 +108,38 @@ class DatasetGroupService:
         await self.db.flush()
 
     # -------------------------------------------------------------------------
-    # NAS 경로 검증 (COCO 정합성 별도 코드 포함)
-    # -------------------------------------------------------------------------
-
-    def validate_storage_uri(self, storage_uri: str) -> DatasetValidateResponse:
-        """
-        NAS 경로 구조 검증.
-        - 경로 존재 여부
-        - images/ 디렉토리 존재 여부
-        - annotation.json 존재 여부 + COCO 정합성 (coco_valid 필드에 결과 저장)
-        """
-        base = Path(settings.local_storage_base)
-        full_path = base / storage_uri
-
-        path_exists = full_path.exists()
-        images_dir = full_path / "images"
-        images_dir_exists = images_dir.exists()
-
-        # annotation.json 경로 탐색
-        annotation_path = full_path / "annotation.json"
-        annotation_exists = annotation_path.exists()
-
-        # 이미지 수 카운트
-        image_count = 0
-        if images_dir_exists:
-            image_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif", ".webp"}
-            image_count = sum(
-                1 for f in images_dir.iterdir()
-                if f.is_file() and f.suffix.lower() in image_extensions
-            )
-
-        # COCO annotation 검증
-        coco_valid = False
-        coco_categories: list[str] = []
-        coco_annotation_count = 0
-        error = None
-
-        if annotation_exists:
-            coco_result = self._validate_coco_annotation(annotation_path)
-            coco_valid = coco_result["valid"]
-            coco_categories = coco_result.get("categories", [])
-            coco_annotation_count = coco_result.get("annotation_count", 0)
-            error = coco_result.get("error")
-
-        return DatasetValidateResponse(
-            storage_uri=storage_uri,
-            path_exists=path_exists,
-            images_dir_exists=images_dir_exists,
-            annotation_exists=annotation_exists,
-            image_count=image_count,
-            coco_valid=coco_valid,
-            coco_categories=coco_categories,
-            coco_annotation_count=coco_annotation_count,
-            error=error,
-        )
-
-    def _validate_coco_annotation(self, annotation_path: Path) -> dict[str, Any]:
-        """
-        COCO annotation.json 구조 검증.
-        필수 키: images, annotations, categories
-        """
-        try:
-            with open(annotation_path, encoding="utf-8") as f:
-                data = json.load(f)
-
-            missing = [k for k in ("images", "annotations", "categories") if k not in data]
-            if missing:
-                return {
-                    "valid": False,
-                    "error": f"COCO 필수 키 누락: {missing}",
-                }
-
-            categories = [cat.get("name", "") for cat in data["categories"]]
-            annotation_count = len(data["annotations"])
-
-            return {
-                "valid": True,
-                "categories": categories,
-                "annotation_count": annotation_count,
-            }
-        except json.JSONDecodeError as e:
-            return {"valid": False, "error": f"JSON 파싱 오류: {e}"}
-        except Exception as e:
-            return {"valid": False, "error": str(e)}
-
-    # -------------------------------------------------------------------------
-    # GUI 등록 (NAS 경로 지정 방식)
+    # GUI 등록 (파일 브라우저 방식)
     # -------------------------------------------------------------------------
 
     async def register_dataset(self, req: DatasetRegisterRequest) -> tuple[DatasetGroup, Dataset]:
         """
-        GUI Dataset 등록.
-        1. NAS 경로 존재 여부만 검증 (annotation 정합성 코드는 유지하되 실행 안 함)
+        GUI Dataset 등록 (파일 브라우저 방식).
+
+        1. source_image_dir, source_annotation_files 경로 검증
         2. DatasetGroup 신규 생성 또는 기존 그룹에 추가
-        3. Dataset(split/version) DB 저장
+        3. 버전 자동 생성
+        4. 관리 스토리지로 파일 복사
+        5. Dataset DB 저장
+
+        원본 파일은 복사(copy)하며 삭제하지 않음.
         """
-        # NAS 경로 존재 여부만 검사
-        validation = self.validate_storage_uri(req.storage_uri)
+        # ------------------------------------------------------------------
+        # 소스 경로 검증
+        # ------------------------------------------------------------------
+        image_dir = self._validate_browse_path(req.source_image_dir, expect_dir=True)
+        annotation_paths = [
+            self._validate_browse_path(p, expect_dir=False)
+            for p in req.source_annotation_files
+        ]
 
-        if not validation.path_exists:
-            raise ValueError(
-                f"경로가 존재하지 않습니다: {req.storage_uri}\n"
-                f"NAS 마운트 기준 경로를 확인하세요. (기준: {settings.local_storage_base})"
-            )
+        # 어노테이션 파일명 중복 검사
+        filenames = [p.name for p in annotation_paths]
+        if len(filenames) != len(set(filenames)):
+            raise ValueError("어노테이션 파일명이 중복됩니다. 파일명이 다른 파일을 선택하세요.")
 
         # ------------------------------------------------------------------
-        # [TODO] COCO / YOLO / ATTR_JSON 정합성 체크 타이밍
-        # annotation_format 선택 이후 별도 단계에서 수행
-        # 아래 코드 예시:
-        # if req.annotation_format == "COCO" and validation.annotation_exists:
-        #     if not validation.coco_valid:
-        #         raise ValueError(f"COCO annotation 검증 실패: {validation.error}")
-        # ------------------------------------------------------------------
-
         # 그룹 처리
+        # ------------------------------------------------------------------
         if req.group_id:
             result = await self.db.execute(
                 select(DatasetGroup).where(DatasetGroup.id == req.group_id)
@@ -232,7 +148,6 @@ class DatasetGroupService:
             if not group:
                 raise ValueError(f"DatasetGroup을 찾을 수 없습니다: {req.group_id}")
         else:
-            # 동일 이름 그룹 중복 체크
             existing = await self.db.execute(
                 select(DatasetGroup).where(DatasetGroup.name == req.group_name)
             )
@@ -244,7 +159,7 @@ class DatasetGroupService:
             group = DatasetGroup(
                 id=str(uuid.uuid4()),
                 name=req.group_name,
-                dataset_type="RAW",          # raw 등록 시 항상 RAW
+                dataset_type="RAW",
                 annotation_format=req.annotation_format,
                 task_types=req.task_types,
                 modality=req.modality,
@@ -254,8 +169,11 @@ class DatasetGroupService:
             self.db.add(group)
             await self.db.flush()
 
-        # 동일 group+split+version 중복 체크
-        version = req.version or await self._next_version(group.id, req.split)
+        # ------------------------------------------------------------------
+        # 버전 자동 생성
+        # ------------------------------------------------------------------
+        version = await self._next_version(group.id, req.split)
+
         dup = await self.db.execute(
             select(Dataset).where(
                 Dataset.group_id == group.id,
@@ -269,17 +187,36 @@ class DatasetGroupService:
                 f"split={req.split}, version={version}"
             )
 
-        # Dataset 생성
+        # ------------------------------------------------------------------
+        # storage_uri 결정 및 파일 복사
+        # ------------------------------------------------------------------
+        group_name = group.name
+        storage_uri = self.storage.build_dataset_uri("RAW", group_name, req.split, version)
+        dest_abs = Path(settings.local_storage_base) / storage_uri
+
+        try:
+            image_count = self.storage.copy_image_directory(image_dir, storage_uri)
+            annotation_filenames = self.storage.copy_annotation_files(annotation_paths, storage_uri)
+        except Exception as e:
+            # 복사 실패 시 부분 생성된 디렉토리 정리
+            if dest_abs.exists():
+                shutil.rmtree(dest_abs, ignore_errors=True)
+            raise ValueError(f"파일 복사 중 오류가 발생했습니다: {e}") from e
+
+        # ------------------------------------------------------------------
+        # Dataset DB 저장
+        # ------------------------------------------------------------------
         dataset = Dataset(
             id=str(uuid.uuid4()),
             group_id=group.id,
             split=req.split.upper(),
             version=version,
             annotation_format=req.annotation_format,
-            storage_uri=req.storage_uri,
+            storage_uri=storage_uri,
             status="READY",
-            image_count=validation.image_count,
-            class_count=None,  # annotation 정합성 쭔크 전에는 미정
+            image_count=image_count,
+            class_count=None,
+            annotation_files=annotation_filenames,
         )
         self.db.add(dataset)
         await self.db.flush()
@@ -289,6 +226,42 @@ class DatasetGroupService:
     # -------------------------------------------------------------------------
     # Helpers
     # -------------------------------------------------------------------------
+
+    def _validate_browse_path(self, path_str: str, expect_dir: bool) -> Path:
+        """
+        경로가 LOCAL_BROWSE_ROOTS 중 하나의 하위인지 검증하고 존재 여부 확인.
+        expect_dir=True이면 디렉토리, False이면 파일이어야 함.
+        """
+        try:
+            resolved = Path(path_str).resolve()
+        except Exception as e:
+            raise ValueError(f"잘못된 경로입니다: {path_str}") from e
+
+        allowed = False
+        for root in settings.local_browse_roots_list:
+            try:
+                resolved.relative_to(Path(root).resolve())
+                allowed = True
+                break
+            except ValueError:
+                continue
+
+        if not allowed:
+            raise ValueError(
+                f"허용되지 않은 경로입니다: {path_str}\n"
+                f"접근 가능한 루트: {settings.local_browse_roots_list}"
+            )
+
+        if not resolved.exists():
+            raise ValueError(f"경로가 존재하지 않습니다: {path_str}")
+
+        if expect_dir and not resolved.is_dir():
+            raise ValueError(f"디렉토리가 아닙니다: {path_str}")
+
+        if not expect_dir and not resolved.is_file():
+            raise ValueError(f"파일이 아닙니다: {path_str}")
+
+        return resolved
 
     async def _next_version(self, group_id: str, split: str) -> str:
         """해당 group+split 의 다음 버전 자동 계산."""

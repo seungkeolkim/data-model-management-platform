@@ -74,6 +74,7 @@ export interface DatasetSummary {
   class_count: number | null
   annotation_format: AnnotationFormat | null
   storage_uri: string
+  annotation_files: string[] | null
   created_at: string
 }
 
@@ -100,25 +101,32 @@ export interface DatasetRegisterRequest {
   description?: string
   // Dataset
   split: Split
-  version?: string
-  storage_uri: string
+  // 소스 파일 경로 (파일 브라우저로 선택한 절대경로)
+  source_image_dir: string
+  source_annotation_files: string[]
 }
 
-export interface DatasetValidateRequest {
-  storage_uri: string
+// =============================================================================
+// 파일 브라우저
+// =============================================================================
+
+export interface FileBrowserEntry {
+  name: string
+  path: string
+  is_dir: boolean
+  size: number | null
+  modified_at: string | null
 }
 
-export interface DatasetValidateResponse {
-  storage_uri: string
-  path_exists: boolean
-  images_dir_exists: boolean
-  annotation_exists: boolean
-  image_count: number
-  // COCO 검증 결과
-  coco_valid: boolean
-  coco_categories: string[]
-  coco_annotation_count: number
-  error: string | null
+export interface FileBrowserListResponse {
+  current_path: string
+  parent_path: string | null
+  is_browse_root: boolean
+  entries: FileBrowserEntry[]
+}
+
+export interface FileBrowserRootsResponse {
+  roots: string[]
 }
 
 // =============================================================================

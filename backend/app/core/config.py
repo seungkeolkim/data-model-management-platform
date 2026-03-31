@@ -54,6 +54,8 @@ class Settings(BaseSettings):
     # local 백엔드
     local_storage_base: str = "/mnt/datasets"
     local_eda_base: str = "/mnt/eda"
+    # 파일 브라우저 허용 루트 (쉼표로 구분, 복수 지정 가능)
+    local_browse_roots: str = "/home"
 
     # s3 백엔드 (3차 이후)
     s3_endpoint: str | None = None
@@ -91,6 +93,11 @@ class Settings(BaseSettings):
     # MLflow (Phase 5 이후)
     # -------------------------------------------------------------------------
     mlflow_tracking_uri: str | None = None
+
+    @property
+    def local_browse_roots_list(self) -> list[str]:
+        """파일 브라우저 허용 루트 목록."""
+        return [p.strip() for p in self.local_browse_roots.split(",") if p.strip()]
 
     @property
     def cors_origins_list(self) -> list[str]:

@@ -111,6 +111,10 @@ class Dataset(Base):
     )
     image_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     class_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    annotation_files: Mapped[list | None] = mapped_column(
+        JSONB, nullable=True,
+        comment='어노테이션 파일명 목록. 예: ["instances_train.json"]. NULL이면 레거시 annotation.json'
+    )
     metadata_: Mapped[dict | None] = mapped_column(
         "metadata", JSONB, nullable=True,
         comment="EDA 결과, 클래스 분포 등"
