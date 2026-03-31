@@ -229,39 +229,22 @@ class DatasetGroupService:
 
     def _validate_browse_path(self, path_str: str, expect_dir: bool) -> Path:
         """
-        경로가 LOCAL_BROWSE_ROOTS 중 하나의 하위인지 검증하고 존재 여부 확인.
+        경로 존재 여부 및 타입 확인.
+        docker-compose에서 LOCAL_UPLOAD_BASE만 마운트하므로 별도 경로 제한 불필요.
         expect_dir=True이면 디렉토리, False이면 파일이어야 함.
         """
-        try:
-            resolved = Path(path_str).resolve()
-        except Exception as e:
-            raise ValueError(f"잘못된 경로입니다: {path_str}") from e
+        p = Path(path_str)
 
-        allowed = False
-        for root in settings.local_browse_roots_list:
-            try:
-                resolved.relative_to(Path(root).resolve())
-                allowed = True
-                break
-            except ValueError:
-                continue
-
-        if not allowed:
-            raise ValueError(
-                f"허용되지 않은 경로입니다: {path_str}\n"
-                f"접근 가능한 루트: {settings.local_browse_roots_list}"
-            )
-
-        if not resolved.exists():
+        if not p.exists():
             raise ValueError(f"경로가 존재하지 않습니다: {path_str}")
 
-        if expect_dir and not resolved.is_dir():
+        if expect_dir and not p.is_dir():
             raise ValueError(f"디렉토리가 아닙니다: {path_str}")
 
-        if not expect_dir and not resolved.is_file():
+        if not expect_dir and not p.is_file():
             raise ValueError(f"파일이 아닙니다: {path_str}")
 
-        return resolved
+        return p
 
     async def _next_version(self, group_id: str, split: str) -> str:
         """해당 group+split 의 다음 버전 자동 계산."""

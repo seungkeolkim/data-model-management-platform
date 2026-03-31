@@ -67,6 +67,7 @@ services:
       STORAGE_BACKEND: ${STORAGE_BACKEND:-local}
       LOCAL_STORAGE_BASE: /mnt/datasets   # 컨테이너 내부 경로 (고정)
       LOCAL_EDA_BASE: /mnt/eda            # 컨테이너 내부 경로 (고정)
+      LOCAL_UPLOAD_BASE: /mnt/uploads     # 컨테이너 내부 경로 (고정)
       APP_ENV: ${APP_ENV:-development}
       APP_DEBUG: ${APP_DEBUG:-true}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
@@ -77,6 +78,7 @@ services:
       # 예) LOCAL_STORAGE_BASE=./data/virtual_nas
       - ${LOCAL_STORAGE_BASE}:/mnt/datasets
       - ${LOCAL_EDA_BASE}:/mnt/eda
+      - ${LOCAL_UPLOAD_BASE}:/mnt/uploads
       # 개발 시 소스코드 hot reload
       - ./backend:/app
       # .venv를 named volume으로 분리 → 호스트 마운트로 덮어써지지 않게 보호
@@ -116,10 +118,12 @@ services:
   #     STORAGE_BACKEND: ${STORAGE_BACKEND:-local}
   #     LOCAL_STORAGE_BASE: /mnt/datasets
   #     LOCAL_EDA_BASE: /mnt/eda
+  #     LOCAL_UPLOAD_BASE: /mnt/uploads
   #     APP_ENV: ${APP_ENV:-development}
   #   volumes:
   #     - ${LOCAL_STORAGE_BASE}:/mnt/datasets
   #     - ${LOCAL_EDA_BASE}:/mnt/eda
+  #     - ${LOCAL_UPLOAD_BASE}:/mnt/uploads
   #     - ./backend:/app
   #   depends_on:
   #     postgres:

@@ -1,10 +1,11 @@
 """
 서버 파일 브라우저 API
 
-사용자가 서버 로컬 파일시스템을 GUI로 탐색하여
-이미지 폴더 및 어노테이션 파일을 선택할 수 있도록 지원.
+사용자가 /mnt/uploads (LOCAL_UPLOAD_BASE) 아래에 사전에 올려둔 데이터를
+GUI로 탐색하여 이미지 폴더 및 어노테이션 파일을 선택할 수 있도록 지원.
 
-허용 경로: LOCAL_BROWSE_ROOTS 환경변수로 지정한 루트들 하위만 접근 가능.
+경로 제한: docker-compose에서 LOCAL_UPLOAD_BASE 만 마운트하므로
+컨테이너는 그 외의 호스트 파일시스템에 접근할 수 없음.
 """
 from __future__ import annotations
 
@@ -23,27 +24,8 @@ from app.schemas.filebrowser import (
 router = APIRouter()
 
 
-def _resolve_safe(path_str: str) -> Path:
-    """
-    요청 경로를 정규화하고 허용된 루트 중 하나의 하위인지 검증.
-    통과하지 못하면 403 raise.
-    """
-    try:
-        resolved = Path(path_str).resolve()
-    except Exception as e:
-        raise HTTPException(status_code=400, detail="잘못된 경로입니다.") from e
-
-    for root in settings.local_browse_roots_list:
-        try:
-            resolved.relative_to(Path(root).resolve())
-            return resolved
-        except ValueError:
-            continue
-
-    raise HTTPException(
-        status_code=403,
-        detail=f"허용되지 않은 경로입니다. 접근 가능한 루트: {settings.local_browse_roots_list}",
-    )
+def _upload_root() -> Path:
+    return Path(settings.local_upload_base)
 
 
 def _make_entry(p: Path) -> FileBrowserEntry:
@@ -66,61 +48,55 @@ def _make_entry(p: Path) -> FileBrowserEntry:
 
 @router.get("/roots", response_model=FileBrowserRootsResponse)
 def list_roots():
-    """허용된 브라우저 루트 목록 반환."""
-    return FileBrowserRootsResponse(roots=settings.local_browse_roots_list)
+    """업로드 루트 경로 반환."""
+    return FileBrowserRootsResponse(roots=[str(_upload_root())])
 
 
 @router.get("/list", response_model=FileBrowserListResponse)
 def list_directory(
-    path: str = Query(default="", description="탐색할 절대경로. 비어있으면 루트 목록 반환."),
+    path: str = Query(default="", description="탐색할 절대경로. 비어있으면 업로드 루트 반환."),
     mode: str = Query(default="all", description="directory | file | all"),
 ):
     """
     디렉토리 내용 목록 반환.
 
-    - path 미입력: 허용된 루트 목록을 entries로 반환 (is_browse_root=True)
-    - path 입력: 해당 경로의 파일/디렉토리 목록 반환
+    - path 미입력: 업로드 루트 디렉토리 내용 반환
     - mode=directory: 디렉토리만 표시
     - mode=file: 파일만 표시
     - mode=all: 모두 표시
     """
-    # path가 비어있으면 루트 목록 화면
+    root = _upload_root()
+
     if not path.strip():
-        roots = settings.local_browse_roots_list
-        entries = []
-        for r in roots:
-            rp = Path(r)
-            if rp.exists():
-                entries.append(_make_entry(rp))
-        return FileBrowserListResponse(
-            current_path="",
-            parent_path=None,
-            is_browse_root=True,
-            entries=entries,
-        )
+        target = root
+    else:
+        target = Path(path)
 
-    resolved = _resolve_safe(path)
-
-    if not resolved.exists():
+    if not target.exists():
         raise HTTPException(status_code=404, detail=f"경로가 존재하지 않습니다: {path}")
-    if not resolved.is_dir():
-        raise HTTPException(status_code=400, detail="파일 경로가 아닌 디렉토리 경로를 지정하세요.")
+    if not target.is_dir():
+        raise HTTPException(status_code=400, detail="디렉토리 경로를 지정하세요.")
 
-    # 상위 경로 계산 (루트 중 하나면 parent_path=None)
-    parent = resolved.parent
-    parent_path: str | None = str(parent)
+    # 업로드 루트 상위는 표시하지 않음
     try:
-        for root in settings.local_browse_roots_list:
-            root_resolved = Path(root).resolve()
-            if resolved == root_resolved:
-                parent_path = None
-                break
-    except Exception:
-        pass
+        target.relative_to(root)
+    except ValueError:
+        target = root
 
-    # 디렉토리 내용 읽기
+    # 상위 경로 (루트면 None)
+    parent_path: str | None = None
+    is_browse_root = (target == root)
+    if not is_browse_root:
+        parent = target.parent
+        # parent가 root보다 상위이면 root로 고정
+        try:
+            parent.relative_to(root)
+            parent_path = str(parent)
+        except ValueError:
+            parent_path = str(root)
+
     try:
-        children = sorted(resolved.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))
+        children = sorted(target.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))
     except PermissionError as e:
         raise HTTPException(status_code=403, detail="디렉토리 접근 권한이 없습니다.") from e
 
@@ -135,8 +111,8 @@ def list_directory(
         entries.append(_make_entry(child))
 
     return FileBrowserListResponse(
-        current_path=str(resolved),
+        current_path=str(target),
         parent_path=parent_path,
-        is_browse_root=False,
+        is_browse_root=is_browse_root,
         entries=entries,
     )

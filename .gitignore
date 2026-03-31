@@ -213,3 +213,6 @@ data/virtual_nas/
 
 # claude code
 .claude/
+
+# vscode settings
+.vscode/
