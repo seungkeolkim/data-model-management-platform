@@ -7,6 +7,7 @@ import shutil
 import uuid
 from pathlib import Path
 
+import structlog
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -19,6 +20,8 @@ from app.schemas.dataset import (
     DatasetGroupUpdate,
     DatasetRegisterRequest,
 )
+
+logger = structlog.get_logger(__name__)
 
 
 class DatasetGroupService:
@@ -126,11 +129,13 @@ class DatasetGroupService:
         # ------------------------------------------------------------------
         # 소스 경로 검증
         # ------------------------------------------------------------------
+        logger.info("소스 경로 검증 시작", image_dir=req.source_image_dir, annotation_count=len(req.source_annotation_files))
         image_dir = self._validate_browse_path(req.source_image_dir, expect_dir=True)
         annotation_paths = [
             self._validate_browse_path(p, expect_dir=False)
             for p in req.source_annotation_files
         ]
+        logger.info("소스 경로 검증 완료")
 
         # 어노테이션 파일명 중복 검사
         filenames = [p.name for p in annotation_paths]
@@ -141,12 +146,14 @@ class DatasetGroupService:
         # 그룹 처리
         # ------------------------------------------------------------------
         if req.group_id:
+            logger.info("기존 그룹에 추가", group_id=req.group_id)
             result = await self.db.execute(
                 select(DatasetGroup).where(DatasetGroup.id == req.group_id)
             )
             group = result.scalar_one_or_none()
             if not group:
                 raise ValueError(f"DatasetGroup을 찾을 수 없습니다: {req.group_id}")
+            logger.info("기존 그룹 확인됨", group_name=group.name)
         else:
             existing = await self.db.execute(
                 select(DatasetGroup).where(DatasetGroup.name == req.group_name)
@@ -156,6 +163,7 @@ class DatasetGroupService:
                     f"동일한 이름의 데이터셋 그룹이 이미 존재합니다: '{req.group_name}'\n"
                     f"기존 그룹에 추가하려면 group_id를 지정하세요."
                 )
+            logger.info("신규 그룹 생성", group_name=req.group_name)
             group = DatasetGroup(
                 id=str(uuid.uuid4()),
                 name=req.group_name,
@@ -168,11 +176,13 @@ class DatasetGroupService:
             )
             self.db.add(group)
             await self.db.flush()
+            logger.info("신규 그룹 DB 저장 완료", group_id=group.id)
 
         # ------------------------------------------------------------------
         # 버전 자동 생성
         # ------------------------------------------------------------------
         version = await self._next_version(group.id, req.split)
+        logger.info("버전 자동 생성", version=version, split=req.split)
 
         dup = await self.db.execute(
             select(Dataset).where(
@@ -193,19 +203,25 @@ class DatasetGroupService:
         group_name = group.name
         storage_uri = self.storage.build_dataset_uri("RAW", group_name, req.split, version)
         dest_abs = Path(settings.local_storage_base) / storage_uri
+        logger.info("파일 복사 시작", storage_uri=storage_uri, dest=str(dest_abs))
 
         try:
             image_count = self.storage.copy_image_directory(image_dir, storage_uri)
+            logger.info("이미지 폴더 복사 완료", image_count=image_count)
             annotation_filenames = self.storage.copy_annotation_files(annotation_paths, storage_uri)
+            logger.info("어노테이션 파일 복사 완료", files=annotation_filenames)
         except Exception as e:
+            logger.error("파일 복사 실패", error=str(e), storage_uri=storage_uri)
             # 복사 실패 시 부분 생성된 디렉토리 정리
             if dest_abs.exists():
                 shutil.rmtree(dest_abs, ignore_errors=True)
+                logger.info("부분 생성 디렉토리 정리 완료", path=str(dest_abs))
             raise ValueError(f"파일 복사 중 오류가 발생했습니다: {e}") from e
 
         # ------------------------------------------------------------------
         # Dataset DB 저장
         # ------------------------------------------------------------------
+        logger.info("Dataset DB 저장 시작", group_id=group.id, split=req.split, version=version)
         dataset = Dataset(
             id=str(uuid.uuid4()),
             group_id=group.id,
@@ -220,6 +236,7 @@ class DatasetGroupService:
         )
         self.db.add(dataset)
         await self.db.flush()
+        logger.info("Dataset DB 저장 완료", dataset_id=dataset.id)
 
         return group, dataset
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 
+import structlog
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -13,6 +14,8 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import DeclarativeBase
 
 from app.core.config import settings
+
+logger = structlog.get_logger(__name__)
 
 
 # Async Engine
@@ -53,7 +56,8 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         try:
             yield session
             await session.commit()
-        except Exception:
+        except Exception as exc:
+            logger.error("DB 세션 에러 — 롤백 수행", error=str(exc), error_type=type(exc).__name__)
             await session.rollback()
             raise
         finally:

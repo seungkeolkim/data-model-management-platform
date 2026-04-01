@@ -196,6 +196,7 @@ export default function ServerFileBrowser({
       width={760}
       footer={footer}
       styles={{ body: { padding: '12px 0' } }}
+      zIndex={1010}
     >
       <Space direction="vertical" style={{ width: '100%', padding: '0 24px' }}>
         {/* 네비게이션 */}
@@ -220,7 +221,7 @@ export default function ServerFileBrowser({
             rowKey="path"
             rowSelection={rowSelection}
             size="small"
-            pagination={false}
+            pagination={{ pageSize: 50, showTotal: (total) => `총 ${total}개`, size: 'small', showSizeChanger: false }}
             scroll={{ y: 400 }}
             locale={{ emptyText: '비어있는 디렉토리입니다.' }}
             onRow={(record) => ({

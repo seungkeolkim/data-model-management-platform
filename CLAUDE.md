@@ -177,3 +177,15 @@ make up-build
 - 모든 API 경로는 `/api/v1` 접두사
 - Docker 기동 시 `alembic upgrade head` 자동 실행
 - `.env`에 시크릿 (gitignored), `config.ini`에 비민감 앱 설정
+
+### 네이밍 규칙 (절대 준수)
+
+**함수명·변수명은 한 글자 또는 한 단어 금지.** 이름만 보고 무엇을 하는지 알 수 있어야 한다.
+
+- 나쁜 예: `_m()`, `s`, `p`, `cfg`
+- 좋은 예: `_build_manipulator_seed_record()`, `storage_backend_config`, `annotation_file_path`, `app_config`
+
+**주석은 한글로 충실하게 작성.** 반년 뒤의 나는 다른 사람이다. 로직이 자명하지 않으면 반드시 설명을 달 것.
+
+- 함수·클래스는 docstring으로 역할, 인자, 주의사항을 기술한다
+- 단순한 루프 변수(`for item in items`)는 예외적으로 짧아도 무방하나, 용도가 불분명하면 풀어서 쓴다

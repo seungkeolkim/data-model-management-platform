@@ -22,12 +22,27 @@ down_revision: Union[str, None] = "001_initial"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-_NOW = datetime.utcnow().isoformat()
+_SEED_CREATED_AT = datetime.utcnow().isoformat()
 
 
-def _m(name, category, scope, task_types, annotation_fmts,
-        output_fmt=None, params_schema=None, description="", status="ACTIVE"):
-    """psycopg2는 dict/list를 JSONB로 자동 변환하지 않으므로 json.dumps() 직렬화 필요."""
+def _build_manipulator_seed_record(
+    name,
+    category,
+    scope,
+    task_types,
+    annotation_fmts,
+    output_fmt=None,
+    params_schema=None,
+    description="",
+    status="ACTIVE",
+):
+    """
+    Manipulator 시드 데이터 딕셔너리를 생성하여 반환한다.
+
+    psycopg2는 Python dict/list를 JSONB 컬럼에 자동 직렬화하지 않으므로,
+    scope, task_types, annotation_fmts, params_schema는 json.dumps()로 변환 후 삽입해야 한다.
+    bulk_insert 시 이 함수를 호출해 MANIPULATORS 리스트를 구성한다.
+    """
     return {
         "id": str(uuid.uuid4()),
         "name": name,
@@ -40,7 +55,7 @@ def _m(name, category, scope, task_types, annotation_fmts,
         "description": description,
         "status": status,
         "version": "1.0.0",
-        "created_at": _NOW,
+        "created_at": _SEED_CREATED_AT,
     }
 
 
@@ -48,7 +63,7 @@ MANIPULATORS = [
     # =========================================================================
     # PER_SOURCE - FILTER
     # =========================================================================
-    _m(
+    _build_manipulator_seed_record(
         name="filter_keep_by_class",
         category="FILTER",
         scope=["PER_SOURCE", "POST_MERGE"],
@@ -63,7 +78,7 @@ MANIPULATORS = [
             },
         },
     ),
-    _m(
+    _build_manipulator_seed_record(
         name="filter_remove_by_class",
         category="FILTER",
         scope=["PER_SOURCE", "POST_MERGE"],
@@ -78,7 +93,7 @@ MANIPULATORS = [
             },
         },
     ),
-    _m(
+    _build_manipulator_seed_record(
         name="filter_invalid_class_name",
         category="FILTER",
         scope=["PER_SOURCE", "POST_MERGE"],
@@ -99,7 +114,7 @@ MANIPULATORS = [
             },
         },
     ),
-    _m(
+    _build_manipulator_seed_record(
         name="filter_final_classes",
         category="FILTER",
         scope=["POST_MERGE"],
@@ -118,7 +133,7 @@ MANIPULATORS = [
     # =========================================================================
     # PER_SOURCE - REMAP
     # =========================================================================
-    _m(
+    _build_manipulator_seed_record(
         name="remap_class_name",
         category="REMAP",
         scope=["PER_SOURCE", "POST_MERGE"],
@@ -139,7 +154,7 @@ MANIPULATORS = [
     # =========================================================================
     # PER_SOURCE - AUGMENT
     # =========================================================================
-    _m(
+    _build_manipulator_seed_record(
         name="rotate_180",
         category="AUGMENT",
         scope=["PER_SOURCE"],
@@ -148,7 +163,7 @@ MANIPULATORS = [
         description="이미지 180도 회전 (annotation bbox/seg 좌표 자동 변환)",
         params_schema={},  # 파라미터 없음
     ),
-    _m(
+    _build_manipulator_seed_record(
         name="change_compression",
         category="AUGMENT",
         scope=["PER_SOURCE"],
@@ -172,7 +187,7 @@ MANIPULATORS = [
             },
         },
     ),
-    _m(
+    _build_manipulator_seed_record(
         name="mask_region_by_class",
         category="AUGMENT",
         scope=["PER_SOURCE"],
@@ -197,7 +212,7 @@ MANIPULATORS = [
     # =========================================================================
     # PER_SOURCE - FORMAT_CONVERT
     # =========================================================================
-    _m(
+    _build_manipulator_seed_record(
         name="format_convert_to_yolo",
         category="FORMAT_CONVERT",
         scope=["PER_SOURCE"],
@@ -207,7 +222,7 @@ MANIPULATORS = [
         description="COCO → YOLO 포맷 변환 (annotation 파일만 변환, 이미지 무변환)",
         params_schema={},
     ),
-    _m(
+    _build_manipulator_seed_record(
         name="format_convert_to_coco",
         category="FORMAT_CONVERT",
         scope=["PER_SOURCE"],
@@ -223,7 +238,7 @@ MANIPULATORS = [
             },
         },
     ),
-    _m(
+    _build_manipulator_seed_record(
         name="format_convert_visdrone_to_coco",
         category="FORMAT_CONVERT",
         scope=["PER_SOURCE"],
@@ -233,7 +248,7 @@ MANIPULATORS = [
         description="VisDrone txt 포맷 → COCO 변환",
         params_schema={},
     ),
-    _m(
+    _build_manipulator_seed_record(
         name="format_convert_visdrone_to_yolo",
         category="FORMAT_CONVERT",
         scope=["PER_SOURCE"],
@@ -247,7 +262,7 @@ MANIPULATORS = [
     # =========================================================================
     # PER_SOURCE & POST_MERGE - SAMPLE
     # =========================================================================
-    _m(
+    _build_manipulator_seed_record(
         name="sample_n_images",
         category="SAMPLE",
         scope=["PER_SOURCE", "POST_MERGE"],
@@ -272,7 +287,7 @@ MANIPULATORS = [
     # =========================================================================
     # POST_MERGE - MERGE / SHUFFLE
     # =========================================================================
-    _m(
+    _build_manipulator_seed_record(
         name="merge_datasets",
         category="MERGE",
         scope=["POST_MERGE"],
@@ -288,7 +303,7 @@ MANIPULATORS = [
             },
         },
     ),
-    _m(
+    _build_manipulator_seed_record(
         name="shuffle_image_ids",
         category="SAMPLE",
         scope=["POST_MERGE"],

@@ -22,7 +22,11 @@ import shutil
 from abc import ABC, abstractmethod
 from pathlib import Path
 
+import structlog
+
 from app.core.config import get_app_config, get_settings
+
+logger = structlog.get_logger(__name__)
 
 
 class StorageClient(ABC):
@@ -194,11 +198,14 @@ class LocalStorageClient(StorageClient):
         """이미지 폴더를 {dest_storage_uri}/images/ 로 복사."""
         cfg = get_app_config()
         dest = self.resolve_path(dest_storage_uri) / cfg.images_dirname
+        logger.info("copytree 시작 (이미지 폴더)", source=str(source_abs), dest=str(dest))
         shutil.copytree(source_abs, dest)
-        return sum(
+        image_count = sum(
             1 for p in dest.rglob("*")
             if p.is_file() and p.suffix.lower() in cfg.allowed_image_extensions
         )
+        logger.info("copytree 완료 (이미지 폴더)", image_count=image_count)
+        return image_count
 
     def copy_annotation_files(
         self, source_abs_paths: list[Path], dest_storage_uri: str
@@ -206,10 +213,12 @@ class LocalStorageClient(StorageClient):
         """어노테이션 파일들을 {dest_storage_uri}/ 로 복사. 원본 파일명 유지."""
         dest_dir = self.resolve_path(dest_storage_uri)
         dest_dir.mkdir(parents=True, exist_ok=True)
+        logger.info("어노테이션 파일 복사 시작", file_count=len(source_abs_paths), dest=str(dest_dir))
         filenames = []
         for src in source_abs_paths:
             shutil.copy2(src, dest_dir / src.name)
             filenames.append(src.name)
+        logger.info("어노테이션 파일 복사 완료", filenames=filenames)
         return filenames
 
     def count_images(self, storage_uri: str) -> int:
@@ -294,19 +303,19 @@ def get_storage_client() -> StorageClient:
         # 직접 사용
         client = get_storage_client()
     """
-    s = get_settings()
+    storage_backend_config = get_settings()
 
-    if s.storage_backend == "local":
+    if storage_backend_config.storage_backend == "local":
         return LocalStorageClient(
-            base_path=s.local_storage_base,
-            eda_base_path=s.local_eda_base,
+            base_path=storage_backend_config.local_storage_base,
+            eda_base_path=storage_backend_config.local_eda_base,
         )
-    elif s.storage_backend == "s3":
+    elif storage_backend_config.storage_backend == "s3":
         return S3StorageClient(
-            endpoint=s.s3_endpoint or "",
-            access_key=s.s3_access_key or "",
-            secret_key=s.s3_secret_key or "",
-            bucket=s.s3_bucket or "",
+            endpoint=storage_backend_config.s3_endpoint or "",
+            access_key=storage_backend_config.s3_access_key or "",
+            secret_key=storage_backend_config.s3_secret_key or "",
+            bucket=storage_backend_config.s3_bucket or "",
         )
     else:
-        raise ValueError(f"알 수 없는 STORAGE_BACKEND: {s.storage_backend}")
+        raise ValueError(f"알 수 없는 STORAGE_BACKEND: {storage_backend_config.storage_backend}")

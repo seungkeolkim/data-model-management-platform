@@ -4,9 +4,9 @@
  * 등록 흐름:
  *   Step 0. 사용 목적(task_types) 선택
  *   Step 1. 이미지 폴더 선택 + 어노테이션 파일 선택 + Split 선택
- *   Step 2. Annotation format 선택 + 그룹명 입력 → "등록"
+ *   Step 2. Annotation format 선택 + 그룹 선택(기존 or 신규) → "등록"
  */
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Modal,
   Form,
@@ -21,12 +21,14 @@ import {
   Radio,
   Steps,
   Descriptions,
+  Spin,
 } from 'antd'
 import {
   FolderOpenOutlined,
   FileOutlined,
   AppstoreOutlined,
   CloseCircleOutlined,
+  PlusOutlined,
 } from '@ant-design/icons'
 import { datasetGroupsApi } from '../../api/dataset'
 import ServerFileBrowser from '../common/ServerFileBrowser'
@@ -66,6 +68,9 @@ const FORMAT_TAG_COLOR: Record<string, string> = {
   CLS_FOLDER: 'geekblue', CUSTOM: 'purple', NONE: 'default',
 }
 
+/** 신규 그룹 생성 옵션의 sentinel 값 */
+const NEW_GROUP_SENTINEL = '__NEW_GROUP__'
+
 const SPLIT_OPTIONS = ['TRAIN', 'VAL', 'TEST', 'NONE'] as const
 
 // ─── 컴포넌트 ─────────────────────────────────────────────────────────────────
@@ -86,7 +91,29 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
   const [imageBrowserOpen, setImageBrowserOpen] = useState(false)
   const [annotationBrowserOpen, setAnnotationBrowserOpen] = useState(false)
 
+  // 기존 그룹 목록 (드롭다운용)
+  const [existingGroupList, setExistingGroupList] = useState<DatasetGroup[]>([])
+  const [groupListLoading, setGroupListLoading] = useState(false)
+  // 그룹 선택 상태: sentinel이면 신규 생성, group_id면 기존 그룹 선택
+  const [selectedGroupOption, setSelectedGroupOption] = useState<string>(NEW_GROUP_SENTINEL)
+
+  // 모달 열릴 때 기존 그룹 목록 fetch
+  useEffect(() => {
+    if (!open) return
+    if (existingGroup) return  // "Split 추가" 버튼으로 열린 경우 fetch 불필요
+    setGroupListLoading(true)
+    datasetGroupsApi
+      .list({ page: 1, page_size: 200 })
+      .then(res => {
+        const sorted = [...res.data.items].sort((a, b) => a.name.localeCompare(b.name))
+        setExistingGroupList(sorted)
+      })
+      .catch(() => setExistingGroupList([]))
+      .finally(() => setGroupListLoading(false))
+  }, [open, existingGroup])
+
   const isStep1Ready = imageDir !== null && annotationFiles.length > 0
+  const isNewGroup = selectedGroupOption === NEW_GROUP_SENTINEL
 
   // ── 등록 ─────────────────────────────────────────────────────────────────
   const handleSubmit = async () => {
@@ -103,9 +130,19 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
     setSubmitting(true)
     setSubmitError(null)
     try {
+      // 그룹 ID 결정: existingGroup prop > 드롭다운 기존 그룹 선택 > 신규 생성
+      let resolvedGroupId: string | undefined = existingGroup?.id
+      let resolvedGroupName: string | undefined
+      if (!existingGroup) {
+        if (isNewGroup) {
+          resolvedGroupName = values.group_name
+        } else {
+          resolvedGroupId = selectedGroupOption
+        }
+      }
       const payload = {
-        group_id:                existingGroup?.id,
-        group_name:              existingGroup ? undefined : values.group_name,
+        group_id:                resolvedGroupId,
+        group_name:              resolvedGroupName,
         task_types:              values.task_types as TaskType[],
         annotation_format:       (values.annotation_format ?? 'NONE') as AnnotationFormat,
         modality:                'RGB' as const,
@@ -133,6 +170,7 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
     setSubmitError(null)
     setImageDir(null)
     setAnnotationFiles([])
+    setSelectedGroupOption(NEW_GROUP_SENTINEL)
     onClose()
   }
 
@@ -343,14 +381,55 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
                   style={{ marginBottom: 16 }}
                 />
               ) : (
-                <Form.Item
-                  label="데이터셋 그룹명"
-                  name="group_name"
-                  rules={[{ required: !existingGroup, message: '그룹명을 입력하세요.' }]}
-                  extra={<Text type="secondary" style={{ fontSize: 12 }}>같은 데이터셋의 TRAIN/VAL/TEST를 묶는 단위</Text>}
-                >
-                  <Input placeholder="예: my_dataset_2024" />
-                </Form.Item>
+                <>
+                  <Form.Item
+                    label="데이터셋 그룹"
+                    required
+                    extra={<Text type="secondary" style={{ fontSize: 12 }}>같은 데이터셋의 TRAIN/VAL/TEST를 묶는 단위</Text>}
+                  >
+                    <Spin spinning={groupListLoading} size="small">
+                      <Select
+                        showSearch
+                        value={selectedGroupOption}
+                        onChange={(value: string) => {
+                          setSelectedGroupOption(value)
+                          // 기존 그룹 선택 시 group_name 필드 초기화
+                          if (value !== NEW_GROUP_SENTINEL) {
+                            form.setFieldValue('group_name', undefined)
+                          }
+                        }}
+                        optionFilterProp="label"
+                        placeholder="기존 그룹 선택 또는 새로 만들기"
+                      >
+                        <Option key={NEW_GROUP_SENTINEL} value={NEW_GROUP_SENTINEL} label="새 그룹 만들기">
+                          <Space>
+                            <PlusOutlined style={{ color: '#1677ff' }} />
+                            <Text strong style={{ color: '#1677ff' }}>새 그룹 만들기</Text>
+                          </Space>
+                        </Option>
+                        {existingGroupList.map(group => (
+                          <Option key={group.id} value={group.id} label={group.name}>
+                            <Space>
+                              <Text>{group.name}</Text>
+                              <Text type="secondary" style={{ fontSize: 11 }}>
+                                ({group.datasets.length}개 split)
+                              </Text>
+                            </Space>
+                          </Option>
+                        ))}
+                      </Select>
+                    </Spin>
+                  </Form.Item>
+                  {isNewGroup && (
+                    <Form.Item
+                      label="새 그룹명"
+                      name="group_name"
+                      rules={[{ required: true, message: '그룹명을 입력하세요.' }]}
+                    >
+                      <Input placeholder="예: my_dataset_2024" />
+                    </Form.Item>
+                  )}
+                </>
               )}
 
               <Form.Item label="설명 (선택)" name="description">
