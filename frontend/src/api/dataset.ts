@@ -44,6 +44,11 @@ export const datasetGroupsApi = {
 
   validateFormat: (data: FormatValidateRequest) =>
     api.post<FormatValidateResponse>('/dataset-groups/validate-format', data),
+
+  nextVersion: (groupId: string, split: string) =>
+    api.get<{ version: string }>('/dataset-groups/next-version', {
+      params: { group_id: groupId, split },
+    }),
 }
 
 // Individual Datasets

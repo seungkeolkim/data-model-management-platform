@@ -93,6 +93,18 @@ async def validate_annotation_format(
     return result
 
 
+@router.get("/next-version")
+async def get_next_version(
+    group_id: str = Query(..., description="데이터셋 그룹 ID"),
+    split: str = Query(..., description="TRAIN | VAL | TEST | NONE"),
+    db: AsyncSession = Depends(get_db),
+):
+    """해당 그룹+split의 다음 자동 생성 버전 조회."""
+    svc = DatasetGroupService(db)
+    version = await svc._next_version(group_id, split)
+    return {"version": version}
+
+
 # =============================================================================
 # 컬렉션 엔드포인트
 # =============================================================================

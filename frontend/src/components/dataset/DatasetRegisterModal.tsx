@@ -166,6 +166,9 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
   const [formatValidating, setFormatValidating] = useState(false)
   const [formatValidationResult, setFormatValidationResult] = useState<FormatValidateResponse | null>(null)
 
+  // 버전 미리보기
+  const [nextVersion, setNextVersion] = useState<string>('v1.0.0')
+
   // 기존 그룹 목록 (드롭다운용)
   const [existingGroupList, setExistingGroupList] = useState<DatasetGroup[]>([])
   const [groupListLoading, setGroupListLoading] = useState(false)
@@ -209,6 +212,19 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
 
   const isStep1Ready = imageDir !== null && annotationFiles.length > 0
   const isNewGroup = selectedGroupOption === NEW_GROUP_SENTINEL
+
+  /** 그룹+split 조합이 바뀔 때 다음 버전 조회 */
+  const fetchNextVersion = (groupId: string | null, split: string) => {
+    if (!groupId) {
+      // 신규 그룹이면 항상 v1.0.0
+      setNextVersion('v1.0.0')
+      return
+    }
+    datasetGroupsApi
+      .nextVersion(groupId, split)
+      .then(res => setNextVersion(res.data.version))
+      .catch(() => setNextVersion('v1.0.0'))
+  }
 
   // ── 등록 ─────────────────────────────────────────────────────────────────
   const handleSubmit = async () => {
@@ -300,6 +316,7 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
     setAnnotationFiles([])
     setSelectedGroupOption(NEW_GROUP_SENTINEL)
     setFormatValidationResult(null)
+    setNextVersion('v1.0.0')
     onClose()
   }
 
@@ -462,7 +479,15 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
 
               {/* Split */}
               <Form.Item label="Split" name="split" initialValue="NONE" rules={[{ required: true }]}>
-                <Radio.Group>
+                <Radio.Group
+                  onChange={(e) => {
+                    // Split 변경 시 버전 미리보기 갱신
+                    const newSplit = e.target.value
+                    const groupId = existingGroup?.id
+                      ?? (selectedGroupOption !== NEW_GROUP_SENTINEL ? selectedGroupOption : null)
+                    fetchNextVersion(groupId, newSplit)
+                  }}
+                >
                   {SPLIT_OPTIONS.map(s => <Radio.Button key={s} value={s}>{s}</Radio.Button>)}
                 </Radio.Group>
               </Form.Item>
@@ -471,7 +496,18 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
                 type="primary"
                 block
                 disabled={!isStep1Ready}
-                onClick={() => setCurrentStep(2)}
+                onClick={() => {
+                  setCurrentStep(2)
+                  // Step 2 진입 시 버전 미리보기 조회
+                  const currentSplit = form.getFieldValue('split') || 'NONE'
+                  if (existingGroup) {
+                    fetchNextVersion(existingGroup.id, currentSplit)
+                  } else if (selectedGroupOption !== NEW_GROUP_SENTINEL) {
+                    fetchNextVersion(selectedGroupOption, currentSplit)
+                  } else {
+                    setNextVersion('v1.0.0')
+                  }
+                }}
                 style={{ marginBottom: 4 }}
               >
                 다음 단계 →
@@ -635,6 +671,12 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
                           if (value !== NEW_GROUP_SENTINEL) {
                             form.setFieldValue('group_name', undefined)
                           }
+                          // 그룹 변경 시 버전 미리보기 갱신
+                          const currentSplit = form.getFieldValue('split') || 'NONE'
+                          fetchNextVersion(
+                            value === NEW_GROUP_SENTINEL ? null : value,
+                            currentSplit,
+                          )
                         }}
                         optionFilterProp="label"
                         placeholder="기존 그룹 선택 또는 새로 만들기"
@@ -700,6 +742,10 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
                 </Descriptions.Item>
                 <Descriptions.Item label="Annotation Format">
                   <Tag color={FORMAT_TAG_COLOR[selectedFormat] ?? 'default'}>{selectedFormat}</Tag>
+                </Descriptions.Item>
+                <Descriptions.Item label="버전">
+                  <Tag color="blue">{nextVersion}</Tag>
+                  <Text type="secondary" style={{ fontSize: 11, marginLeft: 4 }}>자동 생성</Text>
                 </Descriptions.Item>
               </Descriptions>
 
