@@ -420,15 +420,16 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
                       </Select>
                     </Spin>
                   </Form.Item>
-                  {isNewGroup && (
-                    <Form.Item
-                      label="새 그룹명"
-                      name="group_name"
-                      rules={[{ required: true, message: '그룹명을 입력하세요.' }]}
-                    >
-                      <Input placeholder="예: my_dataset_2024" />
-                    </Form.Item>
-                  )}
+                  <Form.Item
+                    label="새 그룹명"
+                    name="group_name"
+                    rules={[{ required: isNewGroup, message: '그룹명을 입력하세요.' }]}
+                  >
+                    <Input
+                      placeholder={isNewGroup ? '예: my_dataset_2024' : '위 드롭다운에서 "새 그룹 만들기"를 선택하세요'}
+                      disabled={!isNewGroup}
+                    />
+                  </Form.Item>
                 </>
               )}
 
