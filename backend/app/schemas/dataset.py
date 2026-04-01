@@ -85,6 +85,7 @@ class DatasetSummary(BaseModel):
     class_count: int | None
     annotation_format: str | None
     storage_uri: str
+    annotation_files: list[str] | None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -120,6 +121,7 @@ class DatasetBase(BaseModel):
     status: str = Field(default="PENDING")
     image_count: int | None = None
     class_count: int | None = None
+    annotation_files: list[str] | None = None
 
 
 class DatasetCreate(DatasetBase):
@@ -129,11 +131,10 @@ class DatasetCreate(DatasetBase):
 
 class DatasetRegisterRequest(BaseModel):
     """
-    GUI Dataset 등록 요청.
-    - task_types: 사용자가 드롭다운으로 선택 (DETECTION / SEGMENTATION / CLASSIFICATION 등)
-    - annotation_format: 등록 후 선택 (COCO / YOLO / ATTR_JSON / CLS_FOLDER / CUSTOM / NONE)
-    - storage_uri: NAS 마운트 기준 상대경로 (예: raw/my_dataset/train/v1.0.0)
-    - 경로 존재 여부만 검사. annotation 정합성 체크는 별도 단계에서 수행.
+    GUI Dataset 등록 요청 (파일 브라우저 방식).
+    - source_image_dir: 이미지 폴더 절대경로 (LOCAL_BROWSE_ROOTS 중 하나의 하위여야 함)
+    - source_annotation_files: 어노테이션 파일 절대경로 목록
+    - 플랫폼이 파일을 관리 스토리지로 복사하고, 버전을 자동 생성함
     """
     # 그룹 정보
     group_id: str | None = Field(default=None, description="기존 그룹 ID (새 그룹이면 None)")
@@ -157,16 +158,20 @@ class DatasetRegisterRequest(BaseModel):
 
     # Dataset(split/version) 정보
     split: ALLOWED_SPLITS = Field(default="NONE", description="TRAIN | VAL | TEST | NONE")
-    version: str | None = Field(default=None, description="미입력 시 v1.0.0 자동 생성")
 
-    # NAS 경로 (LOCAL_STORAGE_BASE 기준 상대경로)
-    storage_uri: str = Field(
+    # 소스 파일 경로 (LOCAL_BROWSE_ROOTS 하위 절대경로)
+    source_image_dir: str = Field(
         ...,
-        description="NAS 마운트 기준 상대경로 (예: raw/my_dataset/train/v1.0.0)",
+        description="이미지 폴더 절대경로 (예: /home/user/uploads/my_data/images)",
+    )
+    source_annotation_files: list[str] = Field(
+        ...,
+        min_length=1,
+        description="어노테이션 파일 절대경로 목록",
     )
 
     @model_validator(mode="after")
-    def check_group_identifier(self) -> "DatasetRegisterRequest":
+    def check_group_identifier(self) -> DatasetRegisterRequest:
         if not self.group_id and not self.group_name:
             raise ValueError("group_id 또는 group_name 중 하나는 필수입니다.")
         return self
@@ -180,25 +185,6 @@ class DatasetResponse(DatasetBase):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
-
-
-class DatasetValidateRequest(BaseModel):
-    """NAS 경로 유효성 검사 요청."""
-    storage_uri: str
-
-
-class DatasetValidateResponse(BaseModel):
-    """NAS 경로 유효성 검사 응답."""
-    storage_uri: str
-    path_exists: bool
-    images_dir_exists: bool
-    annotation_exists: bool
-    image_count: int
-    # COCO 검증 결과
-    coco_valid: bool = False
-    coco_categories: list[str] = []
-    coco_annotation_count: int = 0
-    error: str | None = None
 
 
 # =============================================================================

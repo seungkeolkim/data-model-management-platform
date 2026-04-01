@@ -5,10 +5,11 @@ from fastapi import APIRouter
 
 from app.api.v1.dataset_groups.router import router as dataset_groups_router
 from app.api.v1.datasets.router import router as datasets_router
+from app.api.v1.eda.router import router as eda_router
+from app.api.v1.filebrowser.router import router as filebrowser_router
 from app.api.v1.lineage.router import router as lineage_router
 from app.api.v1.manipulators.router import router as manipulators_router
 from app.api.v1.pipelines.router import router as pipelines_router
-from app.api.v1.eda.router import router as eda_router
 from app.api.v1.training.router import router as training_router
 
 api_router = APIRouter()
@@ -16,6 +17,7 @@ api_router = APIRouter()
 # Phase 1 - 데이터셋 관리
 api_router.include_router(dataset_groups_router, prefix="/dataset-groups", tags=["dataset-groups"])
 api_router.include_router(datasets_router, prefix="/datasets", tags=["datasets"])
+api_router.include_router(filebrowser_router, prefix="/filebrowser", tags=["filebrowser"])
 
 # Phase 2 - 파이프라인 & Manipulator
 api_router.include_router(pipelines_router, prefix="/pipelines", tags=["pipelines"])

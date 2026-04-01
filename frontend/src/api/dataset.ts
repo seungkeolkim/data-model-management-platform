@@ -8,9 +8,9 @@ import type {
   DatasetGroupUpdate,
   DatasetGroupListResponse,
   DatasetRegisterRequest,
-  DatasetValidateRequest,
-  DatasetValidateResponse,
   Dataset,
+  FileBrowserListResponse,
+  FileBrowserRootsResponse,
 } from '../types/dataset'
 
 // Dataset Groups
@@ -35,9 +35,6 @@ export const datasetGroupsApi = {
   delete: (groupId: string) =>
     api.delete<{ message: string }>(`/dataset-groups/${groupId}`),
 
-  validatePath: (data: DatasetValidateRequest) =>
-    api.post<DatasetValidateResponse>('/dataset-groups/validate-path', data),
-
   register: (data: DatasetRegisterRequest) =>
     api.post<DatasetGroup>('/dataset-groups/register', data),
 }
@@ -52,6 +49,15 @@ export const datasetsApi = {
 
   delete: (datasetId: string) =>
     api.delete<{ message: string }>(`/datasets/${datasetId}`),
+}
+
+// File Browser
+export const fileBrowserApi = {
+  roots: () =>
+    api.get<FileBrowserRootsResponse>('/filebrowser/roots'),
+
+  list: (params?: { path?: string; mode?: 'directory' | 'file' | 'all' }) =>
+    api.get<FileBrowserListResponse>('/filebrowser/list', { params }),
 }
 
 // Health

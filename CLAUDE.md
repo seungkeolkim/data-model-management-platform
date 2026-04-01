@@ -73,7 +73,7 @@ Docker Compose로 4개 서비스 운영: **postgres:16**, **backend** (Uvicorn),
 ### 백엔드
 
 - **진입점:** `backend/app/main.py` — FastAPI 앱, CORS, lifespan, health 엔드포인트
-- **API 라우터:** `backend/app/api/v1/` — 도메인별 분리: `dataset_groups/`, `datasets/`, `pipelines/`, `manipulators/`, `eda/`, `lineage/`, `training/`
+- **API 라우터:** `backend/app/api/v1/` — 도메인별 분리: `dataset_groups/`, `datasets/`, `pipelines/`, `manipulators/`, `eda/`, `lineage/`, `training/`, `filebrowser/`
 - **ORM 모델:** `backend/app/models/all_models.py` — 전체 SQLAlchemy 모델 단일 파일 (DatasetGroup, Dataset, DatasetLineage, Manipulator, PipelineExecution, Objective)
 - **비즈니스 로직:** `backend/app/services/` — 라우터와 모델 사이 서비스 레이어
 - **설정:** `backend/app/core/config.py` — Pydantic Settings로 `.env` 로드; 비민감 설정은 루트 `config.ini`
@@ -99,18 +99,70 @@ Docker Compose로 4개 서비스 운영: **postgres:16**, **backend** (Uvicorn),
 - **DatasetLineage**: 파이프라인을 통한 변환 이력을 추적하는 parent→child 엣지
 - **PipelineExecution**: 파이프라인 실행 이력 + Celery 태스크 추적
 
-### 데이터셋 등록 플로우
+### 데이터셋 타입 계층 관계
+
+데이터 상태는 **RAW / SOURCE / PROCESSED / FUSION** 4가지로 고정. 코드, 문서, 대화 모두 이 표기를 일관되게 사용할 것.
+
+```
+RAW
+ └─(format_convert, remap 등)──▶ SOURCE
+                                    └─(augment, filter 등)──▶ PROCESSED
+                                                                │
+                                    (SOURCE/PROCESSED)─────────┴─(merge)──▶ FUSION
+```
+
+| 타입 | 의미 |
+|---|---|
+| RAW | 플랫폼 외부에서 수동으로 NAS에 올리고 GUI로 직접 등록. 파이프라인 입력으로는 쓰지 않는 것이 원칙 |
+| SOURCE | RAW를 파이프라인으로 정제한 결과 (예: VisDrone→COCO, class remap). 파이프라인의 실질적 입력 시작점 |
+| PROCESSED | SOURCE에 augmentation/filter 등을 적용한 학습용 데이터 |
+| FUSION | 여러 SOURCE/PROCESSED를 merge한 결과 |
+
+**등록 원칙 (절대 규칙)**
+- RAW: 사람이 NAS에 직접 업로드 후 GUI로 등록
+- SOURCE / PROCESSED / FUSION: 반드시 파이프라인을 통해서만 생성. 사람의 직접 파일 수정 및 DB 조작 금지
+
+**Lineage 메커니즘**
+
+파이프라인 실행 1회 = 새로운 Dataset 1개 생성 + lineage 엣지 자동 기록.
+Palantir Foundry의 data lineage / Spark RDD transformation plan과 동일한 개념.
+
+```
+[SOURCE A]──[per-source ops]──┐
+                               ├──[merge]──[post-merge ops]──▶ [FUSION C]
+[SOURCE B]──[per-source ops]──┘
+```
+
+생성되는 lineage 엣지: `A → C`, `B → C` (각각 transform_config 스냅샷 포함)
+
+- **재현**: transform_config 스냅샷으로 동일 파이프라인 언제든 재실행 가능
+- **역추적**: 특정 Dataset의 upstream 전체를 재귀 CTE로 조회
+- **영향 분석**: 특정 Dataset 변경 시 downstream 영향 범위 파악
+- **시각화**: Phase 2-b — React Flow DAG (노드=Dataset, 엣지=변형 내용)
+
+타입 간 변환 경로를 강제하는 DB/코드 제약은 없음 — `dataset_type`은 DatasetGroup의 속성값일 뿐.
+
+### RAW 데이터셋 등록 플로우
+
+사전 조건: 사용자가 등록할 데이터를 `LOCAL_UPLOAD_BASE` 경로에 미리 복사해 둔다 (컨테이너는 해당 경로만 마운트).
 
 3단계 위자드 UI:
-1. 태스크 타입 선택 (다중 선택)
-2. NAS 경로 검증 (COCO 어노테이션 유효성 검사, 이미지 수 확인)
-3. 어노테이션 포맷 선택 + 그룹명 입력 → 등록
+1. **태스크 타입 선택** — 다중 선택 (DETECTION, SEGMENTATION 등)
+2. **파일 선택** — 서버 파일 브라우저(`GET /api/v1/filebrowser/list`)로 `/mnt/uploads` 하위를 탐색
+   - 이미지 디렉토리 1개 선택 (directory 모드)
+   - 어노테이션 파일 1개 이상 선택 (file 모드, 다중 선택 가능)
+3. **어노테이션 포맷 + 그룹명 입력 → 등록**
+   - 백엔드가 선택된 경로에서 `LOCAL_STORAGE_BASE`로 파일을 **copy** (원본 유지, move 아님)
+   - 버전 자동 생성, 어노테이션 파일명 DB 저장 (`annotation_files` JSONB 컬럼)
 
 ## 환경 설정
 
 ```bash
 cp .env.example .env
-# LOCAL_STORAGE_BASE, LOCAL_EDA_BASE를 접근 가능한 디렉토리로 설정
+# 아래 3개 경로를 접근 가능한 디렉토리로 설정:
+#   LOCAL_STORAGE_BASE — 플랫폼이 관리하는 데이터셋 저장 경로
+#   LOCAL_EDA_BASE     — EDA 결과 저장 경로
+#   LOCAL_UPLOAD_BASE  — 사용자가 등록 전 데이터를 올려두는 업로드 전용 경로
 make check    # .env 및 경로 유효성 검증
 make up-build
 ```
