@@ -107,6 +107,21 @@ export interface DatasetRegisterRequest {
 }
 
 // =============================================================================
+// 포맷 검증
+// =============================================================================
+
+export interface FormatValidateRequest {
+  annotation_format: string
+  annotation_files: string[]
+}
+
+export interface FormatValidateResponse {
+  valid: boolean
+  errors: string[]
+  summary: Record<string, unknown> | null
+}
+
+// =============================================================================
 // 파일 브라우저
 // =============================================================================
 

@@ -8,6 +8,8 @@ import type {
   DatasetGroupUpdate,
   DatasetGroupListResponse,
   DatasetRegisterRequest,
+  FormatValidateRequest,
+  FormatValidateResponse,
   Dataset,
   FileBrowserListResponse,
   FileBrowserRootsResponse,
@@ -35,8 +37,18 @@ export const datasetGroupsApi = {
   delete: (groupId: string) =>
     api.delete<{ message: string }>(`/dataset-groups/${groupId}`),
 
-  register: (data: DatasetRegisterRequest) =>
-    api.post<DatasetGroup>('/dataset-groups/register', data),
+  register: (data: DatasetRegisterRequest, timeoutMs?: number) =>
+    api.post<DatasetGroup>('/dataset-groups/register', data, {
+      timeout: timeoutMs ?? 60 * 60 * 1000,  // 대용량 파일 복사 포함 — 기본 1시간 타임아웃
+    }),
+
+  validateFormat: (data: FormatValidateRequest) =>
+    api.post<FormatValidateResponse>('/dataset-groups/validate-format', data),
+
+  nextVersion: (groupId: string, split: string) =>
+    api.get<{ version: string }>('/dataset-groups/next-version', {
+      params: { group_id: groupId, split },
+    }),
 }
 
 // Individual Datasets

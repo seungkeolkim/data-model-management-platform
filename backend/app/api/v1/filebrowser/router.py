@@ -9,6 +9,7 @@ GUI로 탐색하여 이미지 폴더 및 어노테이션 파일을 선택할 수
 """
 from __future__ import annotations
 
+import structlog
 from datetime import datetime
 from pathlib import Path
 
@@ -20,6 +21,8 @@ from app.schemas.filebrowser import (
     FileBrowserListResponse,
     FileBrowserRootsResponse,
 )
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 
@@ -49,6 +52,7 @@ def _make_entry(p: Path) -> FileBrowserEntry:
 @router.get("/roots", response_model=FileBrowserRootsResponse)
 def list_roots():
     """업로드 루트 경로 반환."""
+    logger.info("파일 브라우저 루트 조회", root=str(_upload_root()))
     return FileBrowserRootsResponse(roots=[str(_upload_root())])
 
 
@@ -65,6 +69,7 @@ def list_directory(
     - mode=file: 파일만 표시
     - mode=all: 모두 표시
     """
+    logger.info("디렉토리 목록 조회", path=path, mode=mode)
     root = _upload_root()
 
     if not path.strip():
@@ -73,8 +78,10 @@ def list_directory(
         target = Path(path)
 
     if not target.exists():
+        logger.warning("디렉토리 조회 실패 — 경로 없음", path=path)
         raise HTTPException(status_code=404, detail=f"경로가 존재하지 않습니다: {path}")
     if not target.is_dir():
+        logger.warning("디렉토리 조회 실패 — 파일 경로", path=path)
         raise HTTPException(status_code=400, detail="디렉토리 경로를 지정하세요.")
 
     # 업로드 루트 상위는 표시하지 않음
@@ -110,6 +117,7 @@ def list_directory(
             continue
         entries.append(_make_entry(child))
 
+    logger.info("디렉토리 목록 조회 완료", path=str(target), entry_count=len(entries))
     return FileBrowserListResponse(
         current_path=str(target),
         parent_path=parent_path,

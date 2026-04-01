@@ -10,7 +10,7 @@
 스토리지 구조:
   {base}/
     raw/{name}/{split}/{version}/images/
-    raw/{name}/{split}/{version}/annotation.json
+    raw/{name}/{split}/{version}/annotations/
     source/...
     processed/...
     fusion/...
@@ -22,7 +22,11 @@ import shutil
 from abc import ABC, abstractmethod
 from pathlib import Path
 
+import structlog
+
 from app.core.config import get_app_config, get_settings
+
+logger = structlog.get_logger(__name__)
 
 
 class StorageClient(ABC):
@@ -113,10 +117,10 @@ class StorageClient(ABC):
         cfg = get_app_config()
         return self.resolve_path(storage_uri) / cfg.images_dirname
 
-    def get_annotation_path(self, storage_uri: str) -> Path:
-        """annotation.json 경로 반환."""
+    def get_annotations_dir(self, storage_uri: str) -> Path:
+        """annotations/ 디렉토리 경로 반환."""
         cfg = get_app_config()
-        return self.resolve_path(storage_uri) / cfg.annotation_filename
+        return self.resolve_path(storage_uri) / cfg.annotations_dirname
 
     @abstractmethod
     def copy_image_directory(self, source_abs: Path, dest_storage_uri: str) -> int:
@@ -137,7 +141,7 @@ class StorageClient(ABC):
         self, source_abs_paths: list[Path], dest_storage_uri: str
     ) -> list[str]:
         """
-        어노테이션 파일들을 관리 스토리지의 dataset 루트로 복사. 원본 파일명 유지.
+        어노테이션 파일들을 관리 스토리지의 annotations/ 하위로 복사. 원본 파일명 유지.
 
         Args:
             source_abs_paths: 원본 어노테이션 파일 절대경로 목록
@@ -194,22 +198,28 @@ class LocalStorageClient(StorageClient):
         """이미지 폴더를 {dest_storage_uri}/images/ 로 복사."""
         cfg = get_app_config()
         dest = self.resolve_path(dest_storage_uri) / cfg.images_dirname
+        logger.info("copytree 시작 (이미지 폴더)", source=str(source_abs), dest=str(dest))
         shutil.copytree(source_abs, dest)
-        return sum(
+        image_count = sum(
             1 for p in dest.rglob("*")
             if p.is_file() and p.suffix.lower() in cfg.allowed_image_extensions
         )
+        logger.info("copytree 완료 (이미지 폴더)", image_count=image_count)
+        return image_count
 
     def copy_annotation_files(
         self, source_abs_paths: list[Path], dest_storage_uri: str
     ) -> list[str]:
-        """어노테이션 파일들을 {dest_storage_uri}/ 로 복사. 원본 파일명 유지."""
-        dest_dir = self.resolve_path(dest_storage_uri)
+        """어노테이션 파일들을 {dest_storage_uri}/annotations/ 로 복사. 원본 파일명 유지."""
+        cfg = get_app_config()
+        dest_dir = self.resolve_path(dest_storage_uri) / cfg.annotations_dirname
         dest_dir.mkdir(parents=True, exist_ok=True)
+        logger.info("어노테이션 파일 복사 시작", file_count=len(source_abs_paths), dest=str(dest_dir))
         filenames = []
         for src in source_abs_paths:
             shutil.copy2(src, dest_dir / src.name)
             filenames.append(src.name)
+        logger.info("어노테이션 파일 복사 완료", file_count=len(filenames))
         return filenames
 
     def count_images(self, storage_uri: str) -> int:
@@ -228,7 +238,7 @@ class LocalStorageClient(StorageClient):
         cfg = get_app_config()
         base = self.resolve_path(storage_uri)
         images_dir = base / cfg.images_dirname
-        annotation_file = base / cfg.annotation_filename
+        annotations_dir = base / cfg.annotations_dirname
 
         image_count = 0
         if images_dir.exists():
@@ -237,11 +247,16 @@ class LocalStorageClient(StorageClient):
                 if p.is_file() and p.suffix.lower() in cfg.allowed_image_extensions
             )
 
+        annotation_count = 0
+        if annotations_dir.exists():
+            annotation_count = sum(1 for p in annotations_dir.iterdir() if p.is_file())
+
         return {
             "path_exists": base.exists(),
             "images_dir_exists": images_dir.exists(),
-            "annotation_exists": annotation_file.exists(),
+            "annotations_dir_exists": annotations_dir.exists(),
             "image_count": image_count,
+            "annotation_count": annotation_count,
         }
 
 
@@ -294,19 +309,19 @@ def get_storage_client() -> StorageClient:
         # 직접 사용
         client = get_storage_client()
     """
-    s = get_settings()
+    storage_backend_config = get_settings()
 
-    if s.storage_backend == "local":
+    if storage_backend_config.storage_backend == "local":
         return LocalStorageClient(
-            base_path=s.local_storage_base,
-            eda_base_path=s.local_eda_base,
+            base_path=storage_backend_config.local_storage_base,
+            eda_base_path=storage_backend_config.local_eda_base,
         )
-    elif s.storage_backend == "s3":
+    elif storage_backend_config.storage_backend == "s3":
         return S3StorageClient(
-            endpoint=s.s3_endpoint or "",
-            access_key=s.s3_access_key or "",
-            secret_key=s.s3_secret_key or "",
-            bucket=s.s3_bucket or "",
+            endpoint=storage_backend_config.s3_endpoint or "",
+            access_key=storage_backend_config.s3_access_key or "",
+            secret_key=storage_backend_config.s3_secret_key or "",
+            bucket=storage_backend_config.s3_bucket or "",
         )
     else:
-        raise ValueError(f"알 수 없는 STORAGE_BACKEND: {s.storage_backend}")
+        raise ValueError(f"알 수 없는 STORAGE_BACKEND: {storage_backend_config.storage_backend}")

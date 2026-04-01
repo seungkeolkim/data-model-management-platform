@@ -4,9 +4,9 @@
  * 등록 흐름:
  *   Step 0. 사용 목적(task_types) 선택
  *   Step 1. 이미지 폴더 선택 + 어노테이션 파일 선택 + Split 선택
- *   Step 2. Annotation format 선택 + 그룹명 입력 → "등록"
+ *   Step 2. Annotation format 선택 + 그룹 선택(기존 or 신규) → "등록"
  */
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
   Modal,
   Form,
@@ -21,16 +21,20 @@ import {
   Radio,
   Steps,
   Descriptions,
+  Spin,
 } from 'antd'
 import {
   FolderOpenOutlined,
   FileOutlined,
   AppstoreOutlined,
   CloseCircleOutlined,
+  PlusOutlined,
+  CheckCircleOutlined,
+  SafetyCertificateOutlined,
 } from '@ant-design/icons'
 import { datasetGroupsApi } from '../../api/dataset'
 import ServerFileBrowser from '../common/ServerFileBrowser'
-import type { DatasetGroup, TaskType, AnnotationFormat } from '../../types/dataset'
+import type { DatasetGroup, TaskType, AnnotationFormat, FormatValidateResponse } from '../../types/dataset'
 
 const { Text } = Typography
 const { Option } = Select
@@ -66,7 +70,75 @@ const FORMAT_TAG_COLOR: Record<string, string> = {
   CLS_FOLDER: 'geekblue', CUSTOM: 'purple', NONE: 'default',
 }
 
+/** 신규 그룹 생성 옵션의 sentinel 값 */
+const NEW_GROUP_SENTINEL = '__NEW_GROUP__'
+
+/** 같은 폴더 내 파일이 이 수를 넘으면 폴더 단위로 축약 표시 */
+const FOLDER_COLLAPSE_THRESHOLD = 5
+
+/**
+ * 어노테이션 파일 목록을 폴더별로 그룹핑.
+ * 같은 폴더의 파일이 FOLDER_COLLAPSE_THRESHOLD 이하면 개별 표시,
+ * 초과하면 폴더 단위로 축약 표시.
+ */
+interface AnnotationDisplayItem {
+  /** 'file' = 개별 파일 표시, 'folder' = 폴더 축약 표시 */
+  type: 'file' | 'folder'
+  /** file: 전체 경로, folder: 폴더 경로 */
+  path: string
+  /** file: 파일명, folder: 폴더명 */
+  displayName: string
+  /** folder일 때 포함된 파일 수 */
+  fileCount?: number
+  /** folder일 때 포함된 파일 경로 목록 (삭제 시 사용) */
+  filePaths?: string[]
+}
+
+function groupAnnotationFilesForDisplay(filePaths: string[]): AnnotationDisplayItem[] {
+  // 폴더별로 파일 그룹핑
+  const folderMap = new Map<string, string[]>()
+  for (const filePath of filePaths) {
+    const lastSlashIndex = filePath.lastIndexOf('/')
+    const folderPath = lastSlashIndex >= 0 ? filePath.substring(0, lastSlashIndex) : ''
+    const existing = folderMap.get(folderPath)
+    if (existing) {
+      existing.push(filePath)
+    } else {
+      folderMap.set(folderPath, [filePath])
+    }
+  }
+
+  const result: AnnotationDisplayItem[] = []
+  for (const [folderPath, files] of folderMap) {
+    if (files.length > FOLDER_COLLAPSE_THRESHOLD) {
+      // 폴더 단위 축약 표시
+      const folderName = folderPath.split('/').pop() || folderPath
+      result.push({
+        type: 'folder',
+        path: folderPath,
+        displayName: folderName,
+        fileCount: files.length,
+        filePaths: files,
+      })
+    } else {
+      // 개별 파일 표시
+      for (const filePath of files) {
+        result.push({
+          type: 'file',
+          path: filePath,
+          displayName: filePath.split('/').pop() || filePath,
+        })
+      }
+    }
+  }
+  return result
+}
+
 const SPLIT_OPTIONS = ['TRAIN', 'VAL', 'TEST', 'NONE'] as const
+
+/** 등록 API 타임아웃 — .env의 VITE_REGISTER_TIMEOUT_MINUTES에서 읽음 (기본 60분) */
+const REGISTER_TIMEOUT_MINUTES = Number(import.meta.env.VITE_REGISTER_TIMEOUT_MINUTES) || 60
+const REGISTER_TIMEOUT_MS = REGISTER_TIMEOUT_MINUTES * 60 * 1000
 
 // ─── 컴포넌트 ─────────────────────────────────────────────────────────────────
 
@@ -77,6 +149,10 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
   const [selectedFormat, setSelectedFormat] = useState<AnnotationFormat>('NONE')
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
+  const [elapsedSeconds, setElapsedSeconds] = useState(0)
+  const elapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  /** 등록 중 표시할 복사 대상 경로 (상대경로) */
+  const [submittingDestPath, setSubmittingDestPath] = useState<string>('')
 
   // 파일 선택 상태
   const [imageDir, setImageDir] = useState<string | null>(null)
@@ -86,7 +162,69 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
   const [imageBrowserOpen, setImageBrowserOpen] = useState(false)
   const [annotationBrowserOpen, setAnnotationBrowserOpen] = useState(false)
 
+  // 포맷 검증 상태
+  const [formatValidating, setFormatValidating] = useState(false)
+  const [formatValidationResult, setFormatValidationResult] = useState<FormatValidateResponse | null>(null)
+
+  // 버전 미리보기
+  const [nextVersion, setNextVersion] = useState<string>('v1.0.0')
+
+  // 기존 그룹 목록 (드롭다운용)
+  const [existingGroupList, setExistingGroupList] = useState<DatasetGroup[]>([])
+  const [groupListLoading, setGroupListLoading] = useState(false)
+  // 그룹 선택 상태: sentinel이면 신규 생성, group_id면 기존 그룹 선택
+  const [selectedGroupOption, setSelectedGroupOption] = useState<string>(NEW_GROUP_SENTINEL)
+
+  // 등록 중 경과 시간 타이머
+  useEffect(() => {
+    if (submitting) {
+      setElapsedSeconds(0)
+      elapsedTimerRef.current = setInterval(() => {
+        setElapsedSeconds(prev => prev + 1)
+      }, 1000)
+    } else {
+      if (elapsedTimerRef.current) {
+        clearInterval(elapsedTimerRef.current)
+        elapsedTimerRef.current = null
+      }
+    }
+    return () => {
+      if (elapsedTimerRef.current) {
+        clearInterval(elapsedTimerRef.current)
+      }
+    }
+  }, [submitting])
+
+  // 모달 열릴 때 기존 그룹 목록 fetch
+  useEffect(() => {
+    if (!open) return
+    if (existingGroup) return  // "Split 추가" 버튼으로 열린 경우 fetch 불필요
+    setGroupListLoading(true)
+    datasetGroupsApi
+      .list({ page: 1, page_size: 200 })
+      .then(res => {
+        const sorted = [...res.data.items].sort((a, b) => a.name.localeCompare(b.name))
+        setExistingGroupList(sorted)
+      })
+      .catch(() => setExistingGroupList([]))
+      .finally(() => setGroupListLoading(false))
+  }, [open, existingGroup])
+
   const isStep1Ready = imageDir !== null && annotationFiles.length > 0
+  const isNewGroup = selectedGroupOption === NEW_GROUP_SENTINEL
+
+  /** 그룹+split 조합이 바뀔 때 다음 버전 조회 */
+  const fetchNextVersion = (groupId: string | null, split: string) => {
+    if (!groupId) {
+      // 신규 그룹이면 항상 v1.0.0
+      setNextVersion('v1.0.0')
+      return
+    }
+    datasetGroupsApi
+      .nextVersion(groupId, split)
+      .then(res => setNextVersion(res.data.version))
+      .catch(() => setNextVersion('v1.0.0'))
+  }
 
   // ── 등록 ─────────────────────────────────────────────────────────────────
   const handleSubmit = async () => {
@@ -103,9 +241,27 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
     setSubmitting(true)
     setSubmitError(null)
     try {
+      // 그룹 ID 결정: existingGroup prop > 드롭다운 기존 그룹 선택 > 신규 생성
+      let resolvedGroupId: string | undefined = existingGroup?.id
+      let resolvedGroupName: string | undefined
+      if (!existingGroup) {
+        if (isNewGroup) {
+          resolvedGroupName = values.group_name
+        } else {
+          resolvedGroupId = selectedGroupOption
+        }
+      }
+
+      // 복사 대상 경로 계산 (안내 메시지용)
+      const displayGroupName = existingGroup?.name
+        ?? resolvedGroupName
+        ?? existingGroupList.find(g => g.id === resolvedGroupId)?.name
+        ?? '?'
+      const splitDir = (values.split as string).toLowerCase()
+      setSubmittingDestPath(`raw/${displayGroupName}/${splitDir}/`)
       const payload = {
-        group_id:                existingGroup?.id,
-        group_name:              existingGroup ? undefined : values.group_name,
+        group_id:                resolvedGroupId,
+        group_name:              resolvedGroupName,
         task_types:              values.task_types as TaskType[],
         annotation_format:       (values.annotation_format ?? 'NONE') as AnnotationFormat,
         modality:                'RGB' as const,
@@ -114,7 +270,7 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
         source_image_dir:        imageDir,
         source_annotation_files: annotationFiles,
       }
-      const res = await datasetGroupsApi.register(payload)
+      const res = await datasetGroupsApi.register(payload, REGISTER_TIMEOUT_MS)
       onSuccess(res.data)
       handleClose()
     } catch (err: unknown) {
@@ -125,6 +281,31 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
     }
   }
 
+  // ── 포맷 검증 ────────────────────────────────────────────────────────────
+  const handleFormatValidation = async () => {
+    if (annotationFiles.length === 0) return
+    setFormatValidating(true)
+    setFormatValidationResult(null)
+    try {
+      const res = await datasetGroupsApi.validateFormat({
+        annotation_format: selectedFormat,
+        annotation_files: annotationFiles,
+      })
+      setFormatValidationResult(res.data)
+    } catch {
+      setFormatValidationResult({
+        valid: false,
+        errors: ['검증 요청 중 오류가 발생했습니다.'],
+        summary: null,
+      })
+    } finally {
+      setFormatValidating(false)
+    }
+  }
+
+  /** COCO/YOLO만 자동 검증 지원 */
+  const isFormatValidatable = selectedFormat === 'COCO' || selectedFormat === 'YOLO'
+
   const handleClose = () => {
     form.resetFields()
     setCurrentStep(0)
@@ -133,6 +314,9 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
     setSubmitError(null)
     setImageDir(null)
     setAnnotationFiles([])
+    setSelectedGroupOption(NEW_GROUP_SENTINEL)
+    setFormatValidationResult(null)
+    setNextVersion('v1.0.0')
     onClose()
   }
 
@@ -253,16 +437,32 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
                   </Button>
                   {annotationFiles.length > 0 && (
                     <Space wrap size={4}>
-                      {annotationFiles.map(f => (
-                        <Tag
-                          key={f}
-                          closable
-                          onClose={() => setAnnotationFiles(prev => prev.filter(x => x !== f))}
-                          icon={<FileOutlined />}
-                        >
-                          {f.split('/').pop()}
-                        </Tag>
-                      ))}
+                      {groupAnnotationFilesForDisplay(annotationFiles).map(item =>
+                        item.type === 'folder' ? (
+                          <Tag
+                            key={`folder:${item.path}`}
+                            color="gold"
+                            closable
+                            onClose={() =>
+                              setAnnotationFiles(prev =>
+                                prev.filter(f => !item.filePaths?.includes(f))
+                              )
+                            }
+                            icon={<FolderOpenOutlined />}
+                          >
+                            {item.displayName}/ ({item.fileCount?.toLocaleString()}개 파일)
+                          </Tag>
+                        ) : (
+                          <Tag
+                            key={item.path}
+                            closable
+                            onClose={() => setAnnotationFiles(prev => prev.filter(x => x !== item.path))}
+                            icon={<FileOutlined />}
+                          >
+                            {item.displayName}
+                          </Tag>
+                        )
+                      )}
                       <Button
                         size="small"
                         type="link"
@@ -279,7 +479,15 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
 
               {/* Split */}
               <Form.Item label="Split" name="split" initialValue="NONE" rules={[{ required: true }]}>
-                <Radio.Group>
+                <Radio.Group
+                  onChange={(e) => {
+                    // Split 변경 시 버전 미리보기 갱신
+                    const newSplit = e.target.value
+                    const groupId = existingGroup?.id
+                      ?? (selectedGroupOption !== NEW_GROUP_SENTINEL ? selectedGroupOption : null)
+                    fetchNextVersion(groupId, newSplit)
+                  }}
+                >
                   {SPLIT_OPTIONS.map(s => <Radio.Button key={s} value={s}>{s}</Radio.Button>)}
                 </Radio.Group>
               </Form.Item>
@@ -288,7 +496,18 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
                 type="primary"
                 block
                 disabled={!isStep1Ready}
-                onClick={() => setCurrentStep(2)}
+                onClick={() => {
+                  setCurrentStep(2)
+                  // Step 2 진입 시 버전 미리보기 조회
+                  const currentSplit = form.getFieldValue('split') || 'NONE'
+                  if (existingGroup) {
+                    fetchNextVersion(existingGroup.id, currentSplit)
+                  } else if (selectedGroupOption !== NEW_GROUP_SENTINEL) {
+                    fetchNextVersion(selectedGroupOption, currentSplit)
+                  } else {
+                    setNextVersion('v1.0.0')
+                  }
+                }}
                 style={{ marginBottom: 4 }}
               >
                 다음 단계 →
@@ -319,7 +538,10 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
               >
                 <Select
                   placeholder="포맷을 선택하세요"
-                  onChange={(v: AnnotationFormat) => setSelectedFormat(v)}
+                  onChange={(v: AnnotationFormat) => {
+                    setSelectedFormat(v)
+                    setFormatValidationResult(null)
+                  }}
                 >
                   {ANNOTATION_FORMAT_OPTIONS.map(opt => (
                     <Option key={opt.value} value={opt.value}>
@@ -334,6 +556,96 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
                 </Select>
               </Form.Item>
 
+              {/* 포맷 검증 버튼 + 결과 */}
+              {isFormatValidatable && annotationFiles.length > 0 && (
+                <div style={{ marginBottom: 16 }}>
+                  <Button
+                    icon={<SafetyCertificateOutlined />}
+                    loading={formatValidating}
+                    onClick={handleFormatValidation}
+                    style={{ marginBottom: 8 }}
+                  >
+                    포맷 검증
+                  </Button>
+
+                  {formatValidationResult && (
+                    formatValidationResult.valid ? (
+                      <Alert
+                        type="success"
+                        showIcon
+                        icon={<CheckCircleOutlined />}
+                        message="포맷 검증 통과"
+                        description={
+                          formatValidationResult.summary && (
+                            <Descriptions size="small" column={1} style={{ marginTop: 8 }}>
+                              {formatValidationResult.summary.total_image_count != null && (
+                                <Descriptions.Item label="이미지 수">
+                                  {(formatValidationResult.summary.total_image_count as number).toLocaleString()}장
+                                </Descriptions.Item>
+                              )}
+                              {formatValidationResult.summary.total_annotation_count != null && (
+                                <Descriptions.Item label="어노테이션 수">
+                                  {(formatValidationResult.summary.total_annotation_count as number).toLocaleString()}개
+                                </Descriptions.Item>
+                              )}
+                              {formatValidationResult.summary.total_file_count != null && (
+                                <Descriptions.Item label="검사 파일">
+                                  {formatValidationResult.summary.is_sampled
+                                    ? `${(formatValidationResult.summary.sampled_file_count as number).toLocaleString()}개 샘플 / 전체 ${(formatValidationResult.summary.total_file_count as number).toLocaleString()}개`
+                                    : `${(formatValidationResult.summary.total_file_count as number).toLocaleString()}개`
+                                  }
+                                </Descriptions.Item>
+                              )}
+                              {formatValidationResult.summary.total_label_count != null && (
+                                <Descriptions.Item label="라벨 수">
+                                  {(formatValidationResult.summary.total_label_count as number).toLocaleString()}개
+                                  {formatValidationResult.summary.is_sampled && (
+                                    <Text type="secondary" style={{ fontSize: 11 }}> (샘플 기준)</Text>
+                                  )}
+                                </Descriptions.Item>
+                              )}
+                              {formatValidationResult.summary.categories != null && (
+                                <Descriptions.Item label="카테고리">
+                                  <Space wrap size={4}>
+                                    {(formatValidationResult.summary.categories as string[]).map(
+                                      (cat) => <Tag key={cat}>{cat}</Tag>
+                                    )}
+                                  </Space>
+                                </Descriptions.Item>
+                              )}
+                              {formatValidationResult.summary.class_count != null &&
+                                formatValidationResult.summary.unique_class_ids != null && (
+                                <Descriptions.Item label="클래스">
+                                  {formatValidationResult.summary.class_count as number}개
+                                  (ID: {(formatValidationResult.summary.unique_class_ids as number[]).join(', ')})
+                                </Descriptions.Item>
+                              )}
+                            </Descriptions>
+                          )
+                        }
+                        closable
+                        onClose={() => setFormatValidationResult(null)}
+                      />
+                    ) : (
+                      <Alert
+                        type="warning"
+                        showIcon
+                        message="포맷 검증 실패"
+                        description={
+                          <ul style={{ margin: '4px 0', paddingLeft: 20 }}>
+                            {formatValidationResult.errors.map((err, idx) => (
+                              <li key={idx}><Text type="danger" style={{ fontSize: 12 }}>{err}</Text></li>
+                            ))}
+                          </ul>
+                        }
+                        closable
+                        onClose={() => setFormatValidationResult(null)}
+                      />
+                    )
+                  )}
+                </div>
+              )}
+
               <Divider dashed style={{ margin: '12px 0' }} />
 
               {existingGroup ? (
@@ -343,14 +655,62 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
                   style={{ marginBottom: 16 }}
                 />
               ) : (
-                <Form.Item
-                  label="데이터셋 그룹명"
-                  name="group_name"
-                  rules={[{ required: !existingGroup, message: '그룹명을 입력하세요.' }]}
-                  extra={<Text type="secondary" style={{ fontSize: 12 }}>같은 데이터셋의 TRAIN/VAL/TEST를 묶는 단위</Text>}
-                >
-                  <Input placeholder="예: my_dataset_2024" />
-                </Form.Item>
+                <>
+                  <Form.Item
+                    label="데이터셋 그룹"
+                    required
+                    extra={<Text type="secondary" style={{ fontSize: 12 }}>같은 데이터셋의 TRAIN/VAL/TEST를 묶는 단위</Text>}
+                  >
+                    <Spin spinning={groupListLoading} size="small">
+                      <Select
+                        showSearch
+                        value={selectedGroupOption}
+                        onChange={(value: string) => {
+                          setSelectedGroupOption(value)
+                          // 기존 그룹 선택 시 group_name 필드 초기화
+                          if (value !== NEW_GROUP_SENTINEL) {
+                            form.setFieldValue('group_name', undefined)
+                          }
+                          // 그룹 변경 시 버전 미리보기 갱신
+                          const currentSplit = form.getFieldValue('split') || 'NONE'
+                          fetchNextVersion(
+                            value === NEW_GROUP_SENTINEL ? null : value,
+                            currentSplit,
+                          )
+                        }}
+                        optionFilterProp="label"
+                        placeholder="기존 그룹 선택 또는 새로 만들기"
+                      >
+                        <Option key={NEW_GROUP_SENTINEL} value={NEW_GROUP_SENTINEL} label="새 그룹 만들기">
+                          <Space>
+                            <PlusOutlined style={{ color: '#1677ff' }} />
+                            <Text strong style={{ color: '#1677ff' }}>새 그룹 만들기</Text>
+                          </Space>
+                        </Option>
+                        {existingGroupList.map(group => (
+                          <Option key={group.id} value={group.id} label={group.name}>
+                            <Space>
+                              <Text>{group.name}</Text>
+                              <Text type="secondary" style={{ fontSize: 11 }}>
+                                ({group.datasets.length}개 split)
+                              </Text>
+                            </Space>
+                          </Option>
+                        ))}
+                      </Select>
+                    </Spin>
+                  </Form.Item>
+                  <Form.Item
+                    label="새 그룹명"
+                    name="group_name"
+                    rules={[{ required: isNewGroup, message: '그룹명을 입력하세요.' }]}
+                  >
+                    <Input
+                      placeholder={isNewGroup ? '예: my_dataset_2024' : '위 드롭다운에서 "새 그룹 만들기"를 선택하세요'}
+                      disabled={!isNewGroup}
+                    />
+                  </Form.Item>
+                </>
               )}
 
               <Form.Item label="설명 (선택)" name="description">
@@ -369,13 +729,23 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
                 </Descriptions.Item>
                 <Descriptions.Item label="어노테이션 파일">
                   <Space wrap size={4}>
-                    {annotationFiles.map(f => (
-                      <Tag key={f} icon={<FileOutlined />}>{f.split('/').pop()}</Tag>
-                    ))}
+                    {groupAnnotationFilesForDisplay(annotationFiles).map(item =>
+                      item.type === 'folder' ? (
+                        <Tag key={`folder:${item.path}`} icon={<FolderOpenOutlined />} color="gold">
+                          {item.displayName}/ ({item.fileCount?.toLocaleString()}개)
+                        </Tag>
+                      ) : (
+                        <Tag key={item.path} icon={<FileOutlined />}>{item.displayName}</Tag>
+                      )
+                    )}
                   </Space>
                 </Descriptions.Item>
                 <Descriptions.Item label="Annotation Format">
                   <Tag color={FORMAT_TAG_COLOR[selectedFormat] ?? 'default'}>{selectedFormat}</Tag>
+                </Descriptions.Item>
+                <Descriptions.Item label="버전">
+                  <Tag color="blue">{nextVersion}</Tag>
+                  <Text type="secondary" style={{ fontSize: 11, marginLeft: 4 }}>자동 생성</Text>
                 </Descriptions.Item>
               </Descriptions>
 
@@ -383,8 +753,31 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
                 <Alert type="error" message={submitError} showIcon style={{ marginBottom: 16 }} />
               )}
 
+              {submitting && (
+                <Alert
+                  type="info"
+                  showIcon
+                  style={{ marginBottom: 16 }}
+                  message="파일 복사 중입니다. 대용량 데이터의 경우 수 분이 소요될 수 있습니다."
+                  description={
+                    <div style={{ fontSize: 12 }}>
+                      <div>
+                        현재 설정된 타임아웃: {REGISTER_TIMEOUT_MINUTES}분
+                        ({Math.floor(elapsedSeconds / 60)}분 {elapsedSeconds % 60}초 경과)
+                      </div>
+                      <div style={{ marginTop: 4 }}>
+                        복사 대상: <Text code>{submittingDestPath}</Text>
+                      </div>
+                      <div style={{ marginTop: 2 }}>
+                        데이터셋 저장 경로에서 <Text code>ls {submittingDestPath}</Text> 로 진행 상황을 확인할 수 있습니다.
+                      </div>
+                    </div>
+                  }
+                />
+              )}
+
               <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
-                <Button onClick={handleClose}>취소</Button>
+                <Button onClick={handleClose} disabled={submitting}>취소</Button>
                 <Button type="primary" loading={submitting} onClick={handleSubmit}>
                   데이터셋 등록
                 </Button>
