@@ -137,6 +137,18 @@ export default function ServerFileBrowser({
     onClose()
   }
 
+  const handleSelectAllFilesInCurrentDir = () => {
+    // file 모드: 현재 폴더의 모든 파일을 한번에 선택
+    const allFilePaths = entries.filter(entry => !entry.is_dir).map(entry => entry.path)
+    if (allFilePaths.length > 0) {
+      onSelect(allFilePaths)
+      onClose()
+    }
+  }
+
+  /** 현재 디렉토리 내 파일 수 (폴더 제외) */
+  const fileCountInCurrentDir = entries.filter(entry => !entry.is_dir).length
+
   // 브레드크럼 경로 파싱
   const breadcrumbItems = () => {
     if (isBrowseRoot || !currentPath) return [{ title: '루트 목록' }]
@@ -215,13 +227,22 @@ export default function ServerFileBrowser({
         </Button>
       )}
       {mode === 'file' && (
-        <Button
-          type="primary"
-          onClick={handleSelectFiles}
-          disabled={selectedPaths.length === 0}
-        >
-          선택 ({selectedPaths.length}개)
-        </Button>
+        <>
+          {multiple && fileCountInCurrentDir > 0 && (
+            <Button
+              onClick={handleSelectAllFilesInCurrentDir}
+            >
+              현재 폴더 전체 선택 ({fileCountInCurrentDir.toLocaleString()}개)
+            </Button>
+          )}
+          <Button
+            type="primary"
+            onClick={handleSelectFiles}
+            disabled={selectedPaths.length === 0}
+          >
+            선택 ({selectedPaths.length}개)
+          </Button>
+        </>
       )}
     </Space>
   )

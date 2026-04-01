@@ -37,9 +37,9 @@ export const datasetGroupsApi = {
   delete: (groupId: string) =>
     api.delete<{ message: string }>(`/dataset-groups/${groupId}`),
 
-  register: (data: DatasetRegisterRequest) =>
+  register: (data: DatasetRegisterRequest, timeoutMs?: number) =>
     api.post<DatasetGroup>('/dataset-groups/register', data, {
-      timeout: 10 * 60 * 1000,  // 대용량 파일 복사 포함 — 10분 타임아웃
+      timeout: timeoutMs ?? 60 * 60 * 1000,  // 대용량 파일 복사 포함 — 기본 1시간 타임아웃
     }),
 
   validateFormat: (data: FormatValidateRequest) =>

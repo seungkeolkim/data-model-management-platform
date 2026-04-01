@@ -172,6 +172,10 @@ class AppConfig:
         return self.get("storage", "images_dirname", "images")
 
     @property
+    def annotations_dirname(self) -> str:
+        return self.get("storage", "annotations_dirname", "annotations")
+
+    @property
     def version_initial(self) -> str:
         return self.get("storage", "version_initial", "v1.0.0")
 

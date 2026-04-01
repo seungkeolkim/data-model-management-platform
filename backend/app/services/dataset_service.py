@@ -4,6 +4,7 @@ DatasetGroup 비즈니스 로직 서비스
 from __future__ import annotations
 
 import json
+import random
 import shutil
 import uuid
 from pathlib import Path
@@ -390,6 +391,8 @@ class DatasetGroupService:
         """
         YOLO txt 포맷 검증.
 
+        파일이 대량(수천~수만)일 경우 전체를 검사하면 과도하므로
+        MAX_SAMPLE_FILES개를 랜덤 샘플링하여 검증.
         각 파일에 대해:
         1. .txt 확장자 확인
         2. 샘플 라인이 'class_id center_x center_y width height' 형식인지 확인
@@ -399,8 +402,27 @@ class DatasetGroupService:
         total_label_count = 0
         class_id_set: set[int] = set()
         max_sample_lines = 20  # 파일당 샘플 검사 라인 수
+        max_sample_files = 50  # 대량 파일 시 검사할 최대 파일 수
 
-        for file_path_str in annotation_file_paths:
+        total_file_count = len(annotation_file_paths)
+        is_sampled = total_file_count > max_sample_files
+
+        # 대량 파일이면 랜덤 샘플링
+        if is_sampled:
+            sampled_paths = random.sample(annotation_file_paths, max_sample_files)
+        else:
+            sampled_paths = annotation_file_paths
+
+        # 전체 파일에서 .txt 확장자 비율 빠르게 확인
+        non_txt_count = sum(
+            1 for p in annotation_file_paths if not p.lower().endswith(".txt")
+        )
+        if non_txt_count > 0:
+            errors.append(
+                f"전체 {total_file_count}개 파일 중 {non_txt_count}개가 .txt가 아닙니다."
+            )
+
+        for file_path_str in sampled_paths:
             file_path = Path(file_path_str)
             filename = file_path.name
 
@@ -459,6 +481,9 @@ class DatasetGroupService:
         summary = None
         if is_valid:
             summary = {
+                "total_file_count": total_file_count,
+                "sampled_file_count": len(sampled_paths) if is_sampled else total_file_count,
+                "is_sampled": is_sampled,
                 "total_label_count": total_label_count,
                 "unique_class_ids": sorted(class_id_set),
                 "class_count": len(class_id_set),
