@@ -3,6 +3,7 @@ DatasetGroup 비즈니스 로직 서비스
 """
 from __future__ import annotations
 
+import json
 import shutil
 import uuid
 from pathlib import Path
@@ -19,6 +20,8 @@ from app.schemas.dataset import (
     DatasetGroupCreate,
     DatasetGroupUpdate,
     DatasetRegisterRequest,
+    FormatValidateRequest,
+    FormatValidateResponse,
 )
 
 logger = structlog.get_logger(__name__)
@@ -262,6 +265,206 @@ class DatasetGroupService:
             raise ValueError(f"파일이 아닙니다: {path_str}")
 
         return p
+
+    # -------------------------------------------------------------------------
+    # 포맷 검증
+    # -------------------------------------------------------------------------
+
+    def validate_annotation_format(self, req: FormatValidateRequest) -> FormatValidateResponse:
+        """
+        어노테이션 파일이 지정된 포맷에 맞는지 사전 검증.
+
+        COCO: JSON 파싱 → images, annotations, categories 키 존재 + 요약 정보 반환
+        YOLO: .txt 파일 → 각 라인이 'class_id x y w h' 형식인지 샘플 검사
+        """
+        format_name = req.annotation_format.upper()
+        if format_name == "COCO":
+            return self._validate_coco_format(req.annotation_files)
+        elif format_name == "YOLO":
+            return self._validate_yolo_format(req.annotation_files)
+        else:
+            return FormatValidateResponse(
+                valid=True,
+                errors=[],
+                summary={"message": f"{format_name} 포맷은 자동 검증을 지원하지 않습니다."},
+            )
+
+    def _validate_coco_format(self, annotation_file_paths: list[str]) -> FormatValidateResponse:
+        """
+        COCO JSON 포맷 검증.
+
+        각 파일에 대해:
+        1. JSON 파싱 가능 여부
+        2. 필수 키 (images, annotations, categories) 존재 여부
+        3. 데이터 요약 (이미지 수, 어노테이션 수, 카테고리 목록)
+        """
+        errors: list[str] = []
+        total_image_count = 0
+        total_annotation_count = 0
+        all_category_names: list[str] = []
+        file_summaries: list[dict] = []
+
+        required_keys = {"images", "annotations", "categories"}
+
+        for file_path_str in annotation_file_paths:
+            file_path = Path(file_path_str)
+            filename = file_path.name
+
+            if not file_path.exists():
+                errors.append(f"[{filename}] 파일이 존재하지 않습니다: {file_path_str}")
+                continue
+
+            if not file_path.suffix.lower() == ".json":
+                errors.append(f"[{filename}] COCO 포맷은 .json 파일이어야 합니다.")
+                continue
+
+            try:
+                with open(file_path, "r", encoding="utf-8") as json_file:
+                    data = json.load(json_file)
+            except json.JSONDecodeError as json_error:
+                errors.append(f"[{filename}] JSON 파싱 실패: {json_error}")
+                continue
+            except Exception as read_error:
+                errors.append(f"[{filename}] 파일 읽기 실패: {read_error}")
+                continue
+
+            if not isinstance(data, dict):
+                errors.append(f"[{filename}] 최상위 구조가 JSON 객체가 아닙니다.")
+                continue
+
+            # 필수 키 확인
+            missing_keys = required_keys - set(data.keys())
+            if missing_keys:
+                errors.append(
+                    f"[{filename}] 필수 키가 누락되었습니다: {', '.join(sorted(missing_keys))}"
+                )
+                continue
+
+            # 타입 확인
+            if not isinstance(data["images"], list):
+                errors.append(f"[{filename}] 'images'가 배열이 아닙니다.")
+                continue
+            if not isinstance(data["annotations"], list):
+                errors.append(f"[{filename}] 'annotations'가 배열이 아닙니다.")
+                continue
+            if not isinstance(data["categories"], list):
+                errors.append(f"[{filename}] 'categories'가 배열이 아닙니다.")
+                continue
+
+            # 요약 정보 수집
+            image_count = len(data["images"])
+            annotation_count = len(data["annotations"])
+            category_names = [
+                cat.get("name", f"id={cat.get('id', '?')}")
+                for cat in data["categories"]
+            ]
+
+            total_image_count += image_count
+            total_annotation_count += annotation_count
+            all_category_names.extend(category_names)
+
+            file_summaries.append({
+                "filename": filename,
+                "image_count": image_count,
+                "annotation_count": annotation_count,
+                "category_count": len(category_names),
+                "categories": category_names,
+            })
+
+        is_valid = len(errors) == 0
+        summary = None
+        if is_valid:
+            # 카테고리 중복 제거 (여러 파일에서 동일 카테고리가 나올 수 있음)
+            unique_categories = sorted(set(all_category_names))
+            summary = {
+                "total_image_count": total_image_count,
+                "total_annotation_count": total_annotation_count,
+                "total_category_count": len(unique_categories),
+                "categories": unique_categories,
+                "files": file_summaries,
+            }
+
+        return FormatValidateResponse(valid=is_valid, errors=errors, summary=summary)
+
+    def _validate_yolo_format(self, annotation_file_paths: list[str]) -> FormatValidateResponse:
+        """
+        YOLO txt 포맷 검증.
+
+        각 파일에 대해:
+        1. .txt 확장자 확인
+        2. 샘플 라인이 'class_id center_x center_y width height' 형식인지 확인
+        3. 값 범위 확인 (좌표 0~1, class_id 정수)
+        """
+        errors: list[str] = []
+        total_label_count = 0
+        class_id_set: set[int] = set()
+        max_sample_lines = 20  # 파일당 샘플 검사 라인 수
+
+        for file_path_str in annotation_file_paths:
+            file_path = Path(file_path_str)
+            filename = file_path.name
+
+            if not file_path.exists():
+                errors.append(f"[{filename}] 파일이 존재하지 않습니다: {file_path_str}")
+                continue
+
+            if not file_path.suffix.lower() == ".txt":
+                errors.append(f"[{filename}] YOLO 포맷은 .txt 파일이어야 합니다.")
+                continue
+
+            try:
+                with open(file_path, "r", encoding="utf-8") as txt_file:
+                    lines = txt_file.readlines()
+            except Exception as read_error:
+                errors.append(f"[{filename}] 파일 읽기 실패: {read_error}")
+                continue
+
+            non_empty_lines = [line.strip() for line in lines if line.strip()]
+            total_label_count += len(non_empty_lines)
+
+            # 샘플 라인 검사
+            sample_lines = non_empty_lines[:max_sample_lines]
+            for line_number, line in enumerate(sample_lines, start=1):
+                parts = line.split()
+                if len(parts) != 5:
+                    errors.append(
+                        f"[{filename}:{line_number}] 5개 값이어야 합니다 "
+                        f"(class_id x y w h), 실제: {len(parts)}개"
+                    )
+                    continue
+
+                try:
+                    class_id = int(parts[0])
+                    if class_id < 0:
+                        errors.append(f"[{filename}:{line_number}] class_id가 음수입니다: {class_id}")
+                        continue
+                    class_id_set.add(class_id)
+                except ValueError:
+                    errors.append(f"[{filename}:{line_number}] class_id가 정수가 아닙니다: {parts[0]}")
+                    continue
+
+                for idx, coord_name in enumerate(["x", "y", "w", "h"], start=1):
+                    try:
+                        value = float(parts[idx])
+                        if not (0.0 <= value <= 1.0):
+                            errors.append(
+                                f"[{filename}:{line_number}] {coord_name}={value} — 0~1 범위를 벗어남"
+                            )
+                    except ValueError:
+                        errors.append(
+                            f"[{filename}:{line_number}] {coord_name}이 숫자가 아닙니다: {parts[idx]}"
+                        )
+
+        is_valid = len(errors) == 0
+        summary = None
+        if is_valid:
+            summary = {
+                "total_label_count": total_label_count,
+                "unique_class_ids": sorted(class_id_set),
+                "class_count": len(class_id_set),
+            }
+
+        return FormatValidateResponse(valid=is_valid, errors=errors, summary=summary)
 
     async def _next_version(self, group_id: str, split: str) -> str:
         """해당 group+split 의 다음 버전 자동 계산."""

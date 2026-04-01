@@ -8,6 +8,8 @@ import type {
   DatasetGroupUpdate,
   DatasetGroupListResponse,
   DatasetRegisterRequest,
+  FormatValidateRequest,
+  FormatValidateResponse,
   Dataset,
   FileBrowserListResponse,
   FileBrowserRootsResponse,
@@ -39,6 +41,9 @@ export const datasetGroupsApi = {
     api.post<DatasetGroup>('/dataset-groups/register', data, {
       timeout: 10 * 60 * 1000,  // 대용량 파일 복사 포함 — 10분 타임아웃
     }),
+
+  validateFormat: (data: FormatValidateRequest) =>
+    api.post<FormatValidateResponse>('/dataset-groups/validate-format', data),
 }
 
 // Individual Datasets

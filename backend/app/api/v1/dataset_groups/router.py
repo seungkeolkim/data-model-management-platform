@@ -17,6 +17,8 @@ from app.schemas.dataset import (
     DatasetGroupResponse,
     DatasetGroupUpdate,
     DatasetRegisterRequest,
+    FormatValidateRequest,
+    FormatValidateResponse,
     MessageResponse,
 )
 from app.services.dataset_service import DatasetGroupService
@@ -67,6 +69,28 @@ async def register_dataset(
         split=dataset.split,
     )
     return await svc.get_group(group.id)
+
+
+@router.post("/validate-format", response_model=FormatValidateResponse)
+async def validate_annotation_format(
+    req: FormatValidateRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    어노테이션 파일이 지정된 포맷에 맞는지 사전 검증.
+
+    등록 전에 선택한 파일이 COCO/YOLO 등의 포맷 규격을 만족하는지 확인.
+    검증 실패해도 등록을 차단하지는 않음 (경고 용도).
+    """
+    logger.info(
+        "포맷 검증 요청",
+        annotation_format=req.annotation_format,
+        file_count=len(req.annotation_files),
+    )
+    svc = DatasetGroupService(db)
+    result = svc.validate_annotation_format(req)
+    logger.info("포맷 검증 완료", valid=result.valid, error_count=len(result.errors))
+    return result
 
 
 # =============================================================================

@@ -237,6 +237,34 @@ class LineageGraphResponse(BaseModel):
 # 공통 응답
 # =============================================================================
 
+# =============================================================================
+# 포맷 검증 스키마
+# =============================================================================
+
+class FormatValidateRequest(BaseModel):
+    """어노테이션 포맷 사전 검증 요청."""
+    annotation_format: str = Field(..., description="COCO | YOLO")
+    annotation_files: list[str] = Field(
+        ...,
+        min_length=1,
+        description="어노테이션 파일 절대경로 목록",
+    )
+
+
+class FormatValidateResponse(BaseModel):
+    """어노테이션 포맷 검증 결과."""
+    valid: bool = Field(..., description="전체 검증 통과 여부")
+    errors: list[str] = Field(default_factory=list, description="검증 실패 메시지 목록")
+    summary: dict[str, Any] | None = Field(
+        default=None,
+        description="검증 성공 시 데이터 요약 (이미지 수, 어노테이션 수, 카테고리 목록 등)",
+    )
+
+
+# =============================================================================
+# 공통 응답
+# =============================================================================
+
 class MessageResponse(BaseModel):
     message: str
 

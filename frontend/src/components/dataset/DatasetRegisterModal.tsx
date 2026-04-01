@@ -29,10 +29,12 @@ import {
   AppstoreOutlined,
   CloseCircleOutlined,
   PlusOutlined,
+  CheckCircleOutlined,
+  SafetyCertificateOutlined,
 } from '@ant-design/icons'
 import { datasetGroupsApi } from '../../api/dataset'
 import ServerFileBrowser from '../common/ServerFileBrowser'
-import type { DatasetGroup, TaskType, AnnotationFormat } from '../../types/dataset'
+import type { DatasetGroup, TaskType, AnnotationFormat, FormatValidateResponse } from '../../types/dataset'
 
 const { Text } = Typography
 const { Option } = Select
@@ -90,6 +92,10 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
   // 파일 브라우저 열림 상태
   const [imageBrowserOpen, setImageBrowserOpen] = useState(false)
   const [annotationBrowserOpen, setAnnotationBrowserOpen] = useState(false)
+
+  // 포맷 검증 상태
+  const [formatValidating, setFormatValidating] = useState(false)
+  const [formatValidationResult, setFormatValidationResult] = useState<FormatValidateResponse | null>(null)
 
   // 기존 그룹 목록 (드롭다운용)
   const [existingGroupList, setExistingGroupList] = useState<DatasetGroup[]>([])
@@ -162,6 +168,31 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
     }
   }
 
+  // ── 포맷 검증 ────────────────────────────────────────────────────────────
+  const handleFormatValidation = async () => {
+    if (annotationFiles.length === 0) return
+    setFormatValidating(true)
+    setFormatValidationResult(null)
+    try {
+      const res = await datasetGroupsApi.validateFormat({
+        annotation_format: selectedFormat,
+        annotation_files: annotationFiles,
+      })
+      setFormatValidationResult(res.data)
+    } catch {
+      setFormatValidationResult({
+        valid: false,
+        errors: ['검증 요청 중 오류가 발생했습니다.'],
+        summary: null,
+      })
+    } finally {
+      setFormatValidating(false)
+    }
+  }
+
+  /** COCO/YOLO만 자동 검증 지원 */
+  const isFormatValidatable = selectedFormat === 'COCO' || selectedFormat === 'YOLO'
+
   const handleClose = () => {
     form.resetFields()
     setCurrentStep(0)
@@ -171,6 +202,7 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
     setImageDir(null)
     setAnnotationFiles([])
     setSelectedGroupOption(NEW_GROUP_SENTINEL)
+    setFormatValidationResult(null)
     onClose()
   }
 
@@ -357,7 +389,10 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
               >
                 <Select
                   placeholder="포맷을 선택하세요"
-                  onChange={(v: AnnotationFormat) => setSelectedFormat(v)}
+                  onChange={(v: AnnotationFormat) => {
+                    setSelectedFormat(v)
+                    setFormatValidationResult(null)
+                  }}
                 >
                   {ANNOTATION_FORMAT_OPTIONS.map(opt => (
                     <Option key={opt.value} value={opt.value}>
@@ -371,6 +406,85 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
                   ))}
                 </Select>
               </Form.Item>
+
+              {/* 포맷 검증 버튼 + 결과 */}
+              {isFormatValidatable && annotationFiles.length > 0 && (
+                <div style={{ marginBottom: 16 }}>
+                  <Button
+                    icon={<SafetyCertificateOutlined />}
+                    loading={formatValidating}
+                    onClick={handleFormatValidation}
+                    style={{ marginBottom: 8 }}
+                  >
+                    포맷 검증
+                  </Button>
+
+                  {formatValidationResult && (
+                    formatValidationResult.valid ? (
+                      <Alert
+                        type="success"
+                        showIcon
+                        icon={<CheckCircleOutlined />}
+                        message="포맷 검증 통과"
+                        description={
+                          formatValidationResult.summary && (
+                            <Descriptions size="small" column={1} style={{ marginTop: 8 }}>
+                              {formatValidationResult.summary.total_image_count != null && (
+                                <Descriptions.Item label="이미지 수">
+                                  {(formatValidationResult.summary.total_image_count as number).toLocaleString()}장
+                                </Descriptions.Item>
+                              )}
+                              {formatValidationResult.summary.total_annotation_count != null && (
+                                <Descriptions.Item label="어노테이션 수">
+                                  {(formatValidationResult.summary.total_annotation_count as number).toLocaleString()}개
+                                </Descriptions.Item>
+                              )}
+                              {formatValidationResult.summary.total_label_count != null && (
+                                <Descriptions.Item label="라벨 수">
+                                  {(formatValidationResult.summary.total_label_count as number).toLocaleString()}개
+                                </Descriptions.Item>
+                              )}
+                              {formatValidationResult.summary.categories != null && (
+                                <Descriptions.Item label="카테고리">
+                                  <Space wrap size={4}>
+                                    {(formatValidationResult.summary.categories as string[]).map(
+                                      (cat) => <Tag key={cat}>{cat}</Tag>
+                                    )}
+                                  </Space>
+                                </Descriptions.Item>
+                              )}
+                              {formatValidationResult.summary.class_count != null &&
+                                formatValidationResult.summary.unique_class_ids != null && (
+                                <Descriptions.Item label="클래스">
+                                  {formatValidationResult.summary.class_count as number}개
+                                  (ID: {(formatValidationResult.summary.unique_class_ids as number[]).join(', ')})
+                                </Descriptions.Item>
+                              )}
+                            </Descriptions>
+                          )
+                        }
+                        closable
+                        onClose={() => setFormatValidationResult(null)}
+                      />
+                    ) : (
+                      <Alert
+                        type="warning"
+                        showIcon
+                        message="포맷 검증 실패"
+                        description={
+                          <ul style={{ margin: '4px 0', paddingLeft: 20 }}>
+                            {formatValidationResult.errors.map((err, idx) => (
+                              <li key={idx}><Text type="danger" style={{ fontSize: 12 }}>{err}</Text></li>
+                            ))}
+                          </ul>
+                        }
+                        closable
+                        onClose={() => setFormatValidationResult(null)}
+                      />
+                    )
+                  )}
+                </div>
+              )}
 
               <Divider dashed style={{ margin: '12px 0' }} />
 
