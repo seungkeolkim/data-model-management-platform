@@ -4,6 +4,7 @@ import {
   Table,
   Breadcrumb,
   Button,
+  Input,
   Space,
   Typography,
   Alert,
@@ -13,6 +14,7 @@ import {
   FolderOutlined,
   FileOutlined,
   ArrowLeftOutlined,
+  EnterOutlined,
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { fileBrowserApi } from '@/api/dataset'
@@ -48,6 +50,22 @@ export default function ServerFileBrowser({
   const [error, setError] = useState<string | null>(null)
   const [selectedPaths, setSelectedPaths] = useState<string[]>([])
 
+  // 경로 직접 입력 관련 상태
+  const [rootPath, setRootPath] = useState<string>('')
+  const [pathInputValue, setPathInputValue] = useState<string>('')
+
+  /** 현재 경로에서 루트를 제거한 상대 경로 반환 */
+  const toRelativePath = useCallback((absolutePath: string, root: string): string => {
+    if (!root || !absolutePath) return ''
+    // 루트 경로 자체이면 빈 문자열
+    if (absolutePath === root) return ''
+    // 루트 접두사 제거 후 앞쪽 슬래시 제거
+    const relative = absolutePath.startsWith(root)
+      ? absolutePath.slice(root.length).replace(/^\//, '')
+      : absolutePath
+    return relative
+  }, [])
+
   const loadDirectory = useCallback(async (path: string) => {
     setLoading(true)
     setError(null)
@@ -60,18 +78,38 @@ export default function ServerFileBrowser({
       setParentPath(data.parent_path)
       setIsBrowseRoot(data.is_browse_root)
       setEntries(data.entries)
+      // 루트 경로 저장 (최초 로드 시 is_browse_root=true인 응답에서 취득)
+      if (data.is_browse_root) {
+        setRootPath(data.current_path)
+      }
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : '디렉토리를 불러올 수 없습니다.'
+      const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      const msg = detail ?? (e instanceof Error ? e.message : '디렉토리를 불러올 수 없습니다.')
       setError(msg)
     } finally {
       setLoading(false)
     }
   }, [mode])
 
+  // 경로 탐색 결과가 바뀔 때 입력 필드를 현재 상대 경로와 동기화
+  useEffect(() => {
+    if (rootPath && currentPath) {
+      setPathInputValue(toRelativePath(currentPath, rootPath))
+    }
+  }, [currentPath, rootPath, toRelativePath])
+
+  /** 경로 직접 입력 후 Enter 시 해당 경로로 이동 */
+  const handlePathInputSubmit = () => {
+    const trimmed = pathInputValue.trim().replace(/^\/+/, '')
+    const absolutePath = trimmed ? `${rootPath}/${trimmed}` : rootPath
+    loadDirectory(absolutePath)
+  }
+
   useEffect(() => {
     if (open) {
       setCurrentPath('')
       setSelectedPaths([])
+      setPathInputValue('')
       loadDirectory('')
     }
   }, [open, loadDirectory])
@@ -199,6 +237,24 @@ export default function ServerFileBrowser({
       zIndex={1010}
     >
       <Space direction="vertical" style={{ width: '100%', padding: '0 24px' }}>
+        {/* 경로 직접 입력 */}
+        <Input
+          addonBefore={rootPath ? `${rootPath}/` : '/'}
+          placeholder="하위 경로 입력 후 Enter (예: coco2017/images)"
+          value={pathInputValue}
+          onChange={(e) => setPathInputValue(e.target.value)}
+          onPressEnter={handlePathInputSubmit}
+          suffix={
+            <EnterOutlined
+              style={{ color: '#999', cursor: 'pointer' }}
+              onClick={handlePathInputSubmit}
+              title="이동"
+            />
+          }
+          allowClear
+          size="small"
+        />
+
         {/* 네비게이션 */}
         <Space>
           <Button
@@ -212,7 +268,7 @@ export default function ServerFileBrowser({
           <Breadcrumb items={breadcrumbItems()} />
         </Space>
 
-        {error && <Alert type="error" message={error} showIcon />}
+        {error && <Alert type="error" message={error} showIcon closable />}
 
         <Spin spinning={loading}>
           <Table<FileBrowserEntry>
