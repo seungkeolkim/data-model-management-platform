@@ -3,6 +3,7 @@
  * - 그룹 기본 정보 (Descriptions)
  * - 소속 데이터셋(split × version) 목록 테이블
  * - 클래스 정보 Popover 상세보기 + 검증 버튼
+ * - 데이터셋 개별 삭제 + 그룹 삭제
  */
 import { useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
@@ -17,6 +18,7 @@ import {
   Spin,
   Alert,
   Popover,
+  Popconfirm,
   Select,
   message,
 } from 'antd'
@@ -24,6 +26,7 @@ import {
   ArrowLeftOutlined,
   InfoCircleOutlined,
   CheckCircleOutlined,
+  DeleteOutlined,
 } from '@ant-design/icons'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import dayjs from 'dayjs'
@@ -100,6 +103,8 @@ export default function DatasetDetailPage() {
 
   const [validatingDatasetId, setValidatingDatasetId] = useState<string | null>(null)
   const [updatingFormatDatasetId, setUpdatingFormatDatasetId] = useState<string | null>(null)
+  const [deletingDatasetId, setDeletingDatasetId] = useState<string | null>(null)
+  const [deletingGroup, setDeletingGroup] = useState(false)
   // 포맷 편집 모드: dataset ID → 선택 중인 포맷 값
   const [editingFormatId, setEditingFormatId] = useState<string | null>(null)
   const [editingFormatValue, setEditingFormatValue] = useState<AnnotationFormat>('NONE')
@@ -159,6 +164,38 @@ export default function DatasetDetailPage() {
     }
   }
 
+  /** 데이터셋 개별 삭제 */
+  const handleDeleteDataset = async (record: DatasetSummary) => {
+    setDeletingDatasetId(record.id)
+    try {
+      const response = await datasetsApi.delete(record.id)
+      message.success(response.data.message)
+      queryClient.invalidateQueries({ queryKey: ['dataset-group', groupId] })
+    } catch (requestError: any) {
+      const errorDetail = requestError?.response?.data?.detail || '삭제 중 오류가 발생했습니다.'
+      message.error(errorDetail)
+    } finally {
+      setDeletingDatasetId(null)
+    }
+  }
+
+  /** 그룹 전체 삭제 */
+  const handleDeleteGroup = async () => {
+    if (!groupId) return
+    setDeletingGroup(true)
+    try {
+      const response = await datasetGroupsApi.delete(groupId)
+      message.success(response.data.message)
+      queryClient.invalidateQueries({ queryKey: ['dataset-groups'] })
+      navigate('/datasets')
+    } catch (requestError: any) {
+      const errorDetail = requestError?.response?.data?.detail || '그룹 삭제 중 오류가 발생했습니다.'
+      message.error(errorDetail)
+    } finally {
+      setDeletingGroup(false)
+    }
+  }
+
   if (isLoading) {
     return <Spin size="large" style={{ display: 'block', marginTop: 120, textAlign: 'center' }} />
   }
@@ -175,7 +212,7 @@ export default function DatasetDetailPage() {
     )
   }
 
-  /* ── 데이터셋 테이블 컬럼 ── */
+  /* -- 데이터셋 테이블 컬럼 -- */
   const datasetColumns = [
     {
       title: 'Split',
@@ -346,20 +383,68 @@ export default function DatasetDetailPage() {
       width: 120,
       render: (v: string) => dayjs(v).format('YYYY-MM-DD'),
     },
+    {
+      title: '',
+      key: 'action',
+      width: 80,
+      render: (_: unknown, record: DatasetSummary) => (
+        <Popconfirm
+          title="데이터셋 삭제"
+          description={`${record.split}/${record.version}을 삭제하시겠습니까?`}
+          onConfirm={() => handleDeleteDataset(record)}
+          okText="삭제"
+          cancelText="취소"
+          okButtonProps={{ danger: true }}
+        >
+          <Button
+            type="text"
+            size="small"
+            danger
+            icon={<DeleteOutlined />}
+            loading={deletingDatasetId === record.id}
+            onClick={(e) => e.stopPropagation()}
+          />
+        </Popconfirm>
+      ),
+    },
   ]
 
   return (
     <div>
       {/* 헤더 */}
-      <Space style={{ marginBottom: 16 }}>
-        <Button
-          type="text"
-          icon={<ArrowLeftOutlined />}
-          onClick={() => navigate('/datasets')}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <Space style={{ marginBottom: 16 }}>
+          <Button
+            type="text"
+            icon={<ArrowLeftOutlined />}
+            onClick={() => navigate('/datasets')}
+          >
+            목록으로
+          </Button>
+        </Space>
+        <Popconfirm
+          title="그룹 삭제"
+          description={
+            <>
+              <strong>'{group.name}'</strong> 그룹과 하위 데이터셋
+              {group.datasets.length > 0 && ` ${group.datasets.length}건`}을
+              모두 삭제하시겠습니까?
+            </>
+          }
+          onConfirm={handleDeleteGroup}
+          okText="삭제"
+          cancelText="취소"
+          okButtonProps={{ danger: true }}
         >
-          목록으로
-        </Button>
-      </Space>
+          <Button
+            danger
+            icon={<DeleteOutlined />}
+            loading={deletingGroup}
+          >
+            그룹 삭제
+          </Button>
+        </Popconfirm>
+      </div>
 
       <Title level={3} style={{ marginBottom: 4 }}>{group.name}</Title>
       {group.description && (

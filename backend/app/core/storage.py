@@ -152,6 +152,19 @@ class StorageClient(ABC):
         """
         ...
 
+    @abstractmethod
+    def delete_dataset_directory(self, storage_uri: str) -> bool:
+        """
+        데이���셋 디렉��리 전체 삭제 (images/, annotations/ 포함).
+
+        Args:
+            storage_uri: 삭제할 dataset storage_uri (예: "raw/my_data/train/v1.0.0")
+
+        Returns:
+            True면 실제로 삭제됨, False면 경로가 존재하지 않았음
+        """
+        ...
+
 
 class LocalStorageClient(StorageClient):
     """
@@ -221,6 +234,30 @@ class LocalStorageClient(StorageClient):
             filenames.append(src.name)
         logger.info("어노테이션 파일 복사 완료", file_count=len(filenames))
         return filenames
+
+    def delete_dataset_directory(self, storage_uri: str) -> bool:
+        """
+        데이터셋 디렉토리 전체 삭제 (images/, annotations/ 포함).
+        삭제 후 비어있는 상위 디렉토리도 base 경로까지 재귀적으로 정리한다.
+        예: raw/coco-v3/train/v1.0.0 삭제 후 train/, coco-v3/ 가 비면 함께 제거.
+        """
+        target_path = self.resolve_path(storage_uri)
+        if not target_path.exists():
+            logger.warning("삭제 대상 경로가 존재하지 않음", storage_uri=storage_uri)
+            return False
+        shutil.rmtree(target_path)
+        logger.info("데이터셋 디렉토리 삭제 완료", storage_uri=storage_uri, path=str(target_path))
+
+        # 빈 상위 디렉토리 정리 (base 경로까지만)
+        parent = target_path.parent
+        while parent != self._base and parent.exists():
+            if any(parent.iterdir()):
+                break  # 다른 파일/폴더가 남아있으면 중단
+            parent.rmdir()
+            logger.info("빈 상위 디렉토리 제거", path=str(parent))
+            parent = parent.parent
+
+        return True
 
     def count_images(self, storage_uri: str) -> int:
         """이미지 파일 수 카운트."""
@@ -294,6 +331,9 @@ class S3StorageClient(StorageClient):
     def copy_annotation_files(
         self, source_abs_paths: list[Path], dest_storage_uri: str
     ) -> list[str]:
+        raise NotImplementedError
+
+    def delete_dataset_directory(self, storage_uri: str) -> bool:
         raise NotImplementedError
 
 

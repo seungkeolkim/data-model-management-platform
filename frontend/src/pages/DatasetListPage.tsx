@@ -17,12 +17,15 @@ import {
   Alert,
   Tooltip,
   Badge,
+  Popconfirm,
+  message,
 } from 'antd'
 import {
   PlusOutlined,
   SearchOutlined,
   ReloadOutlined,
   FolderOpenOutlined,
+  DeleteOutlined,
 } from '@ant-design/icons'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import dayjs from 'dayjs'
@@ -56,6 +59,7 @@ export default function DatasetListPage() {
   const [searchInput, setSearchInput] = useState('')
   const [modalOpen, setModalOpen] = useState(false)
   const [selectedGroup, setSelectedGroup] = useState<DatasetGroup | null>(null)
+  const [deletingGroupId, setDeletingGroupId] = useState<string | null>(null)
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['dataset-groups', page, pageSize, search],
@@ -75,6 +79,20 @@ export default function DatasetListPage() {
     setModalOpen(false)
     setSelectedGroup(null)
   }, [queryClient])
+
+  const handleDeleteGroup = async (groupId: string) => {
+    setDeletingGroupId(groupId)
+    try {
+      const response = await datasetGroupsApi.delete(groupId)
+      message.success(response.data.message)
+      queryClient.invalidateQueries({ queryKey: ['dataset-groups'] })
+    } catch (requestError: any) {
+      const errorDetail = requestError?.response?.data?.detail || '그룹 삭제 중 오류가 발생했습니다.'
+      message.error(errorDetail)
+    } finally {
+      setDeletingGroupId(null)
+    }
+  }
 
   const columns = [
     {
@@ -190,7 +208,7 @@ export default function DatasetListPage() {
     {
       title: '',
       key: 'action',
-      width: 120,
+      width: 180,
       render: (_: unknown, record: DatasetGroup) => (
         <Space>
           <Button
@@ -204,6 +222,28 @@ export default function DatasetListPage() {
           >
             Split 추가
           </Button>
+          <Popconfirm
+            title="그룹 삭제"
+            description={
+              <>
+                <strong>'{record.name}'</strong> 그룹과 하위 데이터셋
+                {record.datasets.length > 0 && ` ${record.datasets.length}건`}을
+                모두 삭제하시겠습니까?
+              </>
+            }
+            onConfirm={() => handleDeleteGroup(record.id)}
+            okText="삭제"
+            cancelText="취소"
+            okButtonProps={{ danger: true }}
+          >
+            <Button
+              size="small"
+              danger
+              icon={<DeleteOutlined />}
+              loading={deletingGroupId === record.id}
+              onClick={e => e.stopPropagation()}
+            />
+          </Popconfirm>
         </Space>
       ),
     },

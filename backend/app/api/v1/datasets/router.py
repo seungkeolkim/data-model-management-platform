@@ -31,9 +31,9 @@ async def list_datasets(
     status: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ):
-    """Dataset 목록 조회."""
+    """Dataset 목록 조회. 소프트 삭제된 데이터셋은 제외."""
     logger.info("데이터셋 목록 조회", group_id=group_id, split=split, status=status)
-    query = select(Dataset)
+    query = select(Dataset).where(Dataset.deleted_at.is_(None))
     if group_id:
         query = query.where(Dataset.group_id == group_id)
     if split:
@@ -54,10 +54,10 @@ async def get_dataset(
 ):
     """Dataset 단건 조회."""
     logger.info("데이터셋 상세 조회", dataset_id=dataset_id)
-    result = await db.execute(select(Dataset).where(Dataset.id == dataset_id))
-    dataset = result.scalar_one_or_none()
+    svc = DatasetGroupService(db)
+    dataset = await svc.get_dataset(dataset_id)
     if not dataset:
-        logger.warning("데이터셋 조회 실패 — 존재하지 않음", dataset_id=dataset_id)
+        logger.warning("데이터셋 조회 실패", dataset_id=dataset_id)
         raise HTTPException(status_code=404, detail="Dataset not found")
     return dataset
 
@@ -106,12 +106,17 @@ async def delete_dataset(
     dataset_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    """Dataset 삭제."""
+    """Dataset 소프트 삭제. 버전 이력은 보존된다."""
     logger.info("데이터셋 삭제 요청", dataset_id=dataset_id)
-    result = await db.execute(select(Dataset).where(Dataset.id == dataset_id))
-    dataset = result.scalar_one_or_none()
+    svc = DatasetGroupService(db)
+    dataset = await svc.get_dataset(dataset_id)
     if not dataset:
         raise HTTPException(status_code=404, detail="Dataset not found")
-    await db.delete(dataset)
-    logger.info("데이터셋 삭제 완료", dataset_id=dataset_id, split=dataset.split, version=dataset.version)
-    return MessageResponse(message=f"Dataset {dataset_id} deleted")
+    await svc.delete_dataset(dataset)
+    logger.info(
+        "데이터셋 소프트 삭제 완료",
+        dataset_id=dataset_id,
+        split=dataset.split,
+        version=dataset.version,
+    )
+    return MessageResponse(message=f"Dataset {dataset.split}/{dataset.version} 삭제 완료")

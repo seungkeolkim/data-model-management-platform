@@ -7,10 +7,11 @@ import json
 import random
 import shutil
 import uuid
+from datetime import datetime
 from pathlib import Path
 
 import structlog
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -47,8 +48,14 @@ class DatasetGroupService:
         dataset_type: str | None = None,
         search: str | None = None,
     ) -> tuple[list[DatasetGroup], int]:
-        """데이터셋 그룹 목록 조회 (페이지네이션)."""
-        query = select(DatasetGroup).options(selectinload(DatasetGroup.datasets))
+        """데이터셋 그룹 목록 조회 (페이지네이션). 소프트 삭제된 그룹은 제외."""
+        query = (
+            select(DatasetGroup)
+            .where(DatasetGroup.deleted_at.is_(None))
+            .options(
+                selectinload(DatasetGroup.datasets.and_(Dataset.deleted_at.is_(None)))
+            )
+        )
 
         if dataset_type:
             query = query.where(DatasetGroup.dataset_type == dataset_type.upper())
@@ -70,11 +77,13 @@ class DatasetGroupService:
     # -------------------------------------------------------------------------
 
     async def get_group(self, group_id: str) -> DatasetGroup | None:
-        """단건 DatasetGroup 조회 (datasets 포함)."""
+        """단건 DatasetGroup 조회 (datasets 포함). 소프트 삭제된 그룹은 제외."""
         result = await self.db.execute(
             select(DatasetGroup)
-            .where(DatasetGroup.id == group_id)
-            .options(selectinload(DatasetGroup.datasets))
+            .where(DatasetGroup.id == group_id, DatasetGroup.deleted_at.is_(None))
+            .options(
+                selectinload(DatasetGroup.datasets.and_(Dataset.deleted_at.is_(None)))
+            )
         )
         return result.scalar_one_or_none()
 
@@ -83,7 +92,16 @@ class DatasetGroupService:
     # -------------------------------------------------------------------------
 
     async def create_group(self, data: DatasetGroupCreate) -> DatasetGroup:
-        """DatasetGroup 생성."""
+        """DatasetGroup 생성. 활성 그룹 중 동일 이름이 있으면 거부."""
+        existing = await self.db.execute(
+            select(DatasetGroup).where(
+                DatasetGroup.name == data.name,
+                DatasetGroup.deleted_at.is_(None),
+            )
+        )
+        if existing.scalar_one_or_none():
+            raise ValueError(f"동일한 이름의 데이터셋 그룹이 이미 존재합니다: '{data.name}'")
+
         group = DatasetGroup(
             id=str(uuid.uuid4()),
             **data.model_dump(),
@@ -110,10 +128,55 @@ class DatasetGroupService:
     # 삭제
     # -------------------------------------------------------------------------
 
-    async def delete_group(self, group: DatasetGroup) -> None:
-        """DatasetGroup 삭제 (CASCADE: datasets, lineage 함께 삭제)."""
-        await self.db.delete(group)
+    async def delete_group(self, group: DatasetGroup) -> int:
+        """
+        DatasetGroup 소프트 삭제.
+        하위 활성 데이터셋의 스토리지 파일을 먼저 삭제한 뒤 DB를 소프트 삭제한다.
+        삭제된 레코드의 버전 이력은 보존되어 다음 버전 자동 계산에 반영된다.
+        반환값: 함께 삭제된 데이터셋 수.
+        """
+        # 하위 활성 데이터셋의 스토리지 파일 삭제
+        active_datasets_result = await self.db.execute(
+            select(Dataset)
+            .where(Dataset.group_id == group.id, Dataset.deleted_at.is_(None))
+        )
+        active_datasets = list(active_datasets_result.scalars().all())
+
+        for dataset in active_datasets:
+            self._delete_dataset_storage(dataset.storage_uri)
+
+        # DB 소프트 삭제
+        now = datetime.utcnow()
+        group.deleted_at = now
+
+        await self.db.execute(
+            update(Dataset)
+            .where(Dataset.group_id == group.id, Dataset.deleted_at.is_(None))
+            .values(deleted_at=now)
+        )
         await self.db.flush()
+        return len(active_datasets)
+
+    async def delete_dataset(self, dataset: Dataset) -> None:
+        """
+        Dataset 개별 소프트 삭제.
+        스토리지 파일을 먼저 삭제한 뒤 DB를 소프트 삭제한다.
+        삭제된 레코드의 버전 이력은 보존되어 다음 버전 자동 계산에 반영된다.
+        """
+        self._delete_dataset_storage(dataset.storage_uri)
+        dataset.deleted_at = datetime.utcnow()
+        await self.db.flush()
+
+    def _delete_dataset_storage(self, storage_uri: str) -> None:
+        """데이터셋의 스토리지 디렉토리 삭제. 실패해도 예외를 전파하지 않는다."""
+        try:
+            self.storage.delete_dataset_directory(storage_uri)
+        except Exception as storage_error:
+            logger.error(
+                "스토리지 파일 삭제 실패 (DB 삭제는 계속 진행)",
+                storage_uri=storage_uri,
+                error=str(storage_error),
+            )
 
     # -------------------------------------------------------------------------
     # GUI 등록 (파일 브라우저 방식)
@@ -161,7 +224,10 @@ class DatasetGroupService:
             logger.info("기존 그룹 확인됨", group_name=group.name)
         else:
             existing = await self.db.execute(
-                select(DatasetGroup).where(DatasetGroup.name == req.group_name)
+                select(DatasetGroup).where(
+                    DatasetGroup.name == req.group_name,
+                    DatasetGroup.deleted_at.is_(None),
+                )
             )
             if existing.scalar_one_or_none():
                 raise ValueError(
@@ -194,6 +260,7 @@ class DatasetGroupService:
                 Dataset.group_id == group.id,
                 Dataset.split == req.split.upper(),
                 Dataset.version == version,
+                Dataset.deleted_at.is_(None),
             )
         )
         if dup.scalar_one_or_none():
@@ -541,9 +608,9 @@ class DatasetGroupService:
     # -------------------------------------------------------------------------
 
     async def get_dataset(self, dataset_id: str) -> Dataset | None:
-        """단건 Dataset 조회."""
+        """단건 Dataset 조회. 소프트 삭제된 데이터셋은 제외."""
         result = await self.db.execute(
-            select(Dataset).where(Dataset.id == dataset_id)
+            select(Dataset).where(Dataset.id == dataset_id, Dataset.deleted_at.is_(None))
         )
         return result.scalar_one_or_none()
 

@@ -73,6 +73,10 @@ class DatasetGroup(Base):
         TIMESTAMP(timezone=False), nullable=False, default=_now,
         onupdate=_now, server_default=func.now()
     )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=False), nullable=True,
+        comment="소프트 삭제 시각. NULL이면 활성 상태"
+    )
 
     # Relationships
     datasets: Mapped[list[Dataset]] = relationship("Dataset", back_populates="group", lazy="select")
@@ -125,6 +129,10 @@ class Dataset(Base):
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=False), nullable=False, default=_now,
         onupdate=_now, server_default=func.now()
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=False), nullable=True,
+        comment="소프트 삭제 시각. NULL이면 활성 상태"
     )
 
     # Relationships
