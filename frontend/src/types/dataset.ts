@@ -65,6 +65,15 @@ export interface DatasetGroupListResponse {
 // Dataset (split x version 단위)
 // =============================================================================
 
+export interface ClassInfo {
+  class_count: number
+  class_mapping: Record<string, string>  // "0": "person", "1": "car"
+}
+
+export interface DatasetMetadata {
+  class_info?: ClassInfo
+}
+
 export interface DatasetSummary {
   id: string
   split: Split
@@ -75,6 +84,7 @@ export interface DatasetSummary {
   annotation_format: AnnotationFormat | null
   storage_uri: string
   annotation_files: string[] | null
+  metadata: DatasetMetadata | null
   created_at: string
 }
 
@@ -82,6 +92,10 @@ export interface Dataset extends DatasetSummary {
   group_id: string
   annotation_format: AnnotationFormat | null
   updated_at: string
+}
+
+export interface DatasetValidateRequest {
+  annotation_format: string
 }
 
 // =============================================================================

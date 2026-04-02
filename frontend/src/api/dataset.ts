@@ -8,6 +8,7 @@ import type {
   DatasetGroupUpdate,
   DatasetGroupListResponse,
   DatasetRegisterRequest,
+  DatasetValidateRequest,
   FormatValidateRequest,
   FormatValidateResponse,
   Dataset,
@@ -61,6 +62,12 @@ export const datasetsApi = {
 
   delete: (datasetId: string) =>
     api.delete<{ message: string }>(`/datasets/${datasetId}`),
+
+  update: (datasetId: string, data: { annotation_format?: string }) =>
+    api.patch<Dataset>(`/datasets/${datasetId}`, data),
+
+  validate: (datasetId: string, data: DatasetValidateRequest) =>
+    api.post<FormatValidateResponse>(`/datasets/${datasetId}/validate`, data),
 }
 
 // File Browser

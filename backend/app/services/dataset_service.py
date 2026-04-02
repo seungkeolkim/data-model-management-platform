@@ -14,13 +14,14 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.config import settings
+from app.core.config import app_config, settings
 from app.core.storage import get_storage_client
 from app.models.all_models import Dataset, DatasetGroup
 from app.schemas.dataset import (
     DatasetGroupCreate,
     DatasetGroupUpdate,
     DatasetRegisterRequest,
+    DatasetUpdate,
     FormatValidateRequest,
     FormatValidateResponse,
 )
@@ -242,6 +243,18 @@ class DatasetGroupService:
         await self.db.flush()
         logger.info("Dataset DB 저장 완료", dataset_id=dataset.id)
 
+        # 어노테이션 포맷이 COCO/YOLO이면 클래스 정보 자동 추출 (best-effort)
+        if req.annotation_format.upper() in ("COCO", "YOLO"):
+            try:
+                await self._extract_and_persist_class_info(dataset)
+                logger.info("클래스 정보 자동 추출 완료", dataset_id=dataset.id)
+            except Exception as class_info_error:
+                logger.warning(
+                    "클래스 정보 자동 추출 실패 (등록은 정상 진행)",
+                    dataset_id=dataset.id,
+                    error=str(class_info_error),
+                )
+
         return group, dataset
 
     # -------------------------------------------------------------------------
@@ -359,6 +372,11 @@ class DatasetGroupService:
                 cat.get("name", f"id={cat.get('id', '?')}")
                 for cat in data["categories"]
             ]
+            # 클래스 매핑 (id → name) 추출
+            category_mapping = {
+                str(cat.get("id", "?")): cat.get("name", f"id={cat.get('id', '?')}")
+                for cat in data["categories"]
+            }
 
             total_image_count += image_count
             total_annotation_count += annotation_count
@@ -370,6 +388,7 @@ class DatasetGroupService:
                 "annotation_count": annotation_count,
                 "category_count": len(category_names),
                 "categories": category_names,
+                "class_mapping": category_mapping,
             })
 
         is_valid = len(errors) == 0
@@ -377,11 +396,16 @@ class DatasetGroupService:
         if is_valid:
             # 카테고리 중복 제거 (여러 파일에서 동일 카테고리가 나올 수 있음)
             unique_categories = sorted(set(all_category_names))
+            # 전체 파일의 class_mapping을 합산 (동일 id면 덮어씀 — 정상적이면 일치)
+            merged_class_mapping: dict[str, str] = {}
+            for file_summary in file_summaries:
+                merged_class_mapping.update(file_summary.get("class_mapping", {}))
             summary = {
                 "total_image_count": total_image_count,
                 "total_annotation_count": total_annotation_count,
                 "total_category_count": len(unique_categories),
                 "categories": unique_categories,
+                "class_mapping": merged_class_mapping,
                 "files": file_summaries,
             }
 
@@ -480,13 +504,15 @@ class DatasetGroupService:
         is_valid = len(errors) == 0
         summary = None
         if is_valid:
+            sorted_class_ids = sorted(class_id_set)
             summary = {
                 "total_file_count": total_file_count,
                 "sampled_file_count": len(sampled_paths) if is_sampled else total_file_count,
                 "is_sampled": is_sampled,
                 "total_label_count": total_label_count,
-                "unique_class_ids": sorted(class_id_set),
+                "unique_class_ids": sorted_class_ids,
                 "class_count": len(class_id_set),
+                "class_mapping": {str(cid): str(cid) for cid in sorted_class_ids},
             }
 
         return FormatValidateResponse(valid=is_valid, errors=errors, summary=summary)
@@ -509,3 +535,142 @@ class DatasetGroupService:
             return f"v{parts[0]}.{parts[1]}.{patch}"
         except (IndexError, ValueError):
             return "v1.0.0"
+
+    # -------------------------------------------------------------------------
+    # Dataset 개별 조회 / 수정
+    # -------------------------------------------------------------------------
+
+    async def get_dataset(self, dataset_id: str) -> Dataset | None:
+        """단건 Dataset 조회."""
+        result = await self.db.execute(
+            select(Dataset).where(Dataset.id == dataset_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def update_dataset(self, dataset: Dataset, data: DatasetUpdate) -> Dataset:
+        """
+        Dataset 개별 수정 (부분 업데이트).
+        annotation_format이 변경되면 기존 검증 결과(class_count, metadata)를 초기화한다.
+        """
+        update_data = data.model_dump(exclude_unset=True)
+
+        # 포맷 변경 시 클래스 정보 초기화 — 재검증 필요
+        new_format = update_data.get("annotation_format")
+        if new_format and new_format != dataset.annotation_format:
+            dataset.class_count = None
+            dataset.metadata_ = None
+            logger.info(
+                "포맷 변경으로 클래스 정보 초기화",
+                dataset_id=dataset.id,
+                old_format=dataset.annotation_format,
+                new_format=new_format,
+            )
+
+        for field, value in update_data.items():
+            setattr(dataset, field, value)
+        await self.db.flush()
+        await self.db.refresh(dataset)
+        return dataset
+
+    # -------------------------------------------------------------------------
+    # 클래스 정보 추출 및 저장
+    # -------------------------------------------------------------------------
+
+    def _resolve_annotation_absolute_paths(self, dataset: Dataset) -> list[str]:
+        """
+        Dataset의 storage_uri + annotation_files로 절대 경로 목록 구성.
+
+        저장 구조: {LOCAL_STORAGE_BASE}/{storage_uri}/{annotations_dirname}/{filename}
+        """
+        base_path = Path(settings.local_storage_base) / dataset.storage_uri
+        annotations_dir = base_path / app_config.annotations_dirname
+
+        if not dataset.annotation_files:
+            raise ValueError(f"어노테이션 파일 목록이 비어있습니다: dataset_id={dataset.id}")
+
+        absolute_paths: list[str] = []
+        for filename in dataset.annotation_files:
+            file_path = annotations_dir / filename
+            if not file_path.exists():
+                raise ValueError(f"어노테이션 파일이 존재하지 않습니다: {file_path}")
+            absolute_paths.append(str(file_path))
+
+        return absolute_paths
+
+    async def _extract_and_persist_class_info(self, dataset: Dataset) -> None:
+        """
+        이미 저장된 데이터셋의 어노테이션 파일에서 클래스 정보를 추출하여 DB에 저장.
+        register_dataset 직후 자동 호출용 (best-effort).
+        """
+        annotation_format = (dataset.annotation_format or "").upper()
+        if annotation_format not in ("COCO", "YOLO"):
+            return
+
+        absolute_paths = self._resolve_annotation_absolute_paths(dataset)
+        validation_request = FormatValidateRequest(
+            annotation_format=annotation_format,
+            annotation_files=absolute_paths,
+        )
+        result = self.validate_annotation_format(validation_request)
+
+        if result.valid and result.summary:
+            self._apply_class_info_to_dataset(dataset, result.summary, annotation_format)
+            await self.db.flush()
+
+    async def validate_and_persist_class_info(
+        self, dataset_id: str, annotation_format: str
+    ) -> FormatValidateResponse:
+        """
+        이미 등록된 데이터셋의 어노테이션을 검증하고 클래스 정보를 DB에 저장.
+
+        상세 페이지에서 '검증' 버튼 클릭 시 호출.
+        1. dataset의 storage_uri + annotation_files로 절대 경로 구성
+        2. validate_annotation_format 호출
+        3. 결과에서 class_count, class_mapping 추출하여 DB 업데이트
+        """
+        dataset = await self.get_dataset(dataset_id)
+        if not dataset:
+            raise ValueError(f"Dataset을 찾을 수 없습니다: {dataset_id}")
+
+        absolute_paths = self._resolve_annotation_absolute_paths(dataset)
+        validation_request = FormatValidateRequest(
+            annotation_format=annotation_format.upper(),
+            annotation_files=absolute_paths,
+        )
+        result = self.validate_annotation_format(validation_request)
+
+        if result.valid and result.summary:
+            # 포맷 변경이 있으면 함께 업데이트
+            dataset.annotation_format = annotation_format.upper()
+            self._apply_class_info_to_dataset(
+                dataset, result.summary, annotation_format.upper()
+            )
+            await self.db.flush()
+            await self.db.refresh(dataset)
+            logger.info(
+                "클래스 정보 저장 완료",
+                dataset_id=dataset_id,
+                class_count=dataset.class_count,
+            )
+
+        return result
+
+    @staticmethod
+    def _apply_class_info_to_dataset(
+        dataset: Dataset, summary: dict, annotation_format: str
+    ) -> None:
+        """검증 결과 summary에서 클래스 정보를 추출하여 Dataset 객체에 적용."""
+        class_mapping = summary.get("class_mapping", {})
+
+        if annotation_format == "COCO":
+            class_count = summary.get("total_category_count", len(class_mapping))
+        else:
+            class_count = summary.get("class_count", len(class_mapping))
+
+        dataset.class_count = class_count
+        dataset.metadata_ = {
+            "class_info": {
+                "class_count": class_count,
+                "class_mapping": class_mapping,
+            },
+        }
