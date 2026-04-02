@@ -1,55 +1,351 @@
-import { useParams } from 'react-router-dom'
-import { Typography, Tabs, Empty } from 'antd'
+/**
+ * 데이터셋 그룹 상세 페이지
+ * - 그룹 기본 정보 (Descriptions)
+ * - 소속 데이터셋(split × version) 목록 테이블
+ * - 클래스 정보 Popover 상세보기 + 검증 버튼
+ */
+import { useState } from 'react'
+import { useParams, useNavigate } from 'react-router-dom'
+import {
+  Typography,
+  Descriptions,
+  Table,
+  Tag,
+  Badge,
+  Space,
+  Button,
+  Spin,
+  Alert,
+  Popover,
+  message,
+} from 'antd'
+import {
+  ArrowLeftOutlined,
+  InfoCircleOutlined,
+  CheckCircleOutlined,
+} from '@ant-design/icons'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import dayjs from 'dayjs'
+import { datasetGroupsApi, datasetsApi } from '../api/dataset'
+import type { DatasetSummary } from '../types/dataset'
 
 const { Title, Text } = Typography
 
+const STATUS_BADGE: Record<string, string> = {
+  READY: 'success',
+  PENDING: 'default',
+  PROCESSING: 'processing',
+  ERROR: 'error',
+}
+
+const SPLIT_ORDER: Record<string, number> = {
+  TRAIN: 0,
+  VAL: 1,
+  TEST: 2,
+  NONE: 3,
+}
+
+const SPLIT_COLOR: Record<string, string> = {
+  TRAIN: 'blue',
+  VAL: 'green',
+  TEST: 'orange',
+  NONE: 'default',
+}
+
+const FORMAT_COLOR: Record<string, string> = {
+  COCO: 'green',
+  YOLO: 'orange',
+  ATTR_JSON: 'cyan',
+  CLS_FOLDER: 'geekblue',
+  CUSTOM: 'purple',
+  NONE: 'default',
+}
+
 /**
- * 데이터셋 상세 페이지
- * 탭 구성:
- *   - 기본 정보 (Phase 1)
- *   - 샘플 보기 (Phase 2-b, 현재 빈 슬롯)
- *   - EDA (Phase 2-a, 현재 빈 슬롯)
- *   - Lineage (Phase 2-b, 현재 빈 슬롯)
+ * 클래스 매핑 Popover 내용 컴포넌트.
+ * ID → 클래스명 테이블을 간결하게 보여준다.
  */
+function ClassMappingContent({ classMapping }: { classMapping: Record<string, string> }) {
+  const entries = Object.entries(classMapping).sort(
+    ([keyA], [keyB]) => Number(keyA) - Number(keyB)
+  )
+
+  return (
+    <div style={{ maxHeight: 300, overflowY: 'auto', minWidth: 180 }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+        <thead>
+          <tr style={{ borderBottom: '1px solid #f0f0f0' }}>
+            <th style={{ textAlign: 'left', padding: '4px 12px 4px 0', color: '#888' }}>ID</th>
+            <th style={{ textAlign: 'left', padding: '4px 0', color: '#888' }}>클래스명</th>
+          </tr>
+        </thead>
+        <tbody>
+          {entries.map(([classId, className]) => (
+            <tr key={classId} style={{ borderBottom: '1px solid #fafafa' }}>
+              <td style={{ padding: '3px 12px 3px 0', fontFamily: 'monospace' }}>{classId}</td>
+              <td style={{ padding: '3px 0' }}>{className}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 export default function DatasetDetailPage() {
   const { groupId } = useParams()
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
 
-  const tabs = [
+  // 검증 진행 중인 dataset ID 추적
+  const [validatingDatasetId, setValidatingDatasetId] = useState<string | null>(null)
+
+  const { data: group, isLoading, error } = useQuery({
+    queryKey: ['dataset-group', groupId],
+    queryFn: () => datasetGroupsApi.get(groupId!).then(r => r.data),
+    enabled: !!groupId,
+  })
+
+  /** 데이터셋 검증 실행 — 현재 포맷 기준으로 검증하고 클래스 정보 저장 */
+  const handleValidateDataset = async (record: DatasetSummary) => {
+    const annotationFormat = record.annotation_format || group?.annotation_format
+    if (!annotationFormat || annotationFormat === 'NONE') {
+      message.warning('어노테이션 포맷이 지정되지 않아 검증할 수 없습니다.')
+      return
+    }
+
+    setValidatingDatasetId(record.id)
+    try {
+      const response = await datasetsApi.validate(record.id, {
+        annotation_format: annotationFormat,
+      })
+      if (response.data.valid) {
+        message.success('검증 완료 — 클래스 정보가 저장되었습니다.')
+        queryClient.invalidateQueries({ queryKey: ['dataset-group', groupId] })
+      } else {
+        message.error(`검증 실패: ${response.data.errors.join(', ')}`)
+      }
+    } catch (requestError: any) {
+      const errorDetail = requestError?.response?.data?.detail || '검증 요청 중 오류가 발생했습니다.'
+      message.error(errorDetail)
+    } finally {
+      setValidatingDatasetId(null)
+    }
+  }
+
+  if (isLoading) {
+    return <Spin size="large" style={{ display: 'block', marginTop: 120, textAlign: 'center' }} />
+  }
+
+  if (error || !group) {
+    return (
+      <Alert
+        type="error"
+        message="데이터셋 그룹을 불러오지 못했습니다."
+        description="백엔드 연결 또는 그룹 ID를 확인하세요."
+        showIcon
+        style={{ marginTop: 24 }}
+      />
+    )
+  }
+
+  /* ── 데이터셋 테이블 컬럼 ── */
+  const datasetColumns = [
     {
-      key: 'info',
-      label: '기본 정보',
-      children: (
-        <Empty description={<Text type="secondary">Phase 1에서 구현 예정</Text>} />
+      title: 'Split',
+      dataIndex: 'split',
+      key: 'split',
+      width: 100,
+      render: (split: string) => (
+        <Tag color={SPLIT_COLOR[split] ?? 'default'}>{split}</Tag>
       ),
     },
     {
-      key: 'samples',
-      label: '샘플 보기',
-      children: (
-        <Empty description={<Text type="secondary">Phase 2-b에서 구현 예정</Text>} />
+      title: '버전',
+      dataIndex: 'version',
+      key: 'version',
+      width: 100,
+    },
+    {
+      title: '상태',
+      dataIndex: 'status',
+      key: 'status',
+      width: 110,
+      render: (status: string) => (
+        <Badge status={STATUS_BADGE[status] as any} text={status} />
       ),
     },
     {
-      key: 'eda',
-      label: 'EDA',
-      children: (
-        <Empty description={<Text type="secondary">Phase 2-a에서 구현 예정</Text>} />
+      title: '이미지 수',
+      dataIndex: 'image_count',
+      key: 'image_count',
+      width: 110,
+      align: 'right' as const,
+      render: (count: number | null) =>
+        count != null ? count.toLocaleString() : <Text type="secondary">-</Text>,
+    },
+    {
+      title: '클래스 정보',
+      key: 'class_info',
+      width: 150,
+      render: (_: unknown, record: DatasetSummary) => {
+        const classInfo = record.metadata?.class_info
+        const classCount = record.class_count ?? classInfo?.class_count
+        const classMapping = classInfo?.class_mapping
+
+        // 클래스 정보가 있으면 — 개수 + 상세보기 Popover
+        if (classCount != null && classMapping) {
+          return (
+            <Space size={4}>
+              <Text>{classCount}개</Text>
+              <Popover
+                title={`클래스 매핑 (${classCount}개)`}
+                content={<ClassMappingContent classMapping={classMapping} />}
+                trigger="click"
+                placement="left"
+              >
+                <Button
+                  type="link"
+                  size="small"
+                  icon={<InfoCircleOutlined />}
+                  style={{ padding: 0 }}
+                >
+                  상세보기
+                </Button>
+              </Popover>
+            </Space>
+          )
+        }
+
+        // 클래스 수만 있고 매핑은 없는 경우
+        if (classCount != null) {
+          return <Text>{classCount}개</Text>
+        }
+
+        // 클래스 정보 없음 — 검증 버튼 표시
+        const annotationFormat = record.annotation_format || group.annotation_format
+        const isValidatable = annotationFormat && annotationFormat !== 'NONE'
+
+        if (isValidatable) {
+          return (
+            <Button
+              type="link"
+              size="small"
+              icon={<CheckCircleOutlined />}
+              loading={validatingDatasetId === record.id}
+              onClick={(e) => {
+                e.stopPropagation()
+                handleValidateDataset(record)
+              }}
+            >
+              검증
+            </Button>
+          )
+        }
+
+        return <Text type="secondary">-</Text>
+      },
+    },
+    {
+      title: '포맷',
+      dataIndex: 'annotation_format',
+      key: 'annotation_format',
+      width: 100,
+      render: (fmt: string | null) => {
+        const display = fmt ?? 'NONE'
+        return <Tag color={FORMAT_COLOR[display] ?? 'default'}>{display}</Tag>
+      },
+    },
+    {
+      title: '저장 경로',
+      dataIndex: 'storage_uri',
+      key: 'storage_uri',
+      ellipsis: true,
+      render: (uri: string) => (
+        <Text copyable style={{ fontSize: 12 }}>{uri}</Text>
       ),
     },
     {
-      key: 'lineage',
-      label: 'Lineage',
-      children: (
-        <Empty description={<Text type="secondary">Phase 2-b에서 구현 예정</Text>} />
-      ),
+      title: '등록일',
+      dataIndex: 'created_at',
+      key: 'created_at',
+      width: 120,
+      render: (v: string) => dayjs(v).format('YYYY-MM-DD'),
     },
   ]
 
   return (
     <div>
-      <Title level={3}>데이터셋 상세</Title>
-      <Text type="secondary">group ID: {groupId}</Text>
-      <Tabs items={tabs} style={{ marginTop: 16 }} />
+      {/* 헤더 */}
+      <Space style={{ marginBottom: 16 }}>
+        <Button
+          type="text"
+          icon={<ArrowLeftOutlined />}
+          onClick={() => navigate('/datasets')}
+        >
+          목록으로
+        </Button>
+      </Space>
+
+      <Title level={3} style={{ marginBottom: 4 }}>{group.name}</Title>
+      {group.description && (
+        <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
+          {group.description}
+        </Text>
+      )}
+
+      {/* 그룹 기본 정보 */}
+      <Descriptions
+        bordered
+        size="small"
+        column={{ xs: 1, sm: 2, md: 3 }}
+        style={{ marginBottom: 24 }}
+      >
+        <Descriptions.Item label="데이터셋 유형">
+          <Tag>{group.dataset_type}</Tag>
+        </Descriptions.Item>
+        <Descriptions.Item label="어노테이션 포맷">
+          <Tag color={FORMAT_COLOR[group.annotation_format] ?? 'default'}>
+            {group.annotation_format}
+          </Tag>
+        </Descriptions.Item>
+        <Descriptions.Item label="모달리티">
+          {group.modality}
+        </Descriptions.Item>
+        <Descriptions.Item label="사용 목적">
+          <Space wrap size={4}>
+            {(group.task_types ?? []).map(t => (
+              <Tag key={t} color="purple">{t}</Tag>
+            ))}
+            {!group.task_types?.length && <Text type="secondary">-</Text>}
+          </Space>
+        </Descriptions.Item>
+        <Descriptions.Item label="출처">
+          {group.source_origin || <Text type="secondary">-</Text>}
+        </Descriptions.Item>
+        <Descriptions.Item label="등록일">
+          {dayjs(group.created_at).format('YYYY-MM-DD HH:mm')}
+        </Descriptions.Item>
+      </Descriptions>
+
+      {/* 소속 데이터셋 목록 */}
+      <Title level={5} style={{ marginBottom: 12 }}>
+        데이터셋 목록 ({group.datasets.length}건)
+      </Title>
+      <Table<DatasetSummary>
+        dataSource={[...group.datasets].sort((a, b) => {
+          const splitDiff = (SPLIT_ORDER[a.split] ?? 99) - (SPLIT_ORDER[b.split] ?? 99)
+          if (splitDiff !== 0) return splitDiff
+          return b.version.localeCompare(a.version)
+        })}
+        columns={datasetColumns}
+        rowKey="id"
+        pagination={false}
+        size="middle"
+        locale={{
+          emptyText: <Text type="secondary">등록된 데이터셋이 없습니다.</Text>,
+        }}
+      />
     </div>
   )
 }

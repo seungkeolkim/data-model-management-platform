@@ -92,6 +92,18 @@ export default function DatasetListPage() {
       ),
     },
     {
+      title: '데이터 유형',
+      dataIndex: 'dataset_type',
+      key: 'dataset_type',
+      width: 110,
+      render: (v: string) => {
+        const color: Record<string, string> = {
+          RAW: 'default', SOURCE: 'blue', PROCESSED: 'green', FUSION: 'volcano',
+        }
+        return <Tag color={color[v] ?? 'default'}>{v}</Tag>
+      },
+    },
+    {
       title: '사용 목적',
       key: 'task_types',
       width: 200,
@@ -202,7 +214,7 @@ export default function DatasetListPage() {
       {/* 헤더 */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
         <div>
-          <Title level={3} style={{ margin: 0 }}>데이터셋</Title>
+          <Title level={3} style={{ margin: 0 }}>데이터셋 그룹</Title>
           <Text type="secondary">등록된 데이터셋 그룹 목록입니다. 그룹 행을 클릭하면 상세 페이지로 이동합니다.</Text>
         </div>
         <Space>
@@ -214,7 +226,7 @@ export default function DatasetListPage() {
             icon={<PlusOutlined />}
             onClick={() => { setSelectedGroup(null); setModalOpen(true) }}
           >
-            데이터셋 등록
+            원천 데이터셋 등록
           </Button>
         </Space>
       </div>

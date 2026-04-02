@@ -86,9 +86,10 @@ class DatasetSummary(BaseModel):
     annotation_format: str | None
     storage_uri: str
     annotation_files: list[str] | None
+    metadata: dict[str, Any] | None = Field(default=None, alias="metadata_")
     created_at: datetime
 
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": True, "populate_by_name": True}
 
 
 class DatasetGroupResponse(DatasetGroupBase):
@@ -177,14 +178,25 @@ class DatasetRegisterRequest(BaseModel):
         return self
 
 
+class DatasetUpdate(BaseModel):
+    """Dataset 개별 수정 요청 (부분 업데이트)."""
+    annotation_format: str | None = None
+
+
+class DatasetValidateRequest(BaseModel):
+    """이미 등록된 데이터셋의 어노테이션 포맷 검증 요청."""
+    annotation_format: str = Field(..., description="COCO | YOLO")
+
+
 class DatasetResponse(DatasetBase):
     """Dataset 응답."""
     id: str
     group_id: str
+    metadata: dict[str, Any] | None = Field(default=None, alias="metadata_")
     created_at: datetime
     updated_at: datetime
 
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": True, "populate_by_name": True}
 
 
 # =============================================================================
