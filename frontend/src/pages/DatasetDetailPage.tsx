@@ -17,6 +17,7 @@ import {
   Spin,
   Alert,
   Popover,
+  Select,
   message,
 } from 'antd'
 import {
@@ -27,7 +28,7 @@ import {
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import dayjs from 'dayjs'
 import { datasetGroupsApi, datasetsApi } from '../api/dataset'
-import type { DatasetSummary } from '../types/dataset'
+import type { AnnotationFormat, DatasetSummary } from '../types/dataset'
 
 const { Title, Text } = Typography
 
@@ -97,14 +98,29 @@ export default function DatasetDetailPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
 
-  // 검증 진행 중인 dataset ID 추적
   const [validatingDatasetId, setValidatingDatasetId] = useState<string | null>(null)
+  const [updatingFormatDatasetId, setUpdatingFormatDatasetId] = useState<string | null>(null)
 
   const { data: group, isLoading, error } = useQuery({
     queryKey: ['dataset-group', groupId],
     queryFn: () => datasetGroupsApi.get(groupId!).then(r => r.data),
     enabled: !!groupId,
   })
+
+  /** 어노테이션 포맷 변경 */
+  const handleFormatChange = async (datasetId: string, newFormat: AnnotationFormat) => {
+    setUpdatingFormatDatasetId(datasetId)
+    try {
+      await datasetsApi.update(datasetId, { annotation_format: newFormat })
+      message.success(`포맷이 ${newFormat}(으)로 변경되었습니다.`)
+      queryClient.invalidateQueries({ queryKey: ['dataset-group', groupId] })
+    } catch (requestError: any) {
+      const errorDetail = requestError?.response?.data?.detail || '포맷 변경 중 오류가 발생했습니다.'
+      message.error(errorDetail)
+    } finally {
+      setUpdatingFormatDatasetId(null)
+    }
+  }
 
   /** 데이터셋 검증 실행 — 현재 포맷 기준으로 검증하고 클래스 정보 저장 */
   const handleValidateDataset = async (record: DatasetSummary) => {
@@ -248,12 +264,28 @@ export default function DatasetDetailPage() {
     },
     {
       title: '포맷',
-      dataIndex: 'annotation_format',
       key: 'annotation_format',
-      width: 100,
-      render: (fmt: string | null) => {
-        const display = fmt ?? 'NONE'
-        return <Tag color={FORMAT_COLOR[display] ?? 'default'}>{display}</Tag>
+      width: 140,
+      render: (_: unknown, record: DatasetSummary) => {
+        const currentFormat = record.annotation_format ?? 'NONE'
+        return (
+          <Select
+            size="small"
+            value={currentFormat}
+            loading={updatingFormatDatasetId === record.id}
+            onChange={(value: AnnotationFormat) => handleFormatChange(record.id, value)}
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: 110 }}
+            options={[
+              { value: 'COCO', label: 'COCO' },
+              { value: 'YOLO', label: 'YOLO' },
+              { value: 'ATTR_JSON', label: 'ATTR_JSON' },
+              { value: 'CLS_FOLDER', label: 'CLS_FOLDER' },
+              { value: 'CUSTOM', label: 'CUSTOM' },
+              { value: 'NONE', label: 'NONE' },
+            ]}
+          />
+        )
       },
     },
     {
