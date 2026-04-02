@@ -143,7 +143,10 @@ async def create_dataset_group(
     """데이터셋 그룹 생성."""
     logger.info("그룹 생성 요청", name=data.name, dataset_type=data.dataset_type)
     svc = DatasetGroupService(db)
-    group = await svc.create_group(data)
+    try:
+        group = await svc.create_group(data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     logger.info("그룹 생성 완료", group_id=group.id, name=group.name)
     return group
 
@@ -189,12 +192,19 @@ async def delete_dataset_group(
     group_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    """데이터셋 그룹 삭제."""
+    """데이터셋 그룹 소프트 삭제. 하위 데이터셋도 함께 삭제되며 버전 이력은 보존된다."""
     logger.info("그룹 삭제 요청", group_id=group_id)
     svc = DatasetGroupService(db)
     group = await svc.get_group(group_id)
     if not group:
         raise HTTPException(status_code=404, detail="DatasetGroup not found")
-    await svc.delete_group(group)
-    logger.info("그룹 삭제 완료", group_id=group_id, name=group.name)
-    return MessageResponse(message=f"DatasetGroup {group_id} deleted")
+    deleted_dataset_count = await svc.delete_group(group)
+    logger.info(
+        "그룹 소프트 삭제 완료",
+        group_id=group_id,
+        name=group.name,
+        deleted_dataset_count=deleted_dataset_count,
+    )
+    return MessageResponse(
+        message=f"그룹 '{group.name}' 삭제 완료 (하위 데이터셋 {deleted_dataset_count}건 포함)"
+    )
