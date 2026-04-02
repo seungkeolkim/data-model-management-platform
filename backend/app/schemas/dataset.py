@@ -86,10 +86,10 @@ class DatasetSummary(BaseModel):
     annotation_format: str | None
     storage_uri: str
     annotation_files: list[str] | None
-    metadata: dict[str, Any] | None = Field(default=None, alias="metadata_")
+    metadata: dict[str, Any] | None = Field(default=None, validation_alias="metadata_")
     created_at: datetime
 
-    model_config = {"from_attributes": True, "populate_by_name": True}
+    model_config = {"from_attributes": True}
 
 
 class DatasetGroupResponse(DatasetGroupBase):
@@ -192,11 +192,11 @@ class DatasetResponse(DatasetBase):
     """Dataset 응답."""
     id: str
     group_id: str
-    metadata: dict[str, Any] | None = Field(default=None, alias="metadata_")
+    metadata: dict[str, Any] | None = Field(default=None, validation_alias="metadata_")
     created_at: datetime
     updated_at: datetime
 
-    model_config = {"from_attributes": True, "populate_by_name": True}
+    model_config = {"from_attributes": True}
 
 
 # =============================================================================
