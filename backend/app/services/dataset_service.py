@@ -548,8 +548,24 @@ class DatasetGroupService:
         return result.scalar_one_or_none()
 
     async def update_dataset(self, dataset: Dataset, data: DatasetUpdate) -> Dataset:
-        """Dataset 개별 수정 (부분 업데이트)."""
+        """
+        Dataset 개별 수정 (부분 업데이트).
+        annotation_format이 변경되면 기존 검증 결과(class_count, metadata)를 초기화한다.
+        """
         update_data = data.model_dump(exclude_unset=True)
+
+        # 포맷 변경 시 클래스 정보 초기화 — 재검증 필요
+        new_format = update_data.get("annotation_format")
+        if new_format and new_format != dataset.annotation_format:
+            dataset.class_count = None
+            dataset.metadata_ = None
+            logger.info(
+                "포맷 변경으로 클래스 정보 초기화",
+                dataset_id=dataset.id,
+                old_format=dataset.annotation_format,
+                new_format=new_format,
+            )
+
         for field, value in update_data.items():
             setattr(dataset, field, value)
         await self.db.flush()

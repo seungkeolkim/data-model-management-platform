@@ -100,6 +100,9 @@ export default function DatasetDetailPage() {
 
   const [validatingDatasetId, setValidatingDatasetId] = useState<string | null>(null)
   const [updatingFormatDatasetId, setUpdatingFormatDatasetId] = useState<string | null>(null)
+  // 포맷 편집 모드: dataset ID → 선택 중인 포맷 값
+  const [editingFormatId, setEditingFormatId] = useState<string | null>(null)
+  const [editingFormatValue, setEditingFormatValue] = useState<AnnotationFormat>('NONE')
 
   const { data: group, isLoading, error } = useQuery({
     queryKey: ['dataset-group', groupId],
@@ -107,18 +110,25 @@ export default function DatasetDetailPage() {
     enabled: !!groupId,
   })
 
-  /** 어노테이션 포맷 변경 */
-  const handleFormatChange = async (datasetId: string, newFormat: AnnotationFormat) => {
+  /** 포맷 편집 모드 진입 */
+  const startEditingFormat = (record: DatasetSummary) => {
+    setEditingFormatId(record.id)
+    setEditingFormatValue((record.annotation_format ?? 'NONE') as AnnotationFormat)
+  }
+
+  /** 포맷 변경 확정 */
+  const confirmFormatChange = async (datasetId: string) => {
     setUpdatingFormatDatasetId(datasetId)
     try {
-      await datasetsApi.update(datasetId, { annotation_format: newFormat })
-      message.success(`포맷이 ${newFormat}(으)로 변경되었습니다.`)
+      await datasetsApi.update(datasetId, { annotation_format: editingFormatValue })
+      message.success(`포맷이 ${editingFormatValue}(으)로 변경되었습니다. 클래스 정보는 재검증이 필요합니다.`)
       queryClient.invalidateQueries({ queryKey: ['dataset-group', groupId] })
     } catch (requestError: any) {
       const errorDetail = requestError?.response?.data?.detail || '포맷 변경 중 오류가 발생했습니다.'
       message.error(errorDetail)
     } finally {
       setUpdatingFormatDatasetId(null)
+      setEditingFormatId(null)
     }
   }
 
@@ -265,26 +275,58 @@ export default function DatasetDetailPage() {
     {
       title: '포맷',
       key: 'annotation_format',
-      width: 140,
+      width: 200,
       render: (_: unknown, record: DatasetSummary) => {
         const currentFormat = record.annotation_format ?? 'NONE'
+        const isEditing = editingFormatId === record.id
+
+        if (isEditing) {
+          return (
+            <Space size={4} onClick={(e) => e.stopPropagation()}>
+              <Select
+                size="small"
+                value={editingFormatValue}
+                onChange={(value: AnnotationFormat) => setEditingFormatValue(value)}
+                style={{ width: 110 }}
+                options={[
+                  { value: 'COCO', label: 'COCO' },
+                  { value: 'YOLO', label: 'YOLO' },
+                  { value: 'ATTR_JSON', label: 'ATTR_JSON' },
+                  { value: 'CLS_FOLDER', label: 'CLS_FOLDER' },
+                  { value: 'CUSTOM', label: 'CUSTOM' },
+                  { value: 'NONE', label: 'NONE' },
+                ]}
+              />
+              <Button
+                type="primary"
+                size="small"
+                loading={updatingFormatDatasetId === record.id}
+                onClick={() => confirmFormatChange(record.id)}
+              >
+                확인
+              </Button>
+              <Button
+                size="small"
+                onClick={() => setEditingFormatId(null)}
+              >
+                취소
+              </Button>
+            </Space>
+          )
+        }
+
         return (
-          <Select
-            size="small"
-            value={currentFormat}
-            loading={updatingFormatDatasetId === record.id}
-            onChange={(value: AnnotationFormat) => handleFormatChange(record.id, value)}
-            onClick={(e) => e.stopPropagation()}
-            style={{ width: 110 }}
-            options={[
-              { value: 'COCO', label: 'COCO' },
-              { value: 'YOLO', label: 'YOLO' },
-              { value: 'ATTR_JSON', label: 'ATTR_JSON' },
-              { value: 'CLS_FOLDER', label: 'CLS_FOLDER' },
-              { value: 'CUSTOM', label: 'CUSTOM' },
-              { value: 'NONE', label: 'NONE' },
-            ]}
-          />
+          <Space size={4}>
+            <Tag color={FORMAT_COLOR[currentFormat] ?? 'default'}>{currentFormat}</Tag>
+            <Button
+              type="link"
+              size="small"
+              style={{ padding: 0 }}
+              onClick={(e) => { e.stopPropagation(); startEditingFormat(record) }}
+            >
+              변경
+            </Button>
+          </Space>
         )
       },
     },
