@@ -101,6 +101,7 @@ POSTGRES_PASSWORD=...           # ← 변경 필수
 POSTGRES_DB=mlplatform
 POSTGRES_HOST=postgres
 POSTGRES_PORT=5432
+POSTGRES_EXTERNAL_PORT=15432      # ← 호스트에서 DB 접근 시 포트
 
 LOCAL_STORAGE_BASE=/mnt/nas/datasets  # ← NAS 마운트 경로 변경 필수
 LOCAL_EDA_BASE=/mnt/nas/eda
