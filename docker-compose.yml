@@ -187,7 +187,7 @@ services:
       - ${LOCAL_STORAGE_BASE}:/mnt/datasets:ro
       - ${LOCAL_EDA_BASE}:/mnt/eda:ro
     ports:
-      - "80:80"
+      - "${NGINX_PORT:-8080}:80"
       # HTTPS 설정 시 (운영):
       # - "443:443"
     depends_on:
