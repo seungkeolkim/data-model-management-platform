@@ -38,7 +38,7 @@ services:
       - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
     ports:
       # 개발 시 외부 접근용 (운영 시 주석처리 권장)
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "${POSTGRES_EXTERNAL_PORT:-15432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mlplatform} -d ${POSTGRES_DB:-mlplatform}"]
       interval: 10s
@@ -63,14 +63,14 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mlplatform_secret}
       POSTGRES_DB: ${POSTGRES_DB:-mlplatform}
       POSTGRES_HOST: postgres
-      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_PORT: "5432"  # 컨테이너 간 통신은 항상 5432 (호스트 매핑 포트와 무관)
       STORAGE_BACKEND: ${STORAGE_BACKEND:-local}
       LOCAL_STORAGE_BASE: /mnt/datasets   # 컨테이너 내부 경로 (고정)
       LOCAL_EDA_BASE: /mnt/eda            # 컨테이너 내부 경로 (고정)
       LOCAL_UPLOAD_BASE: /mnt/uploads     # 컨테이너 내부 경로 (고정)
       APP_ENV: ${APP_ENV:-development}
       APP_DEBUG: ${APP_DEBUG:-true}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:18080,http://localhost:15173}
       SECRET_KEY: ${SECRET_KEY:-dev-secret-key}
     volumes:
       # NAS 마운트 (호스트 경로는 .env의 LOCAL_STORAGE_BASE, LOCAL_EDA_BASE 로 지정)
@@ -84,7 +84,7 @@ services:
       # .venv를 named volume으로 분리 → 호스트 마운트로 덮어써지지 않게 보호
       - backend_venv:/app/.venv
     ports:
-      - "${APP_PORT:-8000}:8000"
+      - "${APP_PORT:-18000}:8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -113,7 +113,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mlplatform_secret}
       POSTGRES_DB: ${POSTGRES_DB:-mlplatform}
       POSTGRES_HOST: postgres
-      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_PORT: "5432"  # 컨테이너 간 통신은 항상 5432 (호스트 매핑 포트와 무관)
       STORAGE_BACKEND: ${STORAGE_BACKEND:-local}
       LOCAL_STORAGE_BASE: /mnt/datasets
       LOCAL_EDA_BASE: /mnt/eda
@@ -164,7 +164,7 @@ services:
       - ./frontend:/app
       - /app/node_modules  # node_modules는 컨테이너 내부 유지
     ports:
-      - "5173:5173"
+      - "${FRONTEND_PORT:-15173}:5173"
     networks:
       - mlplatform-net
     command: npm run dev -- --host 0.0.0.0
@@ -187,7 +187,7 @@ services:
       - ${LOCAL_STORAGE_BASE}:/mnt/datasets:ro
       - ${LOCAL_EDA_BASE}:/mnt/eda:ro
     ports:
-      - "${NGINX_PORT:-8080}:80"
+      - "${NGINX_PORT:-18080}:80"
       # HTTPS 설정 시 (운영):
       # - "443:443"
     depends_on:

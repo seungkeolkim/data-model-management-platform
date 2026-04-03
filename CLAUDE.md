@@ -186,7 +186,7 @@ make check    # .env 및 경로 유효성 검증
 make up-build
 ```
 
-접속 주소: 웹 UI `http://localhost`, API 문서 `http://localhost/api/docs`, DB `localhost:5432`
+접속 주소: 웹 UI `http://localhost:18080`, API 문서 `http://localhost:18080/api/docs`, DB `localhost:15432`
 
 ## 컨벤션
 
