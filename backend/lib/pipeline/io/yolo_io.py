@@ -25,7 +25,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from lib.pipeline.models import Annotation, DatasetMeta, ImageRecord
+from lib.pipeline.pipeline_data_models import Annotation, DatasetMeta, ImageRecord
 
 logger = logging.getLogger(__name__)
 
@@ -141,7 +141,7 @@ def _parse_yaml_names_fallback(yaml_path: Path) -> list[str] | None:
     return class_names if class_names else None
 
 
-def _find_yaml_in_directory(search_dir: Path) -> Path | None:
+def _find_yolo_yaml_in_directory(search_dir: Path) -> Path | None:
     """
     디렉토리에서 YOLO data.yaml 파일을 탐색한다.
     일반적인 파일명 후보를 우선 확인하고, 없으면 *.yaml/*.yml 전체 탐색.
@@ -166,7 +166,7 @@ def _find_yaml_in_directory(search_dir: Path) -> Path | None:
     return None
 
 
-def _find_matching_image_filename(
+def _find_image_filename_for_label(
     label_basename: str,
     image_dir: Path,
 ) -> str | None:
@@ -266,9 +266,9 @@ def parse_yolo_dir(
         resolved_yaml_path = yaml_path
         # 2순위: label_dir 및 상위 디렉토리에서 자동 탐색
         if resolved_yaml_path is None:
-            resolved_yaml_path = _find_yaml_in_directory(label_dir)
+            resolved_yaml_path = _find_yolo_yaml_in_directory(label_dir)
         if resolved_yaml_path is None:
-            resolved_yaml_path = _find_yaml_in_directory(label_dir.parent)
+            resolved_yaml_path = _find_yolo_yaml_in_directory(label_dir.parent)
         if resolved_yaml_path is not None:
             parsed_names = parse_yolo_yaml(resolved_yaml_path)
             if parsed_names:
@@ -295,7 +295,7 @@ def parse_yolo_dir(
 
         # 이미지 파일명 결정
         if image_dir is not None:
-            matched_filename = _find_matching_image_filename(label_basename, image_dir)
+            matched_filename = _find_image_filename_for_label(label_basename, image_dir)
             image_filename = matched_filename or f"{label_basename}.jpg"
         else:
             image_filename = f"{label_basename}.jpg"
@@ -453,12 +453,12 @@ def write_yolo_dir(
 
     # data.yaml 생성 (YOLO 표준 메타 파일)
     if write_data_yaml and meta.categories:
-        _write_data_yaml(sorted_categories, output_dir)
+        _write_yolo_data_yaml(sorted_categories, output_dir)
 
     return output_dir
 
 
-def _write_data_yaml(
+def _write_yolo_data_yaml(
     sorted_categories: list[dict[str, Any]],
     output_dir: Path,
 ) -> Path:

@@ -13,12 +13,12 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-from lib.pipeline.io.class_mapping import (
+from lib.pipeline.io.coco_yolo_class_mapping import (
     build_coco_to_yolo_remap,
     build_yolo_to_coco_remap,
 )
-from lib.pipeline.manipulator import UnitManipulator
-from lib.pipeline.models import DatasetMeta, ImageManipulationSpec, ImageRecord
+from lib.pipeline.manipulator_base import UnitManipulator
+from lib.pipeline.pipeline_data_models import DatasetMeta, ImageManipulationSpec, ImageRecord
 
 
 def _apply_category_id_remap(

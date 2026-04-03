@@ -1,24 +1,61 @@
 """
-Pipelines API Router - Phase 2에서 구현
+파이프라인 실행 API 라우터.
+
+POST /execute       — 파이프라인 제출 (Celery 비동기 실행)
+GET /{id}/status    — 실행 상태 조회
+GET /               — 실행 이력 목록
 """
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.database import get_db
+from app.schemas.pipeline import (
+    PipelineConfig,
+    PipelineExecutionResponse,
+    PipelineListResponse,
+    PipelineSubmitResponse,
+)
+from app.services.pipeline_service import PipelineService
 
 router = APIRouter()
 
 
-@router.post("/execute")
-async def execute_pipeline():
-    """파이프라인 실행 (Phase 2)"""
-    return {"message": "Phase 2에서 구현 예정", "endpoint": "POST /pipelines/execute"}
+@router.post("/execute", response_model=PipelineSubmitResponse, status_code=202)
+async def execute_pipeline(
+    config: PipelineConfig,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    파이프라인 실행을 제출한다.
+
+    요청 본문으로 PipelineConfig JSON을 받아
+    Celery 워커에 비동기 실행을 위임한다.
+    즉시 execution_id를 반환하며, 실행 상태는 GET /{id}/status로 조회한다.
+    """
+    service = PipelineService(db)
+    return await service.submit_pipeline(config)
 
 
-@router.get("/{execution_id}/status")
-async def get_pipeline_status(execution_id: str):
-    """파이프라인 실행 상태 조회 (Phase 2)"""
-    return {"message": "Phase 2에서 구현 예정", "endpoint": f"GET /pipelines/{execution_id}/status"}
+@router.get("/{execution_id}/status", response_model=PipelineExecutionResponse)
+async def get_pipeline_status(
+    execution_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """파이프라인 실행 상태를 조회한다."""
+    service = PipelineService(db)
+    execution = await service.get_execution_status(execution_id)
+    if execution is None:
+        raise HTTPException(status_code=404, detail="실행 이력을 찾을 수 없습니다.")
+    return execution
 
 
-@router.get("")
-async def list_pipeline_executions():
-    """파이프라인 실행 이력 목록 (Phase 2)"""
-    return {"message": "Phase 2에서 구현 예정", "endpoint": "GET /pipelines"}
+@router.get("", response_model=PipelineListResponse)
+async def list_pipeline_executions(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+):
+    """파이프라인 실행 이력 목록을 조회한다."""
+    service = PipelineService(db)
+    items, total = await service.list_executions(page=page, page_size=page_size)
+    return PipelineListResponse(items=items, total=total)

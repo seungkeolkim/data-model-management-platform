@@ -41,7 +41,7 @@ class StorageProtocol(Protocol):
         """표준 dataset storage_uri 생성."""
         ...
 
-    def get_images_path(self, storage_uri: str) -> Path:
+    def get_images_dir(self, storage_uri: str) -> Path:
         """images/ 서브디렉토리 경로 반환."""
         ...
 

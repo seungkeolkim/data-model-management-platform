@@ -1,5 +1,5 @@
 """
-Pipeline 핵심 데이터 모델 (Phase 2에서 구현)
+파이프라인 핵심 데이터 모델.
 
 파이프라인을 흐르는 데이터 구조를 정의.
 이미지 파일에는 접근하지 않음 (annotation만 처리).
@@ -62,7 +62,7 @@ class DatasetMeta:
 class ImageManipulationSpec:
     """
     이미지 1장에 적용할 변환 명세.
-    Annotation 처리 단계에서 결정되며, 실제 이미지 I/O는 ImageExecutor가 수행.
+    Annotation 처리 단계에서 결정되며, 실제 이미지 I/O는 ImageMaterializer가 수행.
     """
     operation: str           # "rotate_180" | "change_compression" | "mask_region" 등
     params: dict[str, Any] = field(default_factory=dict)
@@ -72,7 +72,7 @@ class ImageManipulationSpec:
 class ImagePlan:
     """
     이미지 1장의 처리 계획.
-    Annotation phase 완료 후 ImageExecutor에 전달.
+    Annotation phase 완료 후 ImageMaterializer에 전달.
     """
     src_uri: str             # 원본 이미지 상대경로
     dst_uri: str             # 출력 이미지 상대경로
@@ -88,7 +88,7 @@ class ImagePlan:
 class DatasetPlan:
     """
     파이프라인 실행 전체 계획.
-    Annotation phase → ImagePlan 확정 → ImageExecutor 실행 순서로 사용.
+    Annotation phase → ImagePlan 확정 → ImageMaterializer 실행 순서로 사용.
     """
     output_meta: DatasetMeta
     image_plans: list[ImagePlan] = field(default_factory=list)

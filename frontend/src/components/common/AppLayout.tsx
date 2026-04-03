@@ -86,8 +86,11 @@ export default function AppLayout() {
           borderRight: '1px solid #f0f0f0',
         }}
       >
-        {/* 로고 */}
-        <div style={{ padding: '16px 20px', borderBottom: '1px solid #f0f0f0' }}>
+        {/* 로고 — 클릭 시 메인 페이지로 이동 */}
+        <div
+          style={{ padding: '16px 20px', borderBottom: '1px solid #f0f0f0', cursor: 'pointer' }}
+          onClick={() => navigate('/')}
+        >
           <Title level={5} style={{ margin: 0, color: '#1677ff' }}>
             🤖 ML Platform
           </Title>

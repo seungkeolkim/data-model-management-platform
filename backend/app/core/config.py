@@ -70,12 +70,12 @@ class Settings(BaseSettings):
     app_env: Literal["development", "production"] = "development"
     app_debug: bool = True
     app_host: str = "0.0.0.0"
-    app_port: int = 8000
+    app_port: int = 18000
 
     # pydantic-settings v2는 list 필드에 JSON decode를 먼저 시도하므로
     # 환경변수로 "http://a,http://b" 형태가 오면 파싱 에러 발생.
     # str로 받아서 validator에서 분리하는 방식으로 우회.
-    cors_origins: str = "http://localhost:3000,http://localhost:5173"
+    cors_origins: str = "http://localhost:18080,http://localhost:15173"
     api_v1_prefix: str = "/api/v1"
     secret_key: str = "dev-secret-key-change-in-production"
 
@@ -113,16 +113,19 @@ class Settings(BaseSettings):
 
     @property
     def celery_broker_url(self) -> str:
-        """Celery broker URL (PostgreSQL, db+ prefix 필수)."""
+        """Celery broker URL (PostgreSQL, sqla+ prefix로 kombu sqlalchemy transport 사용)."""
         return (
-            f"db+postgresql://{self.postgres_user}:{self.postgres_password}"
+            f"sqla+postgresql://{self.postgres_user}:{self.postgres_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
 
     @property
     def celery_result_backend(self) -> str:
-        """Celery result backend URL."""
-        return self.celery_broker_url
+        """Celery result backend URL (db+ prefix로 SQLAlchemy 결과 저장)."""
+        return (
+            f"db+postgresql://{self.postgres_user}:{self.postgres_password}"
+            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+        )
 
     @property
     def is_development(self) -> bool:

@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from app.pipeline.io.yolo_io import (
-    _find_yaml_in_directory,
+    _find_yolo_yaml_in_directory,
     parse_yolo_dir,
     parse_yolo_yaml,
 )
@@ -98,7 +98,7 @@ class TestParseYoloYaml:
 
 
 # =============================================================================
-# _find_yaml_in_directory 테스트
+# _find_yolo_yaml_in_directory 테스트
 # =============================================================================
 
 
@@ -108,35 +108,35 @@ class TestFindYamlInDirectory:
     def test_finds_data_yaml(self, tmp_path: Path):
         """data.yaml이 있으면 찾기."""
         (tmp_path / "data.yaml").write_text("names: ['a']\n")
-        result = _find_yaml_in_directory(tmp_path)
+        result = _find_yolo_yaml_in_directory(tmp_path)
         assert result is not None
         assert result.name == "data.yaml"
 
     def test_finds_dataset_yaml(self, tmp_path: Path):
         """dataset.yaml이 있으면 찾기."""
         (tmp_path / "dataset.yaml").write_text("names: ['a']\n")
-        result = _find_yaml_in_directory(tmp_path)
+        result = _find_yolo_yaml_in_directory(tmp_path)
         assert result is not None
         assert result.name == "dataset.yaml"
 
     def test_finds_any_yaml(self, tmp_path: Path):
         """일반적인 이름이 없으면 아무 .yaml 파일 찾기."""
         (tmp_path / "custom.yaml").write_text("names: ['a']\n")
-        result = _find_yaml_in_directory(tmp_path)
+        result = _find_yolo_yaml_in_directory(tmp_path)
         assert result is not None
         assert result.suffix == ".yaml"
 
     def test_returns_none_when_no_yaml(self, tmp_path: Path):
         """yaml 파일이 없으면 None."""
         (tmp_path / "readme.txt").write_text("hello")
-        result = _find_yaml_in_directory(tmp_path)
+        result = _find_yolo_yaml_in_directory(tmp_path)
         assert result is None
 
     def test_data_yaml_has_priority(self, tmp_path: Path):
         """data.yaml이 dataset.yaml보다 우선."""
         (tmp_path / "data.yaml").write_text("names: ['a']\n")
         (tmp_path / "dataset.yaml").write_text("names: ['b']\n")
-        result = _find_yaml_in_directory(tmp_path)
+        result = _find_yolo_yaml_in_directory(tmp_path)
         assert result.name == "data.yaml"
 
 

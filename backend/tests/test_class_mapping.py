@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from app.manipulators.format_convert import FormatConvertToCoco, FormatConvertToYolo
-from app.pipeline.io.class_mapping import (
+from app.pipeline.io.coco_yolo_class_mapping import (
     COCO_80_CLASSES,
     COCO_ID_TO_NAME,
     COCO_ID_TO_YOLO_ID,
@@ -23,7 +23,7 @@ from app.pipeline.io.class_mapping import (
 )
 from app.pipeline.io.coco_io import parse_coco_json, write_coco_json
 from app.pipeline.io.yolo_io import write_yolo_dir
-from app.pipeline.models import DatasetMeta
+from app.pipeline.pipeline_data_models import DatasetMeta
 from tests.conftest import (
     IMAGE_1_HEIGHT,
     IMAGE_1_WIDTH,

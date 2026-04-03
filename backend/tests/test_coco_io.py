@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from app.pipeline.io.coco_io import parse_coco_json, write_coco_json
-from app.pipeline.models import DatasetMeta
+from app.pipeline.pipeline_data_models import DatasetMeta
 from tests.conftest import (
     CAR_BBOX,
     IMAGE_1_HEIGHT,
