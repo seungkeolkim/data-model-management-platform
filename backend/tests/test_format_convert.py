@@ -14,7 +14,7 @@ import pytest
 from app.manipulators.format_convert import FormatConvertToCoco, FormatConvertToYolo
 from app.pipeline.io.coco_io import parse_coco_json, write_coco_json
 from app.pipeline.io.yolo_io import parse_yolo_dir, write_yolo_dir
-from app.pipeline.models import DatasetMeta
+from app.pipeline.pipeline_data_models import DatasetMeta
 from tests.conftest import (
     CAR_BBOX,
     IMAGE_1_HEIGHT,

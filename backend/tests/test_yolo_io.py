@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from app.pipeline.io.yolo_io import parse_yolo_dir, write_yolo_dir
-from app.pipeline.models import DatasetMeta
+from app.pipeline.pipeline_data_models import DatasetMeta
 from tests.conftest import (
     CAR_BBOX,
     CAR_YOLO,
@@ -262,7 +262,7 @@ class TestWriteYolo:
             ],
         )
         # DatasetMeta의 image_records는 list이므로 실제 ImageRecord 사용
-        from app.pipeline.models import Annotation, ImageRecord
+        from app.pipeline.pipeline_data_models import Annotation, ImageRecord
         meta_proper = DatasetMeta(
             dataset_id="test",
             storage_uri="",

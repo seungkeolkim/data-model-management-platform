@@ -22,16 +22,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.core.config import get_settings, get_app_config
 from app.core.storage import get_storage_client
-from app.pipeline.executor import PipelineExecutor, PipelineResult, load_source_meta_from_storage
-from app.pipeline.models import DatasetMeta, DatasetPlan, ImagePlan
+from app.pipeline.dag_executor import PipelineDagExecutor, PipelineResult, load_source_meta_from_storage
+from app.pipeline.pipeline_data_models import DatasetMeta, DatasetPlan, ImagePlan
 from app.schemas.pipeline import PipelineConfig, TaskConfig, OutputConfig
 
 
 def create_pipeline_executor_for_cli(
     source_registry: dict[str, dict],
-) -> PipelineExecutor:
+) -> PipelineDagExecutor:
     """
-    CLI 테스트용 PipelineExecutor를 생성한다.
+    CLI 테스트용 PipelineDagExecutor를 생성한다.
     _load_source_meta를 파일 기반 로드로 오버라이드.
 
     Args:
@@ -39,7 +39,7 @@ def create_pipeline_executor_for_cli(
     """
     storage = get_storage_client()
 
-    class CliPipelineExecutor(PipelineExecutor):
+    class CliPipelineDagExecutor(PipelineDagExecutor):
         """CLI 테스트용 — DB 대신 직접 지정한 소스 정보를 사용."""
 
         def _load_source_meta(self, load_dataset_id: str) -> DatasetMeta:
@@ -55,7 +55,7 @@ def create_pipeline_executor_for_cli(
                 dataset_id=load_dataset_id,
             )
 
-    return CliPipelineExecutor(storage)
+    return CliPipelineDagExecutor(storage)
 
 
 def run_yolo_to_coco_pipeline() -> None:
@@ -143,7 +143,7 @@ def run_yolo_to_coco_pipeline() -> None:
 
     # 출력 파일 확인
     output_abs = storage.resolve_path(result.output_storage_uri)
-    images_dir = storage.get_images_path(result.output_storage_uri)
+    images_dir = storage.get_images_dir(result.output_storage_uri)
     ann_dir = storage.get_annotations_dir(result.output_storage_uri)
 
     print(f"  [검증] 출력 디렉토리 존재: {output_abs.exists()}")

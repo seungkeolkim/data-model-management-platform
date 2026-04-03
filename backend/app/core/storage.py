@@ -112,7 +112,7 @@ class StorageClient(ABC):
         split_dir = split.lower() if split.upper() != "NONE" else "none"
         return f"{type_dir}/{name}/{split_dir}/{version}"
 
-    def get_images_path(self, storage_uri: str) -> Path:
+    def get_images_dir(self, storage_uri: str) -> Path:
         """images/ 서브디렉토리 경로 반환."""
         cfg = get_app_config()
         return self.resolve_path(storage_uri) / cfg.images_dirname

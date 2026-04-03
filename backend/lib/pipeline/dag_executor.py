@@ -1,5 +1,5 @@
 """
-파이프라인 실행 엔진 (DAG 기반).
+파이프라인 DAG 실행 엔진.
 
 PipelineConfig의 tasks를 topological sort하여 순서대로 실행한다.
 각 태스크는 입력(source 데이터셋 또는 이전 태스크 출력)을 받아
@@ -11,7 +11,7 @@ manipulator를 적용하고 DatasetMeta를 출력한다.
        a. inputs 해석 (source: → 파일 로드, 태스크명 → 이전 결과 참조)
        b. 다중 입력이면 merge
        c. operator(manipulator) 적용
-    3. 최종 태스크의 DatasetMeta로 이미지 복사 + annotation 작성
+    3. 최종 태스크의 DatasetMeta로 이미지 실체화 + annotation 작성
 
 이 모듈은 app/ 레이어에 의존하지 않는다.
 StorageProtocol을 통해 스토리지 접근을 추상화한다.
@@ -23,16 +23,18 @@ from typing import Any
 
 from lib.manipulators import MANIPULATOR_REGISTRY
 from lib.pipeline.config import PipelineConfig, TaskConfig
-from lib.pipeline.image_executor import ImageExecutor
+from lib.pipeline.image_materializer import ImageMaterializer
 from lib.pipeline.io.coco_io import parse_coco_json, write_coco_json
 from lib.pipeline.io.yolo_io import parse_yolo_dir, write_yolo_dir
-from lib.pipeline.models import Annotation, DatasetMeta, DatasetPlan, ImagePlan, ImageRecord
+from lib.pipeline.pipeline_data_models import (
+    Annotation, DatasetMeta, DatasetPlan, ImagePlan, ImageRecord,
+)
 from lib.pipeline.storage_protocol import StorageProtocol
 
 logger = logging.getLogger(__name__)
 
 
-class PipelineExecutor:
+class PipelineDagExecutor:
     """
     DAG 기반 파이프라인 실행 엔진.
 
@@ -75,7 +77,7 @@ class PipelineExecutor:
         # ── Phase A: DAG 태스크 순차 실행 (annotation 처리) ──
         # 태스크명 → 해당 태스크의 출력 DatasetMeta
         task_results: dict[str, DatasetMeta] = {}
-        # 태스크별 source storage_uri 수집 (이미지 복사용)
+        # 태스크별 source storage_uri 수집 (이미지 실체화용)
         all_source_storage_uris: list[str] = []
 
         for task_name in execution_order:
@@ -139,7 +141,7 @@ class PipelineExecutor:
             output_meta.image_count, len(output_meta.categories), output_format,
         )
 
-        # ── Phase B: 출력 경로 결정 + 이미지 복사 + annotation 파일 작성 ──
+        # ── Phase B: 출력 경로 결정 + 이미지 실체화 + annotation 파일 작성 ──
         output_dataset_type = config.output.dataset_type.upper()
         output_split = config.output.split.upper()
 
@@ -155,20 +157,20 @@ class PipelineExecutor:
         # 출력 디렉토리 생성
         self.storage.makedirs(output_storage_uri)
 
-        # 이미지 복사 계획 생성 + 실행
+        # 이미지 실체화 계획 생성 + 실행
         image_plans = self._build_image_plans(
             output_meta, all_source_storage_uris, output_storage_uri,
         )
         dataset_plan = DatasetPlan(output_meta=output_meta, image_plans=image_plans)
 
         logger.info(
-            "이미지 처리 계획: total=%d, copy_only=%d, transform=%d",
+            "이미지 실체화 계획: total=%d, copy_only=%d, transform=%d",
             dataset_plan.total_images, dataset_plan.copy_only_count,
             dataset_plan.transform_count,
         )
 
-        image_executor = ImageExecutor(self.storage)
-        copied_count = image_executor.execute(dataset_plan)
+        image_materializer = ImageMaterializer(self.storage)
+        materialized_count = image_materializer.materialize(dataset_plan)
 
         # annotation 파일 작성
         annotation_filenames = self._write_annotations(output_meta, output_storage_uri)
@@ -177,15 +179,15 @@ class PipelineExecutor:
         annotation_meta_filename: str | None = None
         if output_format.upper() == "YOLO":
             annotations_dir = self.storage.get_annotations_dir(output_storage_uri)
-            from lib.pipeline.io.yolo_io import _write_data_yaml
+            from lib.pipeline.io.yolo_io import _write_yolo_data_yaml
             sorted_categories = sorted(output_meta.categories, key=lambda c: c["id"])
-            _write_data_yaml(sorted_categories, annotations_dir)
+            _write_yolo_data_yaml(sorted_categories, annotations_dir)
             annotation_meta_filename = "data.yaml"
             logger.info("YOLO data.yaml 생성 완료")
 
         logger.info(
             "파이프라인 실행 완료: output_uri=%s, images=%d, annotations=%d",
-            output_storage_uri, copied_count, len(annotation_filenames),
+            output_storage_uri, materialized_count, len(annotation_filenames),
         )
 
         return PipelineResult(
@@ -195,7 +197,7 @@ class PipelineExecutor:
             output_split=output_split,
             annotation_filenames=annotation_filenames,
             annotation_meta_filename=annotation_meta_filename,
-            image_count=copied_count,
+            image_count=materialized_count,
             source_dataset_ids=config.get_all_source_dataset_ids(),
         )
 
@@ -209,7 +211,7 @@ class PipelineExecutor:
         서브클래스에서 오버라이드하여 DB/파일 기반 로드를 구현한다.
         """
         raise NotImplementedError(
-            "_load_source_meta는 서브클래스 또는 외부에서 주입해야 합니다. "
+            "_load_source_meta는 서브클래스에서 오버라이드해야 합니다. "
             "CLI 테스트에서는 load_source_meta_from_storage()를 사용하세요."
         )
 
@@ -241,7 +243,6 @@ class PipelineExecutor:
         if not metas:
             raise ValueError("병합할 DatasetMeta가 없습니다.")
 
-        # categories 통합 (name 기준 dedup)
         merged_categories: list[dict[str, Any]] = []
         category_name_to_id: dict[str, int] = {}
         next_category_id = 0
@@ -256,11 +257,9 @@ class PipelineExecutor:
                     })
                     next_category_id += 1
 
-        # image_records 통합 (image_id 재번호)
         merged_records: list[ImageRecord] = []
         image_id_counter = 1
         for meta in metas:
-            # category_id 리매핑 (원본 id → 통합 id)
             old_to_new_cat: dict[int, int] = {}
             for category in meta.categories:
                 old_to_new_cat[category["id"]] = category_name_to_id[category["name"]]
@@ -305,14 +304,13 @@ class PipelineExecutor:
         output_storage_uri: str,
     ) -> list[ImagePlan]:
         """
-        output_meta의 image_records로부터 이미지 복사 계획을 생성.
+        output_meta의 image_records로부터 이미지 실체화 계획을 생성.
 
         각 이미지가 어느 소스에서 왔는지 file_name 기반으로 탐색한다.
         """
         plans: list[ImagePlan] = []
 
         for record in output_meta.image_records:
-            # 소스 이미지 경로 탐색: 각 소스 storage_uri의 images/ 하위에서 찾기
             src_uri: str | None = None
             for source_uri in source_storage_uris:
                 candidate = f"{source_uri}/{self.images_dirname}/{record.file_name}"
@@ -413,22 +411,19 @@ def load_source_meta_from_storage(
         파싱된 DatasetMeta
     """
     annotations_dir = storage.get_annotations_dir(storage_uri)
-    images_dir = storage.get_images_path(storage_uri)
+    images_dir = storage.get_images_dir(storage_uri)
     format_upper = annotation_format.upper()
 
     if format_upper == "COCO":
-        # COCO: 첫 번째 JSON 파일 파싱
         json_path = annotations_dir / annotation_files[0]
         meta = parse_coco_json(json_path, dataset_id=dataset_id, storage_uri=storage_uri)
         return meta
 
     elif format_upper == "YOLO":
-        # YOLO: annotations 디렉토리의 .txt 파일 파싱
         yaml_path = None
         if annotation_meta_file:
             yaml_path = annotations_dir / annotation_meta_file
 
-        # 이미지 크기 읽기
         image_sizes: dict[str, tuple[int, int]] = {}
         if images_dir.exists():
             try:

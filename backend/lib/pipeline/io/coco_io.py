@@ -11,7 +11,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from lib.pipeline.models import Annotation, DatasetMeta, ImageRecord
+from lib.pipeline.pipeline_data_models import Annotation, DatasetMeta, ImageRecord
 
 
 def parse_coco_json(

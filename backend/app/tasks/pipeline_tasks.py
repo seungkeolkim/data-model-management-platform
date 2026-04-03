@@ -26,7 +26,7 @@ def run_pipeline(self, execution_id: str, pipeline_config: dict) -> dict:
     """
     # Phase 2에서 구현:
     # 1. execution_id로 DB에서 PipelineExecution 조회
-    # 2. PipelineExecutor.run(config) 실행
+    # 2. PipelineDagExecutor.run(config) 실행
     # 3. 진행률 업데이트 (pipeline_executions 테이블)
     # 4. 완료/실패 시 datasets.status 업데이트
     # 5. EDA task 체이닝 (Phase 2-a 구현 시)

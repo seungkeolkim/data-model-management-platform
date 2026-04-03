@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from app.pipeline.models import Annotation, DatasetMeta, ImageRecord
+from app.pipeline.pipeline_data_models import Annotation, DatasetMeta, ImageRecord
 
 
 # =============================================================================

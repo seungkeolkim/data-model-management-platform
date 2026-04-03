@@ -1,5 +1,5 @@
 """
-UnitManipulator 추상 인터페이스 (Phase 2에서 구현)
+UnitManipulator 추상 베이스 클래스.
 
 설계 원칙:
   - 새 manipulator 추가 = 이 클래스 상속 + DB INSERT 만으로 완결
@@ -12,7 +12,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
-from lib.pipeline.models import DatasetMeta, ImageManipulationSpec, ImageRecord
+from lib.pipeline.pipeline_data_models import DatasetMeta, ImageManipulationSpec, ImageRecord
 
 
 class UnitManipulator(ABC):
@@ -22,7 +22,7 @@ class UnitManipulator(ABC):
 
     두 단계로 분리:
     1. transform_annotation: annotation JSON 레벨 변환 (빠름)
-    2. build_image_manipulation: 이미지 변환 명세 생성 (실제 I/O는 ImageExecutor가 수행)
+    2. build_image_manipulation: 이미지 변환 명세 생성 (실제 I/O는 ImageMaterializer가 수행)
     """
 
     @property

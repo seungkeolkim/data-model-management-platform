@@ -1,10 +1,10 @@
 """
-app.pipeline.io.class_mapping — lib.pipeline.io.class_mapping re-export.
+app.pipeline.io.coco_yolo_class_mapping — lib.pipeline.io.coco_yolo_class_mapping re-export.
 
 기존 import 경로 호환을 위한 래퍼.
-새 코드에서는 lib.pipeline.io.class_mapping을 직접 import할 것.
+새 코드에서는 lib.pipeline.io.coco_yolo_class_mapping을 직접 import할 것.
 """
-from lib.pipeline.io.class_mapping import (  # noqa: F401
+from lib.pipeline.io.coco_yolo_class_mapping import (  # noqa: F401
     COCO_80_CLASSES,
     COCO_ID_TO_NAME,
     COCO_ID_TO_YOLO_ID,
