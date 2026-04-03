@@ -189,6 +189,14 @@ class DatasetUpdate(BaseModel):
     annotation_format: str | None = None
 
 
+class DatasetMetaFileReplaceRequest(BaseModel):
+    """어노테이션 메타 파일 교체 요청."""
+    source_annotation_meta_file: str = Field(
+        ...,
+        description="교체할 메타 파일 절대경로 (파일 브라우저에서 선택한 경로)",
+    )
+
+
 class DatasetValidateRequest(BaseModel):
     """이미 등록된 데이터셋의 어노테이션 포맷 검증 요청."""
     annotation_format: str = Field(..., description="COCO | YOLO")

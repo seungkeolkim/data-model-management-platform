@@ -68,6 +68,11 @@ export const datasetsApi = {
 
   validate: (datasetId: string, data: DatasetValidateRequest) =>
     api.post<FormatValidateResponse>(`/datasets/${datasetId}/validate`, data),
+
+  replaceMetaFile: (datasetId: string, sourceMetaFilePath: string) =>
+    api.put<Dataset>(`/datasets/${datasetId}/meta-file`, {
+      source_annotation_meta_file: sourceMetaFilePath,
+    }),
 }
 
 // File Browser

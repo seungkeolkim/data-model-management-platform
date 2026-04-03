@@ -319,9 +319,7 @@ class DatasetGroupService:
             image_count=image_count,
             class_count=None,
             annotation_files=annotation_filenames,
-            annotation_meta_file=annotation_meta_filename
-            if req.annotation_format.upper() in ("YOLO",)
-            else None,
+            annotation_meta_file=annotation_meta_filename,
         )
         self.db.add(dataset)
         await self.db.flush()
@@ -686,6 +684,41 @@ class DatasetGroupService:
 
         for field, value in update_data.items():
             setattr(dataset, field, value)
+        await self.db.flush()
+        await self.db.refresh(dataset)
+        return dataset
+
+    async def replace_annotation_meta_file(
+        self, dataset: Dataset, source_meta_file_path: str
+    ) -> Dataset:
+        """
+        기존 데이터셋의 어노테이션 메타 파일을 교체한다.
+
+        1. 업로드 경로의 파일을 검증
+        2. 관리 스토리지의 annotations/ 하위로 복사 (기존 파일 덮어쓰기)
+        3. DB의 annotation_meta_file 컬럼 업데이트
+
+        Args:
+            dataset: 대상 Dataset 객체
+            source_meta_file_path: 교체할 메타 파일 절대경로 (업로드 경로)
+
+        Returns:
+            업데이트된 Dataset 객체
+        """
+        # 소스 파일 경로 검증
+        validated_path = self._validate_browse_path(source_meta_file_path, expect_dir=False)
+
+        # 관리 스토리지로 복사 (기존 파일이 있으면 덮어쓰기됨)
+        new_filename = self.storage.copy_annotation_meta_file(validated_path, dataset.storage_uri)
+        logger.info(
+            "어노테이션 메타 파일 교체 완료",
+            dataset_id=dataset.id,
+            old_file=dataset.annotation_meta_file,
+            new_file=new_filename,
+        )
+
+        # DB 업데이트
+        dataset.annotation_meta_file = new_filename
         await self.db.flush()
         await self.db.refresh(dataset)
         return dataset
