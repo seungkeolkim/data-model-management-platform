@@ -1,5 +1,5 @@
 """
-파이프라인 실행 CLI 테스트.
+파이프라인 실행 CLI 테스트 (DAG 구조).
 
 DB에 등록된 RAW YOLO 데이터셋을 읽어서
 format_convert_to_coco manipulator를 적용하여
@@ -14,7 +14,6 @@ SOURCE COCO 데이터셋을 생성한다.
 """
 from __future__ import annotations
 
-import asyncio
 import sys
 import uuid
 from pathlib import Path
@@ -25,37 +24,26 @@ from app.core.config import get_settings, get_app_config
 from app.core.storage import get_storage_client
 from app.pipeline.executor import PipelineExecutor, PipelineResult, load_source_meta_from_storage
 from app.pipeline.models import DatasetMeta, DatasetPlan, ImagePlan
-from app.schemas.pipeline import ManipulatorConfig, PipelineConfig, SourceConfig
+from app.schemas.pipeline import PipelineConfig, TaskConfig, OutputConfig
 
 
 def create_pipeline_executor_for_cli(
-    storage_uri: str,
-    annotation_format: str,
-    annotation_files: list[str],
-    annotation_meta_file: str | None,
-    dataset_id: str,
+    source_registry: dict[str, dict],
 ) -> PipelineExecutor:
     """
     CLI 테스트용 PipelineExecutor를 생성한다.
     _load_source_meta를 파일 기반 로드로 오버라이드.
+
+    Args:
+        source_registry: dataset_id → {storage_uri, annotation_format, annotation_files, annotation_meta_file}
     """
     storage = get_storage_client()
-
-    # 소스 데이터 캐시 (dataset_id → 로드 정보)
-    source_cache: dict[str, dict] = {
-        dataset_id: {
-            "storage_uri": storage_uri,
-            "annotation_format": annotation_format,
-            "annotation_files": annotation_files,
-            "annotation_meta_file": annotation_meta_file,
-        }
-    }
 
     class CliPipelineExecutor(PipelineExecutor):
         """CLI 테스트용 — DB 대신 직접 지정한 소스 정보를 사용."""
 
         def _load_source_meta(self, load_dataset_id: str) -> DatasetMeta:
-            source_info = source_cache.get(load_dataset_id)
+            source_info = source_registry.get(load_dataset_id)
             if source_info is None:
                 raise ValueError(f"소스 데이터셋을 찾을 수 없습니다: {load_dataset_id}")
             return load_source_meta_from_storage(
@@ -73,10 +61,8 @@ def create_pipeline_executor_for_cli(
 def run_yolo_to_coco_pipeline() -> None:
     """RAW YOLO → SOURCE COCO 변환 파이프라인 실행."""
     storage = get_storage_client()
-    settings_instance = get_settings()
 
     # ── 소스 데이터셋 정보 (DB에 등록된 coco8/train) ──
-    # 하드코딩 대신 실제 존재하는 경로를 탐색
     source_storage_uri = "raw/coco8/train/v1.0.0"
     source_format = "YOLO"
 
@@ -110,34 +96,34 @@ def run_yolo_to_coco_pipeline() -> None:
     # 가상 dataset_id
     source_dataset_id = str(uuid.uuid4())
 
-    # PipelineConfig 구성
+    # DAG 기반 PipelineConfig 구성
     pipeline_config = PipelineConfig(
-        sources=[
-            SourceConfig(
-                dataset_id=source_dataset_id,
-                manipulators=[
-                    ManipulatorConfig(
-                        manipulator_name="format_convert_to_coco",
-                        params={},
-                    )
-                ],
-            )
-        ],
-        post_merge_manipulators=[],
-        output_group_name="coco8-as-coco",
-        output_dataset_type="SOURCE",
-        output_annotation_format="COCO",
-        output_splits=["TRAIN"],
+        name="coco8-as-coco",
         description="coco8 YOLO → COCO 변환 테스트",
+        output=OutputConfig(
+            dataset_type="SOURCE",
+            annotation_format="COCO",
+            split="TRAIN",
+        ),
+        tasks={
+            "convert_to_coco": TaskConfig(
+                operator="format_convert_to_coco",
+                inputs=[f"source:{source_dataset_id}"],
+                params={},
+            ),
+        },
     )
 
     # Executor 생성 및 실행
     executor = create_pipeline_executor_for_cli(
-        storage_uri=source_storage_uri,
-        annotation_format=source_format,
-        annotation_files=annotation_files,
-        annotation_meta_file=annotation_meta_file,
-        dataset_id=source_dataset_id,
+        source_registry={
+            source_dataset_id: {
+                "storage_uri": source_storage_uri,
+                "annotation_format": source_format,
+                "annotation_files": annotation_files,
+                "annotation_meta_file": annotation_meta_file,
+            },
+        },
     )
 
     result = executor.run(pipeline_config)
@@ -174,7 +160,6 @@ def run_yolo_to_coco_pipeline() -> None:
             print(f"  [검증] COCO JSON images: {len(coco_data['images'])}")
             print(f"  [검증] COCO JSON annotations: {len(coco_data['annotations'])}")
             print(f"  [검증] COCO JSON categories: {len(coco_data['categories'])}")
-            # 샘플 category 출력
             for cat in coco_data["categories"][:5]:
                 print(f"    {cat['id']}: {cat['name']}")
             if len(coco_data["categories"]) > 5:
@@ -199,32 +184,33 @@ def run_coco_to_yolo_pipeline() -> None:
 
     source_dataset_id = str(uuid.uuid4())
 
+    # DAG 기반 PipelineConfig 구성
     pipeline_config = PipelineConfig(
-        sources=[
-            SourceConfig(
-                dataset_id=source_dataset_id,
-                manipulators=[
-                    ManipulatorConfig(
-                        manipulator_name="format_convert_to_yolo",
-                        params={},
-                    )
-                ],
-            )
-        ],
-        post_merge_manipulators=[],
-        output_group_name="coco8-as-yolo",
-        output_dataset_type="SOURCE",
-        output_annotation_format="YOLO",
-        output_splits=["TRAIN"],
+        name="coco8-as-yolo",
         description="coco8 COCO → YOLO 역변환 테스트",
+        output=OutputConfig(
+            dataset_type="SOURCE",
+            annotation_format="YOLO",
+            split="TRAIN",
+        ),
+        tasks={
+            "convert_to_yolo": TaskConfig(
+                operator="format_convert_to_yolo",
+                inputs=[f"source:{source_dataset_id}"],
+                params={},
+            ),
+        },
     )
 
     executor = create_pipeline_executor_for_cli(
-        storage_uri=source_storage_uri,
-        annotation_format="COCO",
-        annotation_files=["instances.json"],
-        annotation_meta_file=None,
-        dataset_id=source_dataset_id,
+        source_registry={
+            source_dataset_id: {
+                "storage_uri": source_storage_uri,
+                "annotation_format": "COCO",
+                "annotation_files": ["instances.json"],
+                "annotation_meta_file": None,
+            },
+        },
     )
 
     result = executor.run(pipeline_config)
@@ -246,7 +232,7 @@ def run_coco_to_yolo_pipeline() -> None:
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("Pipeline Executor CLI Test")
+    print("Pipeline Executor CLI Test (DAG 구조)")
     print("=" * 60)
 
     run_yolo_to_coco_pipeline()

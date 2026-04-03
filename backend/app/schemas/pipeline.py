@@ -9,7 +9,12 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 # 파이프라인 설정 스키마 — lib.pipeline.config에서 re-export
-from lib.pipeline.config import ManipulatorConfig, PipelineConfig, SourceConfig  # noqa: F401
+from lib.pipeline.config import (  # noqa: F401
+    OutputConfig,
+    PipelineConfig,
+    TaskConfig,
+    load_pipeline_config_from_yaml,
+)
 
 
 # =============================================================================

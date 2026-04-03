@@ -1,17 +1,17 @@
 """
-파이프라인 실행 엔진.
+파이프라인 실행 엔진 (DAG 기반).
 
-PipelineConfig를 받아서:
-1. 소스 데이터셋의 annotation을 로드
-2. PER_SOURCE manipulator 순차 적용
-3. (다중 소스일 경우) merge
-4. POST_MERGE manipulator 순차 적용
-5. 이미지 복사/변환 실행
-6. 출력 annotation 파일 작성
-7. DB에 output DatasetGroup + Dataset + Lineage 생성
+PipelineConfig의 tasks를 topological sort하여 순서대로 실행한다.
+각 태스크는 입력(source 데이터셋 또는 이전 태스크 출력)을 받아
+manipulator를 적용하고 DatasetMeta를 출력한다.
 
-이미지 I/O는 lazy하게 수행한다 — annotation 처리가 완료된 후
-ImagePlan을 기반으로 실제 파일 복사/변환을 진행한다.
+실행 흐름:
+    1. topological sort로 실행 순서 결정
+    2. 태스크별 실행:
+       a. inputs 해석 (source: → 파일 로드, 태스크명 → 이전 결과 참조)
+       b. 다중 입력이면 merge
+       c. operator(manipulator) 적용
+    3. 최종 태스크의 DatasetMeta로 이미지 복사 + annotation 작성
 
 이 모듈은 app/ 레이어에 의존하지 않는다.
 StorageProtocol을 통해 스토리지 접근을 추상화한다.
@@ -19,12 +19,10 @@ StorageProtocol을 통해 스토리지 접근을 추상화한다.
 from __future__ import annotations
 
 import logging
-import uuid
-from pathlib import Path
 from typing import Any
 
 from lib.manipulators import MANIPULATOR_REGISTRY
-from lib.pipeline.config import ManipulatorConfig, PipelineConfig, SourceConfig
+from lib.pipeline.config import PipelineConfig, TaskConfig
 from lib.pipeline.image_executor import ImageExecutor
 from lib.pipeline.io.coco_io import parse_coco_json, write_coco_json
 from lib.pipeline.io.yolo_io import parse_yolo_dir, write_yolo_dir
@@ -36,11 +34,10 @@ logger = logging.getLogger(__name__)
 
 class PipelineExecutor:
     """
-    파이프라인 실행 엔진.
+    DAG 기반 파이프라인 실행 엔진.
 
-    Annotation 처리(Phase A)와 이미지 실행(Phase B)을 분리한다.
-    Phase A: 빠름 — annotation JSON만 메모리에서 변환
-    Phase B: 느림 — 이미지 파일 복사/변환 (lazy)
+    topological sort로 태스크 실행 순서를 결정하고,
+    각 태스크의 inputs → operator 적용 → 출력을 다음 태스크에 전달한다.
 
     Args:
         storage: StorageProtocol 구현체 (경로 해석, 파일 존재 확인 등)
@@ -60,70 +57,96 @@ class PipelineExecutor:
         파이프라인 전체 실행.
 
         Args:
-            config: 파이프라인 설정 (소스, manipulators, 출력 설정)
+            config: DAG 기반 파이프라인 설정
 
         Returns:
-            PipelineResult: 실행 결과 (output_meta, output_storage_uri 등)
+            PipelineResult: 실행 결과
         """
         logger.info(
-            "파이프라인 실행 시작",
-            sources=len(config.sources),
-            post_merge=len(config.post_merge_manipulators),
-            output_group=config.output_group_name,
+            "파이프라인 실행 시작: name=%s, tasks=%d",
+            config.name, len(config.tasks),
         )
 
-        # ── Phase A: Annotation 처리 ──
-        # 1. 소스 데이터셋별 annotation 로드 + PER_SOURCE manipulator 적용
-        processed_metas: list[DatasetMeta] = []
-        source_storage_uris: list[str] = []  # 이미지 복사용 원본 경로
+        execution_order = config.topological_order()
+        terminal_task_name = config.get_terminal_task_name()
 
-        for source_config in config.sources:
-            source_meta = self._load_source_meta(source_config.dataset_id)
-            source_storage_uris.append(source_meta.storage_uri)
+        logger.info("실행 순서: %s", " → ".join(execution_order))
+
+        # ── Phase A: DAG 태스크 순차 실행 (annotation 처리) ──
+        # 태스크명 → 해당 태스크의 출력 DatasetMeta
+        task_results: dict[str, DatasetMeta] = {}
+        # 태스크별 source storage_uri 수집 (이미지 복사용)
+        all_source_storage_uris: list[str] = []
+
+        for task_name in execution_order:
+            task_config = config.tasks[task_name]
             logger.info(
-                "소스 로드 완료",
-                dataset_id=source_config.dataset_id,
-                images=source_meta.image_count,
-                format=source_meta.annotation_format,
+                "태스크 실행: %s (operator=%s, inputs=%s)",
+                task_name, task_config.operator, task_config.inputs,
             )
 
-            # PER_SOURCE manipulator 순차 적용
-            current_meta = source_meta
-            for manipulator_config in source_config.manipulators:
-                current_meta = self._apply_manipulator(current_meta, manipulator_config)
+            # 입력 DatasetMeta 수집
+            input_metas: list[DatasetMeta] = []
 
-            processed_metas.append(current_meta)
+            for ref in task_config.inputs:
+                if ref.startswith("source:"):
+                    # 소스 데이터셋 로드
+                    dataset_id = ref.split(":", 1)[1]
+                    source_meta = self._load_source_meta(dataset_id)
+                    all_source_storage_uris.append(source_meta.storage_uri)
+                    logger.info(
+                        "소스 로드 완료: dataset_id=%s, images=%d, format=%s",
+                        dataset_id, source_meta.image_count,
+                        source_meta.annotation_format,
+                    )
+                    input_metas.append(source_meta)
+                else:
+                    # 이전 태스크 출력 참조
+                    if ref not in task_results:
+                        raise RuntimeError(
+                            f"태스크 '{task_name}'의 input '{ref}'가 "
+                            f"아직 실행되지 않았습니다."
+                        )
+                    input_metas.append(task_results[ref])
 
-        # 2. 다중 소스 merge (현재는 단순 concat — merge manipulator 구현 시 확장)
-        if len(processed_metas) == 1:
-            merged_meta = processed_metas[0]
-        else:
-            merged_meta = self._merge_metas(processed_metas)
+            # 다중 입력이면 merge 후 manipulator 적용,
+            # 단일 입력이면 바로 manipulator 적용
+            if len(input_metas) == 1:
+                working_meta = input_metas[0]
+            else:
+                working_meta = self._merge_metas(input_metas)
 
-        # 3. POST_MERGE manipulator 순차 적용
-        output_meta = merged_meta
-        for manipulator_config in config.post_merge_manipulators:
-            output_meta = self._apply_manipulator(output_meta, manipulator_config)
+            # operator(manipulator) 적용
+            result_meta = self._apply_manipulator(
+                working_meta, task_config.operator, task_config.params,
+            )
+            task_results[task_name] = result_meta
+
+            logger.info(
+                "태스크 완료: %s → images=%d, categories=%d",
+                task_name, result_meta.image_count, len(result_meta.categories),
+            )
+
+        # 최종 태스크의 출력이 파이프라인의 최종 결과
+        output_meta = task_results[terminal_task_name]
 
         # 출력 포맷 결정
-        output_format = config.output_annotation_format or output_meta.annotation_format
+        output_format = config.output.annotation_format or output_meta.annotation_format
         output_meta.annotation_format = output_format
 
         logger.info(
-            "Phase A 완료 (annotation 처리)",
-            output_images=output_meta.image_count,
-            output_categories=len(output_meta.categories),
-            output_format=output_format,
+            "Phase A 완료 (annotation 처리): images=%d, categories=%d, format=%s",
+            output_meta.image_count, len(output_meta.categories), output_format,
         )
 
         # ── Phase B: 출력 경로 결정 + 이미지 복사 + annotation 파일 작성 ──
-        output_dataset_type = config.output_dataset_type.upper()
-        output_split = config.output_splits[0] if config.output_splits else "NONE"
+        output_dataset_type = config.output.dataset_type.upper()
+        output_split = config.output.split.upper()
 
         # storage_uri 생성
         output_storage_uri = self.storage.build_dataset_uri(
             dataset_type=output_dataset_type,
-            name=config.output_group_name,
+            name=config.name,
             split=output_split,
             version="v1.0.0",
         )
@@ -134,15 +157,14 @@ class PipelineExecutor:
 
         # 이미지 복사 계획 생성 + 실행
         image_plans = self._build_image_plans(
-            output_meta, source_storage_uris, output_storage_uri,
+            output_meta, all_source_storage_uris, output_storage_uri,
         )
         dataset_plan = DatasetPlan(output_meta=output_meta, image_plans=image_plans)
 
         logger.info(
-            "이미지 처리 계획",
-            total=dataset_plan.total_images,
-            copy_only=dataset_plan.copy_only_count,
-            transform=dataset_plan.transform_count,
+            "이미지 처리 계획: total=%d, copy_only=%d, transform=%d",
+            dataset_plan.total_images, dataset_plan.copy_only_count,
+            dataset_plan.transform_count,
         )
 
         image_executor = ImageExecutor(self.storage)
@@ -162,10 +184,8 @@ class PipelineExecutor:
             logger.info("YOLO data.yaml 생성 완료")
 
         logger.info(
-            "파이프라인 실행 완료",
-            output_uri=output_storage_uri,
-            images=copied_count,
-            annotations=len(annotation_filenames),
+            "파이프라인 실행 완료: output_uri=%s, images=%d, annotations=%d",
+            output_storage_uri, copied_count, len(annotation_filenames),
         )
 
         return PipelineResult(
@@ -176,7 +196,7 @@ class PipelineExecutor:
             annotation_filenames=annotation_filenames,
             annotation_meta_filename=annotation_meta_filename,
             image_count=copied_count,
-            source_dataset_ids=[s.dataset_id for s in config.sources],
+            source_dataset_ids=config.get_all_source_dataset_ids(),
         )
 
     # -------------------------------------------------------------------------
@@ -186,10 +206,7 @@ class PipelineExecutor:
     def _load_source_meta(self, dataset_id: str) -> DatasetMeta:
         """
         DB에 등록된 데이터셋의 annotation을 파싱하여 DatasetMeta로 반환.
-        storage_uri + annotation_files 정보로 파일 위치를 결정한다.
-
-        현재는 DB를 직접 조회하지 않고, storage에서 파일 기반으로 로드한다.
-        (CLI 테스트용 — 추후 DB 조회 연동)
+        서브클래스에서 오버라이드하여 DB/파일 기반 로드를 구현한다.
         """
         raise NotImplementedError(
             "_load_source_meta는 서브클래스 또는 외부에서 주입해야 합니다. "
@@ -197,23 +214,21 @@ class PipelineExecutor:
         )
 
     def _apply_manipulator(
-        self, meta: DatasetMeta, manipulator_config: ManipulatorConfig
+        self,
+        meta: DatasetMeta,
+        operator_name: str,
+        params: dict[str, Any],
     ) -> DatasetMeta:
-        """단일 manipulator를 DatasetMeta에 적용한다."""
-        manipulator_name = manipulator_config.manipulator_name
-        manipulator_class = MANIPULATOR_REGISTRY.get(manipulator_name)
+        """단일 manipulator(operator)를 DatasetMeta에 적용한다."""
+        manipulator_class = MANIPULATOR_REGISTRY.get(operator_name)
         if manipulator_class is None:
-            raise ValueError(f"등록되지 않은 manipulator: {manipulator_name}")
+            raise ValueError(f"등록되지 않은 manipulator: {operator_name}")
 
         manipulator_instance = manipulator_class()
-        result_meta = manipulator_instance.transform_annotation(
-            meta, manipulator_config.params,
-        )
+        result_meta = manipulator_instance.transform_annotation(meta, params)
         logger.info(
-            "manipulator 적용 완료",
-            name=manipulator_name,
-            input_images=meta.image_count,
-            output_images=result_meta.image_count,
+            "manipulator 적용 완료: name=%s, input_images=%d, output_images=%d",
+            operator_name, meta.image_count, result_meta.image_count,
         )
         return result_meta
 
@@ -242,7 +257,7 @@ class PipelineExecutor:
                     next_category_id += 1
 
         # image_records 통합 (image_id 재번호)
-        merged_records = []
+        merged_records: list[ImageRecord] = []
         image_id_counter = 1
         for meta in metas:
             # category_id 리매핑 (원본 id → 통합 id)
@@ -292,7 +307,6 @@ class PipelineExecutor:
         """
         output_meta의 image_records로부터 이미지 복사 계획을 생성.
 
-        현재는 단순 복사만 지원 (format_convert는 이미지 변환 불필요).
         각 이미지가 어느 소스에서 왔는지 file_name 기반으로 탐색한다.
         """
         plans: list[ImagePlan] = []
@@ -308,8 +322,8 @@ class PipelineExecutor:
 
             if src_uri is None:
                 logger.warning(
-                    "소스 이미지를 찾을 수 없음 (건너뜀)",
-                    file_name=record.file_name,
+                    "소스 이미지를 찾을 수 없음 (건너뜀): file_name=%s",
+                    record.file_name,
                 )
                 continue
 
@@ -334,16 +348,15 @@ class PipelineExecutor:
         if output_format == "COCO":
             output_path = annotations_dir / "instances.json"
             write_coco_json(output_meta, output_path)
-            logger.info("COCO annotation 작성 완료", path=str(output_path))
+            logger.info("COCO annotation 작성 완료: path=%s", output_path)
             return ["instances.json"]
 
         elif output_format == "YOLO":
             write_yolo_dir(output_meta, annotations_dir)
-            # YOLO는 이미지별 .txt + classes.txt + data.yaml
             label_files = sorted(
                 f.name for f in annotations_dir.glob("*.txt")
             )
-            logger.info("YOLO annotation 작성 완료", file_count=len(label_files))
+            logger.info("YOLO annotation 작성 완료: file_count=%d", len(label_files))
             return label_files
 
         else:
@@ -411,7 +424,7 @@ def load_source_meta_from_storage(
 
     elif format_upper == "YOLO":
         # YOLO: annotations 디렉토리의 .txt 파일 파싱
-        yaml_path: Path | None = None
+        yaml_path = None
         if annotation_meta_file:
             yaml_path = annotations_dir / annotation_meta_file
 
