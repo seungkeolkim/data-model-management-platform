@@ -203,6 +203,12 @@ class DatasetGroupService:
             self._validate_browse_path(p, expect_dir=False)
             for p in req.source_annotation_files
         ]
+        # 어노테이션 메타 파일 경로 검증 (선택사항)
+        annotation_meta_path: Path | None = None
+        if req.source_annotation_meta_file:
+            annotation_meta_path = self._validate_browse_path(
+                req.source_annotation_meta_file, expect_dir=False
+            )
         logger.info("소스 경로 검증 완료")
 
         # 어노테이션 파일명 중복 검사
@@ -282,6 +288,14 @@ class DatasetGroupService:
             logger.info("이미지 폴더 복사 완료", image_count=image_count)
             annotation_filenames = self.storage.copy_annotation_files(annotation_paths, storage_uri)
             logger.info("어노테이션 파일 복사 완료", files=annotation_filenames)
+
+            # 어노테이션 메타 파일 복사 (선택사항)
+            annotation_meta_filename: str | None = None
+            if annotation_meta_path:
+                annotation_meta_filename = self.storage.copy_annotation_meta_file(
+                    annotation_meta_path, storage_uri
+                )
+                logger.info("어노테이션 메타 파일 복사 완료", file=annotation_meta_filename)
         except Exception as e:
             logger.error("파일 복사 실패", error=str(e), storage_uri=storage_uri)
             # 복사 실패 시 부분 생성된 디렉토리 정리
@@ -305,6 +319,7 @@ class DatasetGroupService:
             image_count=image_count,
             class_count=None,
             annotation_files=annotation_filenames,
+            annotation_meta_file=annotation_meta_filename,
         )
         self.db.add(dataset)
         await self.db.flush()
@@ -362,7 +377,10 @@ class DatasetGroupService:
         if format_name == "COCO":
             return self._validate_coco_format(req.annotation_files)
         elif format_name == "YOLO":
-            return self._validate_yolo_format(req.annotation_files)
+            return self._validate_yolo_format(
+                req.annotation_files,
+                annotation_meta_file=req.annotation_meta_file,
+            )
         else:
             return FormatValidateResponse(
                 valid=True,
@@ -478,7 +496,11 @@ class DatasetGroupService:
 
         return FormatValidateResponse(valid=is_valid, errors=errors, summary=summary)
 
-    def _validate_yolo_format(self, annotation_file_paths: list[str]) -> FormatValidateResponse:
+    def _validate_yolo_format(
+        self,
+        annotation_file_paths: list[str],
+        annotation_meta_file: str | None = None,
+    ) -> FormatValidateResponse:
         """
         YOLO txt 포맷 검증.
 
@@ -488,6 +510,8 @@ class DatasetGroupService:
         1. .txt 확장자 확인
         2. 샘플 라인이 'class_id center_x center_y width height' 형식인지 확인
         3. 값 범위 확인 (좌표 0~1, class_id 정수)
+
+        annotation_meta_file이 있으면 yaml을 파싱하여 class name 매핑에 활용한다.
         """
         errors: list[str] = []
         total_label_count = 0
@@ -572,14 +596,39 @@ class DatasetGroupService:
         summary = None
         if is_valid:
             sorted_class_ids = sorted(class_id_set)
+
+            # 메타 파일(yaml)이 있으면 class name 매핑 추출
+            class_names_from_meta: list[str] | None = None
+            if annotation_meta_file:
+                meta_path = Path(annotation_meta_file)
+                if meta_path.exists():
+                    from app.pipeline.io.yolo_io import parse_yolo_yaml
+                    class_names_from_meta = parse_yolo_yaml(meta_path)
+
+            # class_mapping 구성:
+            # meta 파일이 있으면 전체 클래스 목록을 사용 (데이터 미등장 클래스 포함).
+            # 이미지 추가 시 새로운 class가 등장해도 매핑이 이미 존재하도록 보장한다.
+            if class_names_from_meta:
+                class_mapping = {
+                    str(cid): class_names_from_meta[cid]
+                    for cid in range(len(class_names_from_meta))
+                }
+            else:
+                class_mapping = {str(cid): str(cid) for cid in sorted_class_ids}
+
+            # class_count: meta 파일이 있으면 전체 정의된 클래스 수, 없으면 데이터 등장 클래스 수
+            effective_class_count = (
+                len(class_names_from_meta) if class_names_from_meta else len(class_id_set)
+            )
+
             summary = {
                 "total_file_count": total_file_count,
                 "sampled_file_count": len(sampled_paths) if is_sampled else total_file_count,
                 "is_sampled": is_sampled,
                 "total_label_count": total_label_count,
                 "unique_class_ids": sorted_class_ids,
-                "class_count": len(class_id_set),
-                "class_mapping": {str(cid): str(cid) for cid in sorted_class_ids},
+                "class_count": effective_class_count,
+                "class_mapping": class_mapping,
             }
 
         return FormatValidateResponse(valid=is_valid, errors=errors, summary=summary)
@@ -639,6 +688,41 @@ class DatasetGroupService:
         await self.db.refresh(dataset)
         return dataset
 
+    async def replace_annotation_meta_file(
+        self, dataset: Dataset, source_meta_file_path: str
+    ) -> Dataset:
+        """
+        기존 데이터셋의 어노테이션 메타 파일을 교체한다.
+
+        1. 업로드 경로의 파일을 검증
+        2. 관리 스토리지의 annotations/ 하위로 복사 (기존 파일 덮어쓰기)
+        3. DB의 annotation_meta_file 컬럼 업데이트
+
+        Args:
+            dataset: 대상 Dataset 객체
+            source_meta_file_path: 교체할 메타 파일 절대경로 (업로드 경로)
+
+        Returns:
+            업데이트된 Dataset 객체
+        """
+        # 소스 파일 경로 검증
+        validated_path = self._validate_browse_path(source_meta_file_path, expect_dir=False)
+
+        # 관리 스토리지로 복사 (기존 파일이 있으면 덮어쓰기됨)
+        new_filename = self.storage.copy_annotation_meta_file(validated_path, dataset.storage_uri)
+        logger.info(
+            "어노테이션 메타 파일 교체 완료",
+            dataset_id=dataset.id,
+            old_file=dataset.annotation_meta_file,
+            new_file=new_filename,
+        )
+
+        # DB 업데이트
+        dataset.annotation_meta_file = new_filename
+        await self.db.flush()
+        await self.db.refresh(dataset)
+        return dataset
+
     # -------------------------------------------------------------------------
     # 클래스 정보 추출 및 저장
     # -------------------------------------------------------------------------
@@ -664,6 +748,23 @@ class DatasetGroupService:
 
         return absolute_paths
 
+    def _resolve_annotation_meta_absolute_path(self, dataset: Dataset) -> str | None:
+        """
+        Dataset의 annotation_meta_file이 있으면 절대 경로로 변환.
+        파일이 존재하지 않으면 None을 반환한다.
+        """
+        if not dataset.annotation_meta_file:
+            return None
+        base_path = Path(settings.local_storage_base) / dataset.storage_uri
+        meta_path = base_path / app_config.annotations_dirname / dataset.annotation_meta_file
+        if not meta_path.exists():
+            logger.warning(
+                "어노테이션 메타 파일이 존재하지 않음",
+                path=str(meta_path), dataset_id=dataset.id,
+            )
+            return None
+        return str(meta_path)
+
     async def _extract_and_persist_class_info(self, dataset: Dataset) -> None:
         """
         이미 저장된 데이터셋의 어노테이션 파일에서 클래스 정보를 추출하여 DB에 저장.
@@ -674,9 +775,11 @@ class DatasetGroupService:
             return
 
         absolute_paths = self._resolve_annotation_absolute_paths(dataset)
+        meta_abs_path = self._resolve_annotation_meta_absolute_path(dataset)
         validation_request = FormatValidateRequest(
             annotation_format=annotation_format,
             annotation_files=absolute_paths,
+            annotation_meta_file=meta_abs_path,
         )
         result = self.validate_annotation_format(validation_request)
 
@@ -700,9 +803,11 @@ class DatasetGroupService:
             raise ValueError(f"Dataset을 찾을 수 없습니다: {dataset_id}")
 
         absolute_paths = self._resolve_annotation_absolute_paths(dataset)
+        meta_abs_path = self._resolve_annotation_meta_absolute_path(dataset)
         validation_request = FormatValidateRequest(
             annotation_format=annotation_format.upper(),
             annotation_files=absolute_paths,
+            annotation_meta_file=meta_abs_path,
         )
         result = self.validate_annotation_format(validation_request)
 

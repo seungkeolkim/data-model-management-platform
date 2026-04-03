@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.models.all_models import Dataset, DatasetGroup
 from app.schemas.dataset import (
+    DatasetMetaFileReplaceRequest,
     DatasetResponse,
     DatasetUpdate,
     DatasetValidateRequest,
@@ -76,6 +77,26 @@ async def update_dataset(
         raise HTTPException(status_code=404, detail="Dataset not found")
     updated = await svc.update_dataset(dataset, data)
     logger.info("데이터셋 수정 완료", dataset_id=dataset_id)
+    return updated
+
+
+@router.put("/{dataset_id}/meta-file", response_model=DatasetResponse)
+async def replace_meta_file(
+    dataset_id: str,
+    req: DatasetMetaFileReplaceRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """어노테이션 메타 파일 교체 (업로드 경로에서 관리 스토리지로 복사)."""
+    logger.info("메타 파일 교체 요청", dataset_id=dataset_id, source=req.source_annotation_meta_file)
+    svc = DatasetGroupService(db)
+    dataset = await svc.get_dataset(dataset_id)
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    try:
+        updated = await svc.replace_annotation_meta_file(dataset, req.source_annotation_meta_file)
+    except ValueError as replace_error:
+        raise HTTPException(status_code=400, detail=str(replace_error))
+    logger.info("메타 파일 교체 완료", dataset_id=dataset_id, file=updated.annotation_meta_file)
     return updated
 
 

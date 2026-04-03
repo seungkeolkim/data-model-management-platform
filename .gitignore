@@ -15,6 +15,7 @@ downloads/
 eggs/
 .eggs/
 lib/
+!backend/lib/
 lib64/
 parts/
 sdist/
@@ -216,3 +217,5 @@ data/virtual_nas/
 
 # vscode settings
 .vscode/
+
+user_test/

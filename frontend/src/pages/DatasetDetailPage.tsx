@@ -27,10 +27,12 @@ import {
   InfoCircleOutlined,
   CheckCircleOutlined,
   DeleteOutlined,
+  FileOutlined,
 } from '@ant-design/icons'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import dayjs from 'dayjs'
 import { datasetGroupsApi, datasetsApi } from '../api/dataset'
+import ServerFileBrowser from '../components/common/ServerFileBrowser'
 import type { AnnotationFormat, DatasetSummary } from '../types/dataset'
 
 const { Title, Text } = Typography
@@ -108,6 +110,10 @@ export default function DatasetDetailPage() {
   // 포맷 편집 모드: dataset ID → 선택 중인 포맷 값
   const [editingFormatId, setEditingFormatId] = useState<string | null>(null)
   const [editingFormatValue, setEditingFormatValue] = useState<AnnotationFormat>('NONE')
+  // 메타 파일 교체
+  const [metaFileTargetDatasetId, setMetaFileTargetDatasetId] = useState<string | null>(null)
+  const [metaFileBrowserOpen, setMetaFileBrowserOpen] = useState(false)
+  const [replacingMetaFileDatasetId, setReplacingMetaFileDatasetId] = useState<string | null>(null)
 
   const { data: group, isLoading, error } = useQuery({
     queryKey: ['dataset-group', groupId],
@@ -176,6 +182,25 @@ export default function DatasetDetailPage() {
       message.error(errorDetail)
     } finally {
       setDeletingDatasetId(null)
+    }
+  }
+
+  /** 메타 파일 교체 — ServerFileBrowser에서 선택 후 호출 */
+  const handleReplaceMetaFile = async (paths: string[]) => {
+    if (!metaFileTargetDatasetId || paths.length === 0) return
+    const datasetId = metaFileTargetDatasetId
+    setMetaFileBrowserOpen(false)
+    setReplacingMetaFileDatasetId(datasetId)
+    try {
+      await datasetsApi.replaceMetaFile(datasetId, paths[0])
+      message.success('메타 파일이 교체되었습니다.')
+      queryClient.invalidateQueries({ queryKey: ['dataset-group', groupId] })
+    } catch (requestError: any) {
+      const errorDetail = requestError?.response?.data?.detail || '메타 파일 교체 중 오류가 발생했습니다.'
+      message.error(errorDetail)
+    } finally {
+      setReplacingMetaFileDatasetId(null)
+      setMetaFileTargetDatasetId(null)
     }
   }
 
@@ -386,25 +411,42 @@ export default function DatasetDetailPage() {
     {
       title: '',
       key: 'action',
-      width: 80,
+      width: 120,
       render: (_: unknown, record: DatasetSummary) => (
-        <Popconfirm
-          title="데이터셋 삭제"
-          description={`${record.split}/${record.version}을 삭제하시겠습니까?`}
-          onConfirm={() => handleDeleteDataset(record)}
-          okText="삭제"
-          cancelText="취소"
-          okButtonProps={{ danger: true }}
-        >
+        <Space size={0}>
           <Button
             type="text"
             size="small"
-            danger
-            icon={<DeleteOutlined />}
-            loading={deletingDatasetId === record.id}
-            onClick={(e) => e.stopPropagation()}
+            icon={<FileOutlined />}
+            loading={replacingMetaFileDatasetId === record.id}
+            onClick={(e) => {
+              e.stopPropagation()
+              setMetaFileTargetDatasetId(record.id)
+              setMetaFileBrowserOpen(true)
+            }}
+            title={record.annotation_meta_file
+              ? `메타 파일 교체 (현재: ${record.annotation_meta_file})`
+              : '메타 파일 추가'}
+            style={record.annotation_meta_file ? { color: '#1677ff' } : undefined}
           />
-        </Popconfirm>
+          <Popconfirm
+            title="데이터셋 삭제"
+            description={`${record.split}/${record.version}을 삭제하시겠습니까?`}
+            onConfirm={() => handleDeleteDataset(record)}
+            okText="삭제"
+            cancelText="취소"
+            okButtonProps={{ danger: true }}
+          >
+            <Button
+              type="text"
+              size="small"
+              danger
+              icon={<DeleteOutlined />}
+              loading={deletingDatasetId === record.id}
+              onClick={(e) => e.stopPropagation()}
+            />
+          </Popconfirm>
+        </Space>
       ),
     },
   ]
@@ -504,6 +546,18 @@ export default function DatasetDetailPage() {
         locale={{
           emptyText: <Text type="secondary">등록된 데이터셋이 없습니다.</Text>,
         }}
+      />
+
+      {/* 메타 파일 교체용 파일 브라우저 */}
+      <ServerFileBrowser
+        open={metaFileBrowserOpen}
+        onClose={() => {
+          setMetaFileBrowserOpen(false)
+          setMetaFileTargetDatasetId(null)
+        }}
+        onSelect={handleReplaceMetaFile}
+        mode="file"
+        title="어노테이션 메타 파일 선택 (예: data.yaml)"
       />
     </div>
   )

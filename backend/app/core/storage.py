@@ -153,6 +153,22 @@ class StorageClient(ABC):
         ...
 
     @abstractmethod
+    def copy_annotation_meta_file(
+        self, source_abs_path: Path, dest_storage_uri: str
+    ) -> str:
+        """
+        어노테이션 메타 파일(예: data.yaml)을 관리 스토리지의 annotations/ 하위로 복사.
+
+        Args:
+            source_abs_path: 원본 메타 파일 절대경로
+            dest_storage_uri: 복사 대상 dataset storage_uri
+
+        Returns:
+            복사된 파일명 (원본 파일명 그대로)
+        """
+        ...
+
+    @abstractmethod
     def delete_dataset_directory(self, storage_uri: str) -> bool:
         """
         데이���셋 디렉��리 전체 삭제 (images/, annotations/ 포함).
@@ -234,6 +250,17 @@ class LocalStorageClient(StorageClient):
             filenames.append(src.name)
         logger.info("어노테이션 파일 복사 완료", file_count=len(filenames))
         return filenames
+
+    def copy_annotation_meta_file(
+        self, source_abs_path: Path, dest_storage_uri: str
+    ) -> str:
+        """어노테이션 메타 파일을 {dest_storage_uri}/annotations/ 로 복사. 원본 파일명 유지."""
+        cfg = get_app_config()
+        dest_dir = self.resolve_path(dest_storage_uri) / cfg.annotations_dirname
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_abs_path, dest_dir / source_abs_path.name)
+        logger.info("어노테이션 메타 파일 복사 완료", file=source_abs_path.name, dest=str(dest_dir))
+        return source_abs_path.name
 
     def delete_dataset_directory(self, storage_uri: str) -> bool:
         """

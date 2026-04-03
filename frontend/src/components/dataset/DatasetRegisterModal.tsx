@@ -157,10 +157,12 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
   // 파일 선택 상태
   const [imageDir, setImageDir] = useState<string | null>(null)
   const [annotationFiles, setAnnotationFiles] = useState<string[]>([])
+  const [annotationMetaFile, setAnnotationMetaFile] = useState<string | null>(null)
 
   // 파일 브라우저 열림 상태
   const [imageBrowserOpen, setImageBrowserOpen] = useState(false)
   const [annotationBrowserOpen, setAnnotationBrowserOpen] = useState(false)
+  const [metaFileBrowserOpen, setMetaFileBrowserOpen] = useState(false)
 
   // 포맷 검증 상태
   const [formatValidating, setFormatValidating] = useState(false)
@@ -269,6 +271,7 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
         split:                   values.split,
         source_image_dir:        imageDir,
         source_annotation_files: annotationFiles,
+        source_annotation_meta_file: annotationMetaFile ?? undefined,
       }
       const res = await datasetGroupsApi.register(payload, REGISTER_TIMEOUT_MS)
       onSuccess(res.data)
@@ -290,6 +293,7 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
       const res = await datasetGroupsApi.validateFormat({
         annotation_format: selectedFormat,
         annotation_files: annotationFiles,
+        annotation_meta_file: annotationMetaFile ?? undefined,
       })
       setFormatValidationResult(res.data)
     } catch {
@@ -314,6 +318,7 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
     setSubmitError(null)
     setImageDir(null)
     setAnnotationFiles([])
+    setAnnotationMetaFile(null)
     setSelectedGroupOption(NEW_GROUP_SENTINEL)
     setFormatValidationResult(null)
     setNextVersion('v1.0.0')
@@ -473,6 +478,34 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
                         전체 삭제
                       </Button>
                     </Space>
+                  )}
+                </Space>
+              </Form.Item>
+
+              {/* 어노테이션 메타 파일 (선택사항) */}
+              <Form.Item
+                label={
+                  <Space>
+                    <Text strong>어노테이션 메타 파일</Text>
+                    <Text type="secondary" style={{ fontSize: 12 }}>선택사항 (예: data.yaml)</Text>
+                  </Space>
+                }
+              >
+                <Space direction="vertical" style={{ width: '100%' }}>
+                  <Button
+                    icon={<FileOutlined />}
+                    onClick={() => setMetaFileBrowserOpen(true)}
+                  >
+                    파일 선택
+                  </Button>
+                  {annotationMetaFile && (
+                    <Tag
+                      closable
+                      onClose={() => setAnnotationMetaFile(null)}
+                      icon={<FileOutlined />}
+                    >
+                      {annotationMetaFile.split('/').pop()}
+                    </Tag>
                   )}
                 </Space>
               </Form.Item>
@@ -740,6 +773,13 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
                     )}
                   </Space>
                 </Descriptions.Item>
+                {annotationMetaFile && (
+                  <Descriptions.Item label="어노테이션 메타 파일">
+                    <Tag icon={<FileOutlined />} color="geekblue">
+                      {annotationMetaFile.split('/').pop()}
+                    </Tag>
+                  </Descriptions.Item>
+                )}
                 <Descriptions.Item label="Annotation Format">
                   <Tag color={FORMAT_TAG_COLOR[selectedFormat] ?? 'default'}>{selectedFormat}</Tag>
                 </Descriptions.Item>
@@ -807,6 +847,15 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
         mode="file"
         multiple
         title="어노테이션 파일 선택"
+      />
+
+      {/* ── 어노테이션 메타 파일 브라우저 ── */}
+      <ServerFileBrowser
+        open={metaFileBrowserOpen}
+        onClose={() => setMetaFileBrowserOpen(false)}
+        onSelect={(paths) => setAnnotationMetaFile(paths[0])}
+        mode="file"
+        title="어노테이션 메타 파일 선택 (예: data.yaml)"
       />
     </>
   )
