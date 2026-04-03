@@ -119,6 +119,10 @@ class Dataset(Base):
         JSONB, nullable=True,
         comment='어노테이션 파일명 목록. 예: ["instances_train.json"]. NULL이면 레거시 annotation.json'
     )
+    annotation_meta_file: Mapped[str | None] = mapped_column(
+        String(500), nullable=True,
+        comment="어노테이션 메타 파일명 (예: data.yaml). YOLO 등 클래스 매핑이 별도 파일인 포맷용"
+    )
     metadata_: Mapped[dict | None] = mapped_column(
         "metadata", JSONB, nullable=True,
         comment="EDA 결과, 클래스 분포 등"

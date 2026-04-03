@@ -86,6 +86,7 @@ class DatasetSummary(BaseModel):
     annotation_format: str | None
     storage_uri: str
     annotation_files: list[str] | None
+    annotation_meta_file: str | None = None
     metadata: dict[str, Any] | None = Field(default=None, validation_alias="metadata_")
     created_at: datetime
 
@@ -123,6 +124,7 @@ class DatasetBase(BaseModel):
     image_count: int | None = None
     class_count: int | None = None
     annotation_files: list[str] | None = None
+    annotation_meta_file: str | None = None
 
 
 class DatasetCreate(DatasetBase):
@@ -169,6 +171,10 @@ class DatasetRegisterRequest(BaseModel):
         ...,
         min_length=1,
         description="어노테이션 파일 절대경로 목록",
+    )
+    source_annotation_meta_file: str | None = Field(
+        default=None,
+        description="어노테이션 메타 파일 절대경로 (예: data.yaml). YOLO 포맷 등에서 클래스 매핑 파일",
     )
 
     @model_validator(mode="after")
@@ -260,6 +266,10 @@ class FormatValidateRequest(BaseModel):
         ...,
         min_length=1,
         description="어노테이션 파일 절대경로 목록",
+    )
+    annotation_meta_file: str | None = Field(
+        default=None,
+        description="어노테이션 메타 파일 절대경로 (예: data.yaml). YOLO 클래스 매핑용",
     )
 
 

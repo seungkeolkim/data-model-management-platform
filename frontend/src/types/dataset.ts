@@ -118,6 +118,7 @@ export interface DatasetRegisterRequest {
   // 소스 파일 경로 (파일 브라우저로 선택한 절대경로)
   source_image_dir: string
   source_annotation_files: string[]
+  source_annotation_meta_file?: string
 }
 
 // =============================================================================
@@ -127,6 +128,7 @@ export interface DatasetRegisterRequest {
 export interface FormatValidateRequest {
   annotation_format: string
   annotation_files: string[]
+  annotation_meta_file?: string
 }
 
 export interface FormatValidateResponse {

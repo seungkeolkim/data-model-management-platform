@@ -216,3 +216,5 @@ data/virtual_nas/
 
 # vscode settings
 .vscode/
+
+user_test/
