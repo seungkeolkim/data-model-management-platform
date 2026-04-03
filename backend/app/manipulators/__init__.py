@@ -1,19 +1,7 @@
 """
-Manipulator 레지스트리.
+app.manipulators — lib.manipulators re-export.
 
-name → UnitManipulator 클래스 매핑.
-PipelineExecutor가 config의 manipulator_name으로 클래스를 조회할 때 사용한다.
+기존 import 경로 호환을 위한 래퍼.
+새 코드에서는 lib.manipulators를 직접 import할 것.
 """
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
-
-from app.manipulators.format_convert import FormatConvertToCoco, FormatConvertToYolo
-
-if TYPE_CHECKING:
-    from app.pipeline.manipulator import UnitManipulator
-
-MANIPULATOR_REGISTRY: dict[str, type[UnitManipulator]] = {
-    "format_convert_to_coco": FormatConvertToCoco,
-    "format_convert_to_yolo": FormatConvertToYolo,
-}
+from lib.manipulators import MANIPULATOR_REGISTRY  # noqa: F401
