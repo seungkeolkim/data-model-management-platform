@@ -113,16 +113,19 @@ class Settings(BaseSettings):
 
     @property
     def celery_broker_url(self) -> str:
-        """Celery broker URL (PostgreSQL, db+ prefix 필수)."""
+        """Celery broker URL (PostgreSQL, sqla+ prefix로 kombu sqlalchemy transport 사용)."""
         return (
-            f"db+postgresql://{self.postgres_user}:{self.postgres_password}"
+            f"sqla+postgresql://{self.postgres_user}:{self.postgres_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
 
     @property
     def celery_result_backend(self) -> str:
-        """Celery result backend URL."""
-        return self.celery_broker_url
+        """Celery result backend URL (db+ prefix로 SQLAlchemy 결과 저장)."""
+        return (
+            f"db+postgresql://{self.postgres_user}:{self.postgres_password}"
+            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+        )
 
     @property
     def is_development(self) -> bool:

@@ -100,49 +100,50 @@ services:
 
   # ---------------------------------------------------------------------------
   # Celery Worker - 비동기 파이프라인/EDA 작업 처리
-  # Phase 2에서 활성화: 아래 전체 주석 해제
   # ---------------------------------------------------------------------------
-  # celery-worker:
-  #   build:
-  #     context: ./backend
-  #     dockerfile: Dockerfile
-  #     target: development
-  #   container_name: mlplatform-celery
-  #   restart: unless-stopped
-  #   environment:
-  #     POSTGRES_USER: ${POSTGRES_USER:-mlplatform}
-  #     POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mlplatform_secret}
-  #     POSTGRES_DB: ${POSTGRES_DB:-mlplatform}
-  #     POSTGRES_HOST: postgres
-  #     POSTGRES_PORT: ${POSTGRES_PORT:-5432}
-  #     STORAGE_BACKEND: ${STORAGE_BACKEND:-local}
-  #     LOCAL_STORAGE_BASE: /mnt/datasets
-  #     LOCAL_EDA_BASE: /mnt/eda
-  #     LOCAL_UPLOAD_BASE: /mnt/uploads
-  #     APP_ENV: ${APP_ENV:-development}
-  #   volumes:
-  #     - ${LOCAL_STORAGE_BASE}:/mnt/datasets
-  #     - ${LOCAL_EDA_BASE}:/mnt/eda
-  #     - ${LOCAL_UPLOAD_BASE}:/mnt/uploads
-  #     - ./backend:/app
-  #   depends_on:
-  #     postgres:
-  #       condition: service_healthy
-  #   networks:
-  #     - mlplatform-net
-  #   command: >
-  #     celery -A app.tasks.celery_app worker
-  #       --loglevel=info
-  #       --concurrency=4
-  #       --queues=pipeline,eda,default
-  #   # GPU 접근이 필요한 경우 (2차 이후):
-  #   # deploy:
-  #   #   resources:
-  #   #     reservations:
-  #   #       devices:
-  #   #         - driver: nvidia
-  #   #           count: all
-  #   #           capabilities: [gpu]
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: development
+    container_name: mlplatform-celery
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mlplatform}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mlplatform_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-mlplatform}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      STORAGE_BACKEND: ${STORAGE_BACKEND:-local}
+      LOCAL_STORAGE_BASE: /mnt/datasets
+      LOCAL_EDA_BASE: /mnt/eda
+      LOCAL_UPLOAD_BASE: /mnt/uploads
+      APP_ENV: ${APP_ENV:-development}
+    volumes:
+      - ${LOCAL_STORAGE_BASE}:/mnt/datasets
+      - ${LOCAL_EDA_BASE}:/mnt/eda
+      - ${LOCAL_UPLOAD_BASE}:/mnt/uploads
+      - ./backend:/app
+      # backend과 동일한 .venv 사용 (패키지 공유)
+      - backend_venv:/app/.venv
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - mlplatform-net
+    command: >
+      /app/.venv/bin/celery -A app.tasks.celery_app worker
+        --loglevel=info
+        --concurrency=4
+        --queues=pipeline,eda,default
+    # GPU 접근이 필요한 경우 (Step 2 이후):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
 
   # ---------------------------------------------------------------------------
   # Frontend - React (개발 서버)

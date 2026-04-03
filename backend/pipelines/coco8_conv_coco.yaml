@@ -1,0 +1,12 @@
+pipeline:
+  name: "coco8_conv_coco"
+  description: "coco8 YOLO → COCO 어노테이션 포맷 변환"
+  output:
+    dataset_type: SOURCE
+    annotation_format: COCO
+    split: TRAIN
+  tasks:
+    convert_to_coco:
+      operator: format_convert_to_coco
+      inputs: ["source:5c9e1a85-5e2d-46ce-af84-6c2e27517229"]
+      params: {}

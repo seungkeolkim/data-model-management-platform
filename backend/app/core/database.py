@@ -1,17 +1,22 @@
 """
-SQLAlchemy async 데이터베이스 세션 관리
+SQLAlchemy 데이터베이스 세션 관리.
+
+두 가지 엔진을 제공한다:
+  - Async 엔진 (asyncpg) — FastAPI 라우터용
+  - Sync 엔진 (psycopg2) — Celery 태스크 / Alembic 용
 """
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 
 import structlog
+from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
-from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.core.config import settings
 
@@ -31,6 +36,30 @@ engine = create_async_engine(
 AsyncSessionLocal = async_sessionmaker(
     engine,
     class_=AsyncSession,
+    expire_on_commit=False,
+    autocommit=False,
+    autoflush=False,
+)
+
+
+# ---------------------------------------------------------------------------
+# Sync Engine — Celery 태스크에서 사용 (psycopg2)
+# ---------------------------------------------------------------------------
+_sync_database_url = settings.database_url.replace(
+    "postgresql+asyncpg://", "postgresql+psycopg2://"
+)
+
+sync_engine = create_engine(
+    _sync_database_url,
+    echo=settings.is_development,
+    pool_pre_ping=True,
+    pool_size=5,       # Celery worker 전용이므로 작게 설정
+    max_overflow=10,
+)
+
+SyncSessionLocal = sessionmaker(
+    bind=sync_engine,
+    class_=Session,
     expire_on_commit=False,
     autocommit=False,
     autoflush=False,

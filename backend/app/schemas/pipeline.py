@@ -69,6 +69,12 @@ class PipelineSubmitResponse(BaseModel):
     message: str
 
 
+class PipelineListResponse(BaseModel):
+    """파이프라인 실행 이력 목록 응답."""
+    items: list[PipelineExecutionResponse]
+    total: int
+
+
 # =============================================================================
 # EDA 스키마
 # =============================================================================

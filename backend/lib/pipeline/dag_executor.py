@@ -54,12 +54,17 @@ class PipelineDagExecutor:
         self.storage = storage
         self.images_dirname = images_dirname
 
-    def run(self, config: PipelineConfig) -> PipelineResult:
+    def run(
+        self,
+        config: PipelineConfig,
+        target_version: str = "v1.0.0",
+    ) -> PipelineResult:
         """
         파이프라인 전체 실행.
 
         Args:
             config: DAG 기반 파이프라인 설정
+            target_version: 출력 데이터셋 버전. 서비스 레이어에서 자동 생성된 값을 전달한다.
 
         Returns:
             PipelineResult: 실행 결과
@@ -150,7 +155,7 @@ class PipelineDagExecutor:
             dataset_type=output_dataset_type,
             name=config.name,
             split=output_split,
-            version="v1.0.0",
+            version=target_version,
         )
         output_meta.storage_uri = output_storage_uri
 
