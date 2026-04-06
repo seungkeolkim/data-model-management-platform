@@ -36,9 +36,14 @@ const FORMAT_OPTIONS = [
   { value: 'YOLO', label: 'YOLO' },
 ]
 
-function SaveNodeComponent({ id, data }: NodeProps) {
-  const nodeData = data as unknown as SaveNodeData
+function SaveNodeComponent({ id }: NodeProps) {
+  // Zustand store에서 직접 구독 — store 변경 시 즉시 re-render
+  const nodeData = usePipelineEditorStore(
+    (s) => (s.nodeDataMap[id] as SaveNodeData) ?? null,
+  )
   const setNodeData = usePipelineEditorStore((s) => s.setNodeData)
+
+  if (!nodeData) return null
 
   const hasErrors = (nodeData.validationIssues ?? []).some((i) => i.severity === 'error')
   const hasWarnings = (nodeData.validationIssues ?? []).some((i) => i.severity === 'warning')

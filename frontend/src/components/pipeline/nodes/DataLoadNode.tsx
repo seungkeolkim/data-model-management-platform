@@ -7,6 +7,9 @@
  *
  * 상위 항목 변경 시 하위 항목은 초기화된다.
  * 최종 선택된 dataset_id가 하위 노드의 inputs에 "source:<dataset_id>"로 변환된다.
+ *
+ * 중요: React Flow node.data가 아닌 Zustand store의 nodeDataMap을 직접 구독하여
+ * store 변경 시 즉시 re-render 되도록 한다.
  */
 
 import { memo, useMemo } from 'react'
@@ -24,7 +27,7 @@ const { Text } = Typography
 
 /** 그룹이 DETECTION 태스크 타입을 포함하는지 확인 */
 function isDetectionGroup(group: DatasetGroup): boolean {
-  if (!group.task_types || group.task_types.length === 0) return true  // 미지정이면 허용
+  if (!group.task_types || group.task_types.length === 0) return true
   return group.task_types.includes('DETECTION')
 }
 
@@ -33,8 +36,11 @@ function readyDatasets(datasets: DatasetSummary[]): DatasetSummary[] {
   return datasets.filter((ds) => ds.status === 'READY')
 }
 
-function DataLoadNodeComponent({ id, data }: NodeProps) {
-  const nodeData = data as unknown as DataLoadNodeData
+function DataLoadNodeComponent({ id }: NodeProps) {
+  // Zustand store에서 직접 구독 — store 변경 시 즉시 re-render
+  const nodeData = usePipelineEditorStore(
+    (s) => (s.nodeDataMap[id] as DataLoadNodeData) ?? null,
+  )
   const setNodeData = usePipelineEditorStore((s) => s.setNodeData)
 
   // ── 1단계: 그룹 목록 조회 ──
@@ -54,8 +60,8 @@ function DataLoadNodeComponent({ id, data }: NodeProps) {
 
   // ── 2단계: 선택된 그룹의 READY 데이터셋에서 split 추출 ──
   const selectedGroup = useMemo(
-    () => availableGroups.find((g) => g.id === nodeData.groupId) ?? null,
-    [availableGroups, nodeData.groupId],
+    () => availableGroups.find((g) => g.id === nodeData?.groupId) ?? null,
+    [availableGroups, nodeData?.groupId],
   )
 
   const availableSplits = useMemo(() => {
@@ -67,12 +73,15 @@ function DataLoadNodeComponent({ id, data }: NodeProps) {
 
   // ── 3단계: 선택된 그룹+split의 버전 목록 ──
   const availableVersions = useMemo(() => {
-    if (!selectedGroup || !nodeData.split) return []
+    if (!selectedGroup || !nodeData?.split) return []
     const ready = readyDatasets(selectedGroup.datasets)
     return ready
       .filter((ds) => ds.split === nodeData.split)
-      .sort((a, b) => b.version.localeCompare(a.version))  // 최신 버전 상위
-  }, [selectedGroup, nodeData.split])
+      .sort((a, b) => b.version.localeCompare(a.version))
+  }, [selectedGroup, nodeData?.split])
+
+  // nodeData가 아직 store에 없으면 빈 상태로 표시
+  if (!nodeData) return null
 
   // ── 검증 상태 ──
   const hasErrors = (nodeData.validationIssues ?? []).some((i) => i.severity === 'error')
@@ -86,7 +95,7 @@ function DataLoadNodeComponent({ id, data }: NodeProps) {
       ...nodeData,
       groupId,
       groupName: group?.name ?? '',
-      split: null,       // 하위 초기화
+      split: null,
       datasetId: null,
       version: null,
       datasetLabel: group?.name ?? '',
@@ -97,7 +106,7 @@ function DataLoadNodeComponent({ id, data }: NodeProps) {
     setNodeData(id, {
       ...nodeData,
       split,
-      datasetId: null,   // 하위 초기화
+      datasetId: null,
       version: null,
       datasetLabel: `${nodeData.groupName} / ${split}`,
     })
@@ -152,8 +161,6 @@ function DataLoadNodeComponent({ id, data }: NodeProps) {
             value={nodeData.groupId || undefined}
             loading={groupsLoading}
             style={{ width: '100%' }}
-            showSearch
-            optionFilterProp="label"
             onChange={handleGroupChange}
             options={availableGroups.map((g) => ({
               value: g.id,
