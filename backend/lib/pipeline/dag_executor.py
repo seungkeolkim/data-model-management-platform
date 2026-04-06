@@ -19,6 +19,7 @@ StorageProtocol을 통해 스토리지 접근을 추상화한다.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 from lib.manipulators import MANIPULATOR_REGISTRY
@@ -69,6 +70,33 @@ class PipelineDagExecutor:
         Returns:
             PipelineResult: 실행 결과
         """
+        # ── 파일 로그 수집기 설정 ──
+        # 파이프라인 실행 전 과정을 버퍼에 기록한 뒤,
+        # 완료 후 출력 디렉토리에 processing.log로 저장한다.
+        log_buffer_handler = _ProcessingLogBufferHandler()
+        log_buffer_handler.setFormatter(
+            logging.Formatter("%(asctime)s [%(levelname)s] %(name)s — %(message)s")
+        )
+        # lib 네임스페이스 전체를 캡처 (dag_executor, image_materializer, manipulators 등)
+        pipeline_root_logger = logging.getLogger("lib")
+        pipeline_root_logger.addHandler(log_buffer_handler)
+
+        try:
+            return self._run_pipeline(
+                config, target_version, log_buffer_handler, pipeline_root_logger,
+            )
+        finally:
+            # 예외 발생 시에도 반드시 핸들러 정리
+            pipeline_root_logger.removeHandler(log_buffer_handler)
+
+    def _run_pipeline(
+        self,
+        config: PipelineConfig,
+        target_version: str,
+        log_buffer_handler: '_ProcessingLogBufferHandler',
+        pipeline_root_logger: logging.Logger,
+    ) -> 'PipelineResult':
+        """파이프라인 실제 실행 로직. run()에서 호출된다."""
         logger.info(
             "파이프라인 실행 시작: name=%s, tasks=%d",
             config.name, len(config.tasks),
@@ -217,6 +245,15 @@ class PipelineDagExecutor:
             "파이프라인 실행 완료: output_uri=%s, images=%d, skipped=%d, annotations=%d",
             output_storage_uri, materialize_result.materialized_count,
             materialize_result.skipped_count, len(annotation_filenames),
+        )
+
+        # ── processing.log 파일 작성 ──
+        self._write_processing_log(
+            output_storage_uri=output_storage_uri,
+            config=config,
+            log_lines=log_buffer_handler.get_log_lines(),
+            materialize_result=materialize_result,
+            annotation_filenames=annotation_filenames,
         )
 
         return PipelineResult(
@@ -444,6 +481,83 @@ class PipelineDagExecutor:
         else:
             raise ValueError(f"지원하지 않는 출력 포맷: {output_format}")
 
+    def _write_processing_log(
+        self,
+        output_storage_uri: str,
+        config: PipelineConfig,
+        log_lines: list[str],
+        materialize_result: 'MaterializeResult',
+        annotation_filenames: list[str],
+    ) -> None:
+        """
+        파이프라인 실행 과정을 output 디렉토리에 processing.log로 기록한다.
+
+        헤더(설정 요약 + 결과 요약) + 상세 실행 로그 형태로 구성된다.
+        이 파일은 이미지/annotation과 함께 영구 보관되어 추후 변환 이력 추적에 사용된다.
+        """
+        from lib.pipeline.image_materializer import MaterializeResult  # noqa: F811
+
+        output_dir = self.storage.resolve_path(output_storage_uri)
+        log_path = output_dir / "processing.log"
+
+        try:
+            with open(log_path, "w", encoding="utf-8") as log_file:
+                # ── 헤더: 파이프라인 설정 요약 ──
+                log_file.write("=" * 72 + "\n")
+                log_file.write(f"  파이프라인 실행 로그 — {config.name}\n")
+                log_file.write(f"  실행 시각: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}\n")
+                log_file.write("=" * 72 + "\n\n")
+
+                # 출력 설정
+                log_file.write("[출력 설정]\n")
+                log_file.write(f"  출력 경로       : {output_storage_uri}\n")
+                log_file.write(f"  데이터셋 타입   : {config.output.dataset_type}\n")
+                log_file.write(f"  Split           : {config.output.split}\n")
+                log_file.write(f"  어노테이션 포맷 : {config.output.annotation_format or '자동 (입력 포맷 유지)'}\n")
+                log_file.write("\n")
+
+                # DAG 태스크 목록
+                log_file.write("[DAG 태스크]\n")
+                task_order = config.topological_order()
+                for task_name in task_order:
+                    task_config = config.tasks[task_name]
+                    inputs_str = ", ".join(task_config.inputs)
+                    params_str = str(task_config.params) if task_config.params else "{}"
+                    log_file.write(
+                        f"  {task_name}\n"
+                        f"    operator : {task_config.operator}\n"
+                        f"    inputs   : [{inputs_str}]\n"
+                        f"    params   : {params_str}\n"
+                    )
+                log_file.write("\n")
+
+                # 결과 요약
+                log_file.write("[실행 결과 요약]\n")
+                log_file.write(f"  최종 이미지 수       : {materialize_result.materialized_count}\n")
+                log_file.write(f"  스킵된 이미지 수     : {materialize_result.skipped_count}\n")
+                log_file.write(f"  생성된 어노테이션    : {', '.join(annotation_filenames)}\n")
+
+                if materialize_result.skipped_count > 0:
+                    log_file.write(f"\n[스킵된 이미지 목록] (총 {materialize_result.skipped_count}건)\n")
+                    for skipped_file in materialize_result.skipped_files:
+                        log_file.write(f"  - {skipped_file}\n")
+
+                # 상세 실행 로그
+                log_file.write("\n" + "=" * 72 + "\n")
+                log_file.write("  상세 실행 로그\n")
+                log_file.write("=" * 72 + "\n\n")
+                for line in log_lines:
+                    log_file.write(line + "\n")
+
+            logger.info("processing.log 작성 완료: %s", log_path)
+
+        except OSError as write_error:
+            # 로그 파일 작성 실패가 파이프라인 전체를 실패시키면 안 됨
+            logger.warning(
+                "processing.log 작성 실패 (파이프라인 결과에는 영향 없음): %s",
+                write_error,
+            )
+
 
 # ─── Pipeline 실행 결과 ───
 
@@ -540,3 +654,28 @@ def load_source_meta_from_storage(
 
     else:
         raise ValueError(f"지원하지 않는 annotation 포맷: {format_upper}")
+
+
+# ─── 파이프라인 실행 로그 버퍼 핸들러 ───
+
+class _ProcessingLogBufferHandler(logging.Handler):
+    """
+    파이프라인 실행 중 발생하는 로그를 메모리에 버퍼링하는 핸들러.
+
+    실행 완료 후 get_log_lines()로 수집된 로그를 꺼내
+    processing.log 파일에 기록한다.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._log_lines: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            formatted_message = self.format(record)
+            self._log_lines.append(formatted_message)
+        except Exception:
+            self.handleError(record)
+
+    def get_log_lines(self) -> list[str]:
+        return self._log_lines
