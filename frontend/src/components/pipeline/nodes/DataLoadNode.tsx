@@ -150,8 +150,9 @@ function DataLoadNodeComponent({ id }: NodeProps) {
         Data Load
       </div>
 
-      {/* 본문 — 3단계 캐스케이드 선택 */}
-      <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {/* 본문 — 3단계 캐스케이드 선택
+           nopan: React Flow 캔버스 팬 방지, nodrag: 노드 드래그 방지 */}
+      <div className="nopan nodrag" style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
         {/* 1단계: 데이터셋 그룹 */}
         <div>
           <Text style={{ fontSize: 11, color: '#8c8c8c' }}>데이터셋</Text>
@@ -166,7 +167,6 @@ function DataLoadNodeComponent({ id }: NodeProps) {
               value: g.id,
               label: `${g.name} (${g.dataset_type})`,
             }))}
-            onMouseDown={(e) => e.stopPropagation()}
           />
         </div>
 
@@ -184,7 +184,6 @@ function DataLoadNodeComponent({ id }: NodeProps) {
               value: s,
               label: s,
             }))}
-            onMouseDown={(e) => e.stopPropagation()}
           />
         </div>
 
@@ -202,7 +201,6 @@ function DataLoadNodeComponent({ id }: NodeProps) {
               value: ds.id,
               label: `${ds.version} (${ds.image_count ?? '?'} images)`,
             }))}
-            onMouseDown={(e) => e.stopPropagation()}
           />
         </div>
 

@@ -93,8 +93,9 @@ function SaveNodeComponent({ id }: NodeProps) {
         Save (출력 설정)
       </div>
 
-      {/* 본문 — 인라인 폼 */}
-      <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {/* 본문 — 인라인 폼
+           nopan nodrag: React Flow 이벤트 방지하여 폼 조작이 정상 동작하도록 */}
+      <div className="nopan nodrag" style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
         <div>
           <Text style={{ fontSize: 11, color: '#8c8c8c' }}>출력 이름 *</Text>
           <Input
@@ -102,7 +103,6 @@ function SaveNodeComponent({ id }: NodeProps) {
             placeholder="출력 DatasetGroup 이름"
             value={nodeData.name}
             onChange={(e) => updateField('name', e.target.value)}
-            onMouseDown={(e) => e.stopPropagation()}
           />
         </div>
 
@@ -114,7 +114,6 @@ function SaveNodeComponent({ id }: NodeProps) {
             options={DATASET_TYPE_OPTIONS}
             style={{ width: '100%' }}
             onChange={(val) => updateField('datasetType', val)}
-            onMouseDown={(e) => e.stopPropagation()}
           />
         </div>
 
@@ -126,7 +125,6 @@ function SaveNodeComponent({ id }: NodeProps) {
             options={SPLIT_OPTIONS}
             style={{ width: '100%' }}
             onChange={(val) => updateField('split', val)}
-            onMouseDown={(e) => e.stopPropagation()}
           />
         </div>
 
@@ -138,7 +136,6 @@ function SaveNodeComponent({ id }: NodeProps) {
             options={FORMAT_OPTIONS}
             style={{ width: '100%' }}
             onChange={(val) => updateField('annotationFormat', val || null)}
-            onMouseDown={(e) => e.stopPropagation()}
           />
         </div>
 
