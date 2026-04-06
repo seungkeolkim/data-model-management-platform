@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from lib.manipulators.format_convert import FormatConvertToCoco, FormatConvertToYolo
+from lib.manipulators.merge_datasets import MergeDatasets
 
 if TYPE_CHECKING:
     from lib.pipeline.manipulator_base import UnitManipulator
@@ -16,4 +17,5 @@ if TYPE_CHECKING:
 MANIPULATOR_REGISTRY: dict[str, type[UnitManipulator]] = {
     "format_convert_to_coco": FormatConvertToCoco,
     "format_convert_to_yolo": FormatConvertToYolo,
+    "merge_datasets": MergeDatasets,
 }

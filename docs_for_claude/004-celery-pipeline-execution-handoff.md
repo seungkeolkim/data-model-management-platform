@@ -91,6 +91,49 @@ GET /api/v1/pipelines/{id}/status  →  { status, current_stage, processed_count
 - FastAPI: `AsyncSession` (asyncpg) — `get_db()`
 - Celery: `SyncSessionLocal` (psycopg2) — 직접 생성/관리
 
+### 3-a. 비동기 실행 상태 전이 (State Machine)
+
+파이프라인 실행은 Celery 비동기 태스크로 처리되며, DB 기반 상태 머신으로 진행 상황을 추적한다.
+
+**PipelineExecution 상태:**
+```
+PENDING → RUNNING → DONE    (성공)
+PENDING → RUNNING → FAILED  (실패)
+```
+
+**Dataset 상태:**
+```
+PENDING → PROCESSING → READY  (성공)
+PENDING → PROCESSING → ERROR  (실패)
+```
+
+**상태 전이 시점:**
+
+| 시점 | PipelineExecution | Dataset | 비고 |
+|------|-------------------|---------|------|
+| API 호출 직후 (submit) | PENDING | PENDING | DB 레코드 생성, Celery dispatch |
+| Celery worker 시작 | RUNNING | PROCESSING | 즉시 commit (polling 가시성) |
+| DAG 실행 완료 | DONE | READY | storage_uri, image_count, lineage 등 채움 |
+| 예외 발생 | FAILED | ERROR | error_message 저장 (2000자 truncate) |
+
+**핵심 설계 결정:**
+- 상태값은 Python enum이 아닌 문자열 상수
+- 각 상태 변경마다 즉시 `db.commit()` — polling API가 실시간 상태를 반환할 수 있도록
+- Celery worker는 sync DB 세션(psycopg2) 사용 (FastAPI의 async 세션과 별도)
+- 재시도 없음(`max_retries=0`) — 이미지 실체화의 멱등성 미보장
+- 타임아웃: soft 24h / hard 25h
+- 전용 큐 `"pipeline"`, worker prefetch=1 (장시간 태스크 격리)
+
+**클라이언트 polling 흐름:**
+```
+POST /api/v1/pipelines/execute → 202 { execution_id }
+  ↓
+GET /api/v1/pipelines/{execution_id}/status (N초 간격 polling)
+  → { status, current_stage, processed_count, total_count, error_message, ... }
+  ↓
+status == "DONE" or "FAILED" → polling 종료
+```
+
 ### 4. 포트 변경
 
 | 서비스 | 이전 | 이후 | 환경변수 |
@@ -127,8 +170,8 @@ GET /api/v1/pipelines/{id}/status  →  { status, current_stage, processed_count
 | 항목 | 우선순위 | 난이도 | 비고 |
 |------|----------|--------|------|
 | **추가 manipulator 구현** | 높음 | 중 | remap_class_name, filter_image_by_class, filter_annotation_by_class, sample_n_images, merge_datasets |
-| **GUI 파이프라인 위자드** | 높음 | 높음 | 블록 다이어그램 → YAML 생성 → execute API 호출 |
-| **파이프라인 실행 이력 UI** | 중간 | 낮음 | GET /pipelines 목록 + 상태 polling |
+| **GUI 파이프라인 DAG 위자드** | 높음 | 높음 | 소스 선택 → manipulator DAG 구성 → PipelineConfig 생성 → POST /execute 호출 → 202 반환 후 polling으로 상태 추적 (PENDING→RUNNING→DONE/FAILED) |
+| **파이프라인 실행 상태 UI** | 중간 | 낮음 | GET /pipelines 목록 + GET /{id}/status polling, Dataset 상태(PENDING→PROCESSING→READY/ERROR) 실시간 반영 |
 | **진행률 업데이트** | 낮음 | 중 | dag_executor에 progress callback 추가 필요 (lib/ 수정) |
 | **nginx 포트 80 문제 조사** | 낮음 | - | Docker proxy 간섭, 18080에서는 정상 동작 |
 

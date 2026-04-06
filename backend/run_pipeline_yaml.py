@@ -53,10 +53,11 @@ def _query_dataset_info_sync(dataset_id: str) -> dict:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT storage_uri, annotation_format, annotation_files,
-                       annotation_meta_file, status
-                FROM datasets
-                WHERE id = %s
+                SELECT d.storage_uri, d.annotation_format, d.annotation_files,
+                       d.annotation_meta_file, d.status, g.name as group_name
+                FROM datasets d
+                JOIN dataset_groups g ON d.group_id = g.id
+                WHERE d.id = %s
                 """,
                 (dataset_id,),
             )
@@ -64,7 +65,7 @@ def _query_dataset_info_sync(dataset_id: str) -> dict:
             if row is None:
                 raise ValueError(f"데이터셋을 찾을 수 없습니다: {dataset_id}")
 
-            storage_uri, annotation_format, annotation_files_raw, annotation_meta_file, status = row
+            storage_uri, annotation_format, annotation_files_raw, annotation_meta_file, status, group_name = row
 
             # annotation_files: JSONB → list[str]
             if isinstance(annotation_files_raw, str):
@@ -80,6 +81,7 @@ def _query_dataset_info_sync(dataset_id: str) -> dict:
                 "annotation_files": annotation_files,
                 "annotation_meta_file": annotation_meta_file,
                 "status": status,
+                "group_name": group_name,
             }
     finally:
         conn.close()
@@ -125,7 +127,7 @@ def run_pipeline_from_yaml(yaml_path: str) -> None:
             source_info = source_registry.get(load_dataset_id)
             if source_info is None:
                 raise ValueError(f"소스 데이터셋 정보를 찾을 수 없습니다: {load_dataset_id}")
-            return load_source_meta_from_storage(
+            meta = load_source_meta_from_storage(
                 storage=self.storage,
                 storage_uri=source_info["storage_uri"],
                 annotation_format=source_info["annotation_format"],
@@ -133,6 +135,9 @@ def run_pipeline_from_yaml(yaml_path: str) -> None:
                 annotation_meta_file=source_info["annotation_meta_file"],
                 dataset_id=load_dataset_id,
             )
+            # merge 파이프라인에서 파일명 prefix 생성 시 사용할 dataset_name 주입
+            meta.extra["dataset_name"] = source_info["group_name"]
+            return meta
 
     executor = DbAwarePipelineDagExecutor(storage)
 
@@ -157,6 +162,22 @@ def run_pipeline_from_yaml(yaml_path: str) -> None:
         print(f"    {cat['id']}: {cat['name']}")
     if len(result.output_meta.categories) > 10:
         print(f"    ... ({len(result.output_meta.categories) - 10}개 더)")
+
+    # merge 결과 상세 (file_name_mapping이 있으면 출력)
+    file_name_mapping = result.output_meta.extra.get("file_name_mapping")
+    if file_name_mapping:
+        total_renamed = sum(len(v) for v in file_name_mapping.values())
+        print(f"\n  [Merge] 파일명 rename: {total_renamed}건")
+        for dataset_id, mapping in file_name_mapping.items():
+            print(f"    dataset {dataset_id}:")
+            for original, renamed in list(mapping.items())[:5]:
+                print(f"      {original} → {renamed}")
+            if len(mapping) > 5:
+                print(f"      ... ({len(mapping) - 5}건 더)")
+
+    source_ids = result.output_meta.extra.get("source_dataset_ids")
+    if source_ids:
+        print(f"  [Merge] 소스 데이터셋: {source_ids}")
 
     # 출력 파일 검증
     output_abs = storage.resolve_path(result.output_storage_uri)

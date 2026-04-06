@@ -20,6 +20,7 @@ from app.core.database import SyncSessionLocal
 from app.core.storage import get_storage_client
 from app.models.all_models import (
     Dataset,
+    DatasetGroup,
     DatasetLineage,
     PipelineExecution,
 )
@@ -62,7 +63,7 @@ class _DbAwareDagExecutor(PipelineDagExecutor):
         # annotation_files가 None이면 빈 리스트 처리
         annotation_files = source_dataset.annotation_files or []
 
-        return load_source_meta_from_storage(
+        meta = load_source_meta_from_storage(
             storage=self.storage,
             storage_uri=source_dataset.storage_uri,
             annotation_format=source_dataset.annotation_format or "COCO",
@@ -70,6 +71,16 @@ class _DbAwareDagExecutor(PipelineDagExecutor):
             annotation_meta_file=source_dataset.annotation_meta_file,
             dataset_id=dataset_id,
         )
+
+        # merge 파이프라인에서 파일명 prefix 생성 시 사용할 dataset_name 주입
+        group = (
+            self._sync_db.query(DatasetGroup)
+            .filter(DatasetGroup.id == source_dataset.group_id)
+            .one()
+        )
+        meta.extra["dataset_name"] = group.name
+
+        return meta
 
 
 @celery_app.task(

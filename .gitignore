@@ -219,3 +219,4 @@ data/virtual_nas/
 .vscode/
 
 user_test/
+etc_utils/

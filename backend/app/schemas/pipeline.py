@@ -16,6 +16,14 @@ from lib.pipeline.config import (  # noqa: F401
     load_pipeline_config_from_yaml,
 )
 
+# 파이프라인 검증 — lib.pipeline.pipeline_validator에서 re-export
+from lib.pipeline.pipeline_validator import (  # noqa: F401
+    PipelineValidationIssue,
+    PipelineValidationResult,
+    ValidationSeverity,
+    validate_pipeline_config_static,
+)
+
 
 # =============================================================================
 # Manipulator 스키마
@@ -60,6 +68,30 @@ class PipelineExecutionResponse(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class PipelineValidationIssueResponse(BaseModel):
+    """검증 문제 단건 응답."""
+    severity: str = Field(..., description="error 또는 warning")
+    code: str = Field(..., description="기계 판독용 오류 코드 (예: UNKNOWN_OPERATOR)")
+    message: str = Field(..., description="사람이 읽을 수 있는 오류 메시지")
+    field: str = Field(default="", description="문제 발생 위치 (예: tasks.merge.operator)")
+
+
+class PipelineValidationResponse(BaseModel):
+    """
+    파이프라인 검증 응답.
+
+    Web UI에서 실행 전 검증 결과를 표시하기 위한 구조.
+    is_valid가 False이면 error 수준의 문제가 존재하여 실행 불가.
+    """
+    is_valid: bool = Field(..., description="검증 통과 여부 (error가 없으면 True)")
+    error_count: int = Field(..., description="ERROR 수준 문제 수")
+    warning_count: int = Field(..., description="WARNING 수준 문제 수")
+    issues: list[PipelineValidationIssueResponse] = Field(
+        default_factory=list,
+        description="검증 문제 목록 (ERROR + WARNING 모두 포함)",
+    )
 
 
 class PipelineSubmitResponse(BaseModel):
