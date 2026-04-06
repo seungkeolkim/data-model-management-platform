@@ -24,7 +24,9 @@
     "antd": "^5.18.0",
     "@ant-design/icons": "^5.3.7",
 
-    "dayjs": "^1.11.11"
+    "dayjs": "^1.11.11",
+
+    "@xyflow/react": "^12.6.0"
   },
   "devDependencies": {
     "@types/react": "^18.3.3",

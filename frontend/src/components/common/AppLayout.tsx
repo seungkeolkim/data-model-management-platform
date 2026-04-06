@@ -2,6 +2,7 @@ import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { Layout, Menu, Typography, Tag } from 'antd'
 import {
   DatabaseOutlined,
+  BranchesOutlined,
   RocketOutlined,
   SettingOutlined,
   ExperimentOutlined,
@@ -17,6 +18,12 @@ const menuItems = [
     icon: <DatabaseOutlined />,
     label: '데이터셋',
     path: '/datasets',
+  },
+  {
+    key: 'pipelines',
+    icon: <BranchesOutlined />,
+    label: '데이터 변형',
+    path: '/pipelines',
   },
   {
     key: 'training',
@@ -59,6 +66,8 @@ export default function AppLayout() {
   // 현재 경로로 선택된 메뉴 키 결정
   const selectedKey = location.pathname.startsWith('/datasets')
     ? 'datasets'
+    : location.pathname.startsWith('/pipelines')
+    ? 'pipelines'
     : location.pathname.startsWith('/training')
     ? 'training'
     : location.pathname.startsWith('/settings/manipulators')

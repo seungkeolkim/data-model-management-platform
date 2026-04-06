@@ -4,6 +4,8 @@ import koKR from 'antd/locale/ko_KR'
 import AppLayout from './components/common/AppLayout'
 import DatasetListPage from './pages/DatasetListPage'
 import DatasetDetailPage from './pages/DatasetDetailPage'
+import PipelineEditorPage from './pages/PipelineEditorPage'
+import PipelineHistoryPage from './pages/PipelineHistoryPage'
 import ManipulatorListPage from './pages/ManipulatorListPage'
 import SystemStatusPage from './pages/SystemStatusPage'
 import ComingSoonPage from './pages/ComingSoonPage'
@@ -22,11 +24,17 @@ export default function App() {
     >
       <BrowserRouter>
         <Routes>
+          {/* 전체화면 에디터 — AppLayout 밖 (사이드바 없음) */}
+          <Route path="/pipelines/editor" element={<PipelineEditorPage />} />
+
           <Route path="/" element={<AppLayout />}>
             {/* Phase 1 — 데이터셋 관리 */}
             <Route index element={<Navigate to="/datasets" replace />} />
             <Route path="datasets" element={<DatasetListPage />} />
             <Route path="datasets/:groupId" element={<DatasetDetailPage />} />
+
+            {/* Phase 2 — 파이프라인 (데이터 변형) */}
+            <Route path="pipelines" element={<PipelineHistoryPage />} />
 
             {/* Phase 2 이후 — 비활성 슬롯 */}
             <Route path="training/*" element={<ComingSoonPage title="모델 학습" phase="2차" />} />
