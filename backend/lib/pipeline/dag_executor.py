@@ -349,23 +349,51 @@ class PipelineDagExecutor:
         다중 소스 DatasetMeta를 단순 병합한다.
         image_id 충돌 방지를 위해 재번호 매김.
         categories는 union (동일 name이면 동일 id 유지).
+
+        COCO 포맷의 경우 원본 비순차 ID를 보존한다.
         """
         if not metas:
             raise ValueError("병합할 DatasetMeta가 없습니다.")
 
+        is_coco = metas[0].annotation_format.upper() == "COCO"
+
+        # 카테고리 통합: 이름 → ID 매핑
         merged_categories: list[dict[str, Any]] = []
         category_name_to_id: dict[str, int] = {}
-        next_category_id = 0
+        used_ids: set[int] = set()
 
-        for meta in metas:
-            for category in meta.categories:
-                if category["name"] not in category_name_to_id:
-                    category_name_to_id[category["name"]] = next_category_id
-                    merged_categories.append({
-                        "id": next_category_id,
-                        "name": category["name"],
-                    })
-                    next_category_id += 1
+        if is_coco:
+            # COCO: 원본 ID 보존 (첫 등장 소스의 ID를 사용)
+            for meta in metas:
+                for category in meta.categories:
+                    if category["name"] not in category_name_to_id:
+                        original_id = category["id"]
+                        if original_id not in used_ids:
+                            assigned_id = original_id
+                        else:
+                            # ID 충돌 → 91번부터 새 ID 할당
+                            assigned_id = 91
+                            while assigned_id in used_ids:
+                                assigned_id += 1
+                        category_name_to_id[category["name"]] = assigned_id
+                        merged_categories.append({
+                            "id": assigned_id,
+                            "name": category["name"],
+                        })
+                        used_ids.add(assigned_id)
+            merged_categories.sort(key=lambda cat: cat["id"])
+        else:
+            # YOLO 등: 0부터 순차 할당
+            next_category_id = 0
+            for meta in metas:
+                for category in meta.categories:
+                    if category["name"] not in category_name_to_id:
+                        category_name_to_id[category["name"]] = next_category_id
+                        merged_categories.append({
+                            "id": next_category_id,
+                            "name": category["name"],
+                        })
+                        next_category_id += 1
 
         merged_records: list[ImageRecord] = []
         image_id_counter = 1

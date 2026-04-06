@@ -109,8 +109,9 @@ class TestBuildUnifiedCategories:
         assert len(unified) == 2
         names = {c["name"] for c in unified}
         assert names == {"person", "dog"}
-        # ds-b의 dog(원래 id=0)은 새 id=1로 매핑
-        assert remap["ds-b"][0] == 1
+        # COCO ID 보존: person이 id=0을 먼저 차지, dog의 id=0은 충돌 → 91 할당
+        assert remap["ds-a"][0] == 0
+        assert remap["ds-b"][0] == 91
 
     def test_same_id_different_name_conflict(self):
         """동일 ID에 다른 이름 → 이름 기준으로 각각 새 ID 할당."""
@@ -431,9 +432,11 @@ class TestMergeDatasetsTransformAnnotation:
 
         category_names = {c["name"] for c in result.categories}
         assert category_names == {"person", "car", "truck"}
-        # ID는 0부터 순차
-        ids = sorted(c["id"] for c in result.categories)
-        assert ids == [0, 1, 2]
+        # COCO 포맷: 원본 ID 보존 — person=0, car=1, truck은 id=1 충돌이므로 91 할당
+        name_to_id = {c["name"]: c["id"] for c in result.categories}
+        assert name_to_id["person"] == 0
+        assert name_to_id["car"] == 1
+        assert name_to_id["truck"] == 91
 
     def test_annotation_category_ids_remapped(self):
         """병합 후 annotation의 category_id가 통합된 ID로 재매핑."""
