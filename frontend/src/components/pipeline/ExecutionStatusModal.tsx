@@ -5,6 +5,7 @@
  * 진행률, 현재 단계, 에러 메시지를 표시한다.
  */
 
+import { useEffect } from 'react'
 import { Modal, Progress, Typography, Tag, Space, Result, Button } from 'antd'
 import {
   LoadingOutlined,
@@ -36,9 +37,14 @@ export default function ExecutionStatusModal() {
   })
 
   // 스토어에 최신 상태 동기화
-  if (statusData) {
-    setExecutionStatus(statusData)
-  }
+  // statusData 객체 참조는 매 query마다 바뀌므로, 실질 변경(status/processed_count)만 추적
+  const statusValue = statusData?.status
+  const processedCount = statusData?.processed_count
+  useEffect(() => {
+    if (statusData) {
+      setExecutionStatus(statusData)
+    }
+  }, [statusValue, processedCount, setExecutionStatus]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const isOpen = !!executionId
   const status = statusData?.status ?? 'PENDING'

@@ -183,9 +183,24 @@ class PipelineDagExecutor:
         )
 
         image_materializer = ImageMaterializer(self.storage)
-        materialized_count = image_materializer.materialize(dataset_plan)
+        materialize_result = image_materializer.materialize(dataset_plan)
 
-        # annotation 파일 작성
+        # 스킵된 이미지가 있으면 output_meta에서 해당 레코드 제거
+        # (annotation에 존재하지만 실제 파일이 없는 이미지 → 최종 결과물에서 제외)
+        if materialize_result.skipped_count > 0:
+            skipped_file_set = set(materialize_result.skipped_files)
+            original_count = len(output_meta.image_records)
+            output_meta.image_records = [
+                record for record in output_meta.image_records
+                if record.file_name not in skipped_file_set
+            ]
+            logger.warning(
+                "스킵된 이미지 제거: 원본 %d → 필터링 후 %d (제거 %d건)",
+                original_count, len(output_meta.image_records),
+                materialize_result.skipped_count,
+            )
+
+        # annotation 파일 작성 (스킵된 이미지가 제거된 output_meta 기반)
         annotation_filenames = self._write_annotations(output_meta, output_storage_uri)
 
         # meta file (yaml) 생성 — YOLO 출력인 경우
@@ -199,8 +214,9 @@ class PipelineDagExecutor:
             logger.info("YOLO data.yaml 생성 완료")
 
         logger.info(
-            "파이프라인 실행 완료: output_uri=%s, images=%d, annotations=%d",
-            output_storage_uri, materialized_count, len(annotation_filenames),
+            "파이프라인 실행 완료: output_uri=%s, images=%d, skipped=%d, annotations=%d",
+            output_storage_uri, materialize_result.materialized_count,
+            materialize_result.skipped_count, len(annotation_filenames),
         )
 
         return PipelineResult(
@@ -210,8 +226,10 @@ class PipelineDagExecutor:
             output_split=output_split,
             annotation_filenames=annotation_filenames,
             annotation_meta_filename=annotation_meta_filename,
-            image_count=materialized_count,
+            image_count=materialize_result.materialized_count,
             source_dataset_ids=config.get_all_source_dataset_ids(),
+            skipped_image_count=materialize_result.skipped_count,
+            skipped_image_files=materialize_result.skipped_files,
         )
 
     # -------------------------------------------------------------------------
@@ -430,7 +448,12 @@ class PipelineDagExecutor:
 # ─── Pipeline 실행 결과 ───
 
 class PipelineResult:
-    """파이프라인 실행 결과를 담는 컨테이너."""
+    """
+    파이프라인 실행 결과를 담는 컨테이너.
+
+    skipped_image_count/skipped_image_files는 annotation에 존재하지만
+    실제 소스 파일이 없어 건너뛴 이미지 정보를 담는다.
+    """
 
     def __init__(
         self,
@@ -442,6 +465,8 @@ class PipelineResult:
         annotation_meta_filename: str | None,
         image_count: int,
         source_dataset_ids: list[str],
+        skipped_image_count: int = 0,
+        skipped_image_files: list[str] | None = None,
     ) -> None:
         self.output_meta = output_meta
         self.output_storage_uri = output_storage_uri
@@ -451,6 +476,8 @@ class PipelineResult:
         self.annotation_meta_filename = annotation_meta_filename
         self.image_count = image_count
         self.source_dataset_ids = source_dataset_ids
+        self.skipped_image_count = skipped_image_count
+        self.skipped_image_files = skipped_image_files or []
 
 
 def load_source_meta_from_storage(

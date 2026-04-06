@@ -194,13 +194,15 @@ def _execute_pipeline(
         db.commit()
 
         logger.info(
-            "파이프라인 실행 완료: execution_id=%s, images=%d, lineage_edges=%d",
-            execution_id, result.image_count, len(result.source_dataset_ids),
+            "파이프라인 실행 완료: execution_id=%s, images=%d, skipped=%d, lineage_edges=%d",
+            execution_id, result.image_count, result.skipped_image_count,
+            len(result.source_dataset_ids),
         )
 
         return {
             "status": "DONE",
             "image_count": result.image_count,
+            "skipped_image_count": result.skipped_image_count,
             "output_storage_uri": result.output_storage_uri,
         }
 
