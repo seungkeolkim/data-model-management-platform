@@ -148,7 +148,11 @@ export default function NodePalette({ onAddNode, taskType }: NodePaletteProps) {
           onClick={() =>
             onAddNode({
               type: 'dataLoad',
+              groupId: null,
+              groupName: '',
+              split: null,
               datasetId: null,
+              version: null,
               datasetLabel: '',
             })
           }

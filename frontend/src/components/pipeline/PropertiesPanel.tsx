@@ -61,11 +61,21 @@ export default function PropertiesPanel() {
           <Tag color="green">Data Load</Tag>
           <Divider style={{ margin: '8px 0' }} />
           <Text type="secondary" style={{ fontSize: 12 }}>
-            데이터셋 선택은 노드에서 직접 수행합니다.
+            데이터셋 · Split · 버전을 노드에서 순서대로 선택합니다.
           </Text>
-          {nodeData.datasetId && (
+          {nodeData.groupName && (
             <div style={{ marginTop: 8 }}>
-              <Text style={{ fontSize: 12 }}>선택된 ID:</Text>
+              <Text style={{ fontSize: 12 }}>그룹: {nodeData.groupName}</Text>
+            </div>
+          )}
+          {nodeData.split && (
+            <div style={{ marginTop: 4 }}>
+              <Text style={{ fontSize: 12 }}>Split: {nodeData.split}</Text>
+            </div>
+          )}
+          {nodeData.datasetId && (
+            <div style={{ marginTop: 4 }}>
+              <Text style={{ fontSize: 12 }}>버전: {nodeData.version}</Text>
               <br />
               <Text code style={{ fontSize: 11 }}>{nodeData.datasetId}</Text>
             </div>

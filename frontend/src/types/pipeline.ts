@@ -78,10 +78,20 @@ export interface PipelineListResponse {
 // 노드 데이터 타입 — React Flow node.data에 저장되는 도메인 데이터
 // =============================================================================
 
-/** DataLoad 노드: DB에서 READY 데이터셋 선택 → source:<dataset_id> 참조 생성 */
+/** DataLoad 노드: 데이터셋 그룹 → Split → 버전 3단계 선택 → source:<dataset_id> 참조 생성 */
 export interface DataLoadNodeData {
   type: 'dataLoad'
+  /** 1단계: 선택된 DatasetGroup ID */
+  groupId: string | null
+  /** 1단계: 그룹명 (표시용) */
+  groupName: string
+  /** 2단계: 선택된 Split */
+  split: string | null
+  /** 3단계: 선택된 Dataset ID (split × version으로 확정된 최종 ID) */
   datasetId: string | null
+  /** 3단계: 선택된 버전 문자열 (표시용) */
+  version: string | null
+  /** 표시용 라벨 */
   datasetLabel: string
   /** 검증 이슈 (validate 후 매핑) */
   validationIssues?: PipelineValidationIssue[]

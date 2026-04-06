@@ -13,7 +13,7 @@ import type {
   PipelineExecutionResponse,
   PipelineListResponse,
 } from '../types/pipeline'
-import type { Manipulator, Dataset } from '../types/dataset'
+import type { Manipulator, Dataset, DatasetGroup, DatasetGroupListResponse } from '../types/dataset'
 
 // =============================================================================
 // Pipeline 실행 관련
@@ -59,4 +59,12 @@ export const datasetsForPipelineApi = {
   /** READY 상태 데이터셋만 조회 (파이프라인 입력 소스용) */
   listReady: () =>
     api.get<Dataset[]>('/datasets', { params: { status: 'READY' } }),
+
+  /** 삭제되지 않은 DatasetGroup 목록 조회 (task_types 필터 가능) */
+  listGroups: (params?: { page?: number; page_size?: number; search?: string }) =>
+    api.get<DatasetGroupListResponse>('/dataset-groups', { params: { ...params, page_size: params?.page_size ?? 200 } }),
+
+  /** DatasetGroup 상세 조회 (하위 datasets 포함) */
+  getGroup: (groupId: string) =>
+    api.get<DatasetGroup>(`/dataset-groups/${groupId}`),
 }
