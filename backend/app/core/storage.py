@@ -101,12 +101,12 @@ class StorageClient(ABC):
         Returns:
             예: "processed/coco_aug/train/v1.0.0"
         """
-        cfg = get_app_config()
+        app_config = get_app_config()
         type_dir = {
-            "RAW": cfg.get("storage", "dir_raw", "raw"),
-            "SOURCE": cfg.get("storage", "dir_source", "source"),
-            "PROCESSED": cfg.get("storage", "dir_processed", "processed"),
-            "FUSION": cfg.get("storage", "dir_fusion", "fusion"),
+            "RAW": app_config.get("storage", "dir_raw", "raw"),
+            "SOURCE": app_config.get("storage", "dir_source", "source"),
+            "PROCESSED": app_config.get("storage", "dir_processed", "processed"),
+            "FUSION": app_config.get("storage", "dir_fusion", "fusion"),
         }.get(dataset_type.upper(), dataset_type.lower())
 
         split_dir = split.lower() if split.upper() != "NONE" else "none"
@@ -114,13 +114,13 @@ class StorageClient(ABC):
 
     def get_images_dir(self, storage_uri: str) -> Path:
         """images/ 서브디렉토리 경로 반환."""
-        cfg = get_app_config()
-        return self.resolve_path(storage_uri) / cfg.images_dirname
+        app_config = get_app_config()
+        return self.resolve_path(storage_uri) / app_config.images_dirname
 
     def get_annotations_dir(self, storage_uri: str) -> Path:
         """annotations/ 디렉토리 경로 반환."""
-        cfg = get_app_config()
-        return self.resolve_path(storage_uri) / cfg.annotations_dirname
+        app_config = get_app_config()
+        return self.resolve_path(storage_uri) / app_config.annotations_dirname
 
     @abstractmethod
     def copy_image_directory(self, source_abs: Path, dest_storage_uri: str) -> int:
@@ -225,13 +225,13 @@ class LocalStorageClient(StorageClient):
 
     def copy_image_directory(self, source_abs: Path, dest_storage_uri: str) -> int:
         """이미지 폴더를 {dest_storage_uri}/images/ 로 복사."""
-        cfg = get_app_config()
-        dest = self.resolve_path(dest_storage_uri) / cfg.images_dirname
+        app_config = get_app_config()
+        dest = self.resolve_path(dest_storage_uri) / app_config.images_dirname
         logger.info("copytree 시작 (이미지 폴더)", source=str(source_abs), dest=str(dest))
         shutil.copytree(source_abs, dest)
         image_count = sum(
             1 for p in dest.rglob("*")
-            if p.is_file() and p.suffix.lower() in cfg.allowed_image_extensions
+            if p.is_file() and p.suffix.lower() in app_config.allowed_image_extensions
         )
         logger.info("copytree 완료 (이미지 폴더)", image_count=image_count)
         return image_count
@@ -240,8 +240,8 @@ class LocalStorageClient(StorageClient):
         self, source_abs_paths: list[Path], dest_storage_uri: str
     ) -> list[str]:
         """어노테이션 파일들을 {dest_storage_uri}/annotations/ 로 복사. 원본 파일명 유지."""
-        cfg = get_app_config()
-        dest_dir = self.resolve_path(dest_storage_uri) / cfg.annotations_dirname
+        app_config = get_app_config()
+        dest_dir = self.resolve_path(dest_storage_uri) / app_config.annotations_dirname
         dest_dir.mkdir(parents=True, exist_ok=True)
         logger.info("어노테이션 파일 복사 시작", file_count=len(source_abs_paths), dest=str(dest_dir))
         filenames = []
@@ -255,8 +255,8 @@ class LocalStorageClient(StorageClient):
         self, source_abs_path: Path, dest_storage_uri: str
     ) -> str:
         """어노테이션 메타 파일을 {dest_storage_uri}/annotations/ 로 복사. 원본 파일명 유지."""
-        cfg = get_app_config()
-        dest_dir = self.resolve_path(dest_storage_uri) / cfg.annotations_dirname
+        app_config = get_app_config()
+        dest_dir = self.resolve_path(dest_storage_uri) / app_config.annotations_dirname
         dest_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source_abs_path, dest_dir / source_abs_path.name)
         logger.info("어노테이션 메타 파일 복사 완료", file=source_abs_path.name, dest=str(dest_dir))
@@ -288,10 +288,10 @@ class LocalStorageClient(StorageClient):
 
     def count_images(self, storage_uri: str) -> int:
         """이미지 파일 수 카운트."""
-        cfg = get_app_config()
+        app_config = get_app_config()
         return len(self.list_files(
-            f"{storage_uri}/{cfg.images_dirname}",
-            extensions=cfg.allowed_image_extensions,
+            f"{storage_uri}/{app_config.images_dirname}",
+            extensions=app_config.allowed_image_extensions,
         ))
 
     def validate_structure(self, storage_uri: str) -> dict[str, bool | int]:
@@ -299,16 +299,16 @@ class LocalStorageClient(StorageClient):
         데이터셋 경로 구조 유효성 검사.
         GUI 등록 시 '경로 검증' 버튼에서 호출.
         """
-        cfg = get_app_config()
+        app_config = get_app_config()
         base = self.resolve_path(storage_uri)
-        images_dir = base / cfg.images_dirname
-        annotations_dir = base / cfg.annotations_dirname
+        images_dir = base / app_config.images_dirname
+        annotations_dir = base / app_config.annotations_dirname
 
         image_count = 0
         if images_dir.exists():
             image_count = sum(
                 1 for p in images_dir.rglob("*")
-                if p.is_file() and p.suffix.lower() in cfg.allowed_image_extensions
+                if p.is_file() and p.suffix.lower() in app_config.allowed_image_extensions
             )
 
         annotation_count = 0

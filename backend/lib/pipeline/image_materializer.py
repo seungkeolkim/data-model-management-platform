@@ -72,25 +72,32 @@ class ImageMaterializer:
         return processed_count
 
     def _materialize_single_image(self, image_plan: ImagePlan) -> None:
-        """단일 ImagePlan을 실체화 (복사 또는 변환)."""
+        """
+        단일 ImagePlan을 실체화 (복사 또는 변환).
+
+        등록된 데이터셋의 이미지는 존재한다고 가정하며,
+        존재하지 않으면 복사 시점에 FileNotFoundError를 발생시킨다.
+        """
         src_path = self.storage.resolve_path(image_plan.src_uri)
         dst_path = self.storage.resolve_path(image_plan.dst_uri)
-
-        if not src_path.exists():
-            logger.warning("소스 이미지 없음 (건너뜀): src=%s", src_path)
-            return
 
         # 출력 디렉토리 생성
         dst_path.parent.mkdir(parents=True, exist_ok=True)
 
-        if image_plan.is_copy_only:
-            # 단순 복사
-            shutil.copy2(src_path, dst_path)
-        else:
-            # 이미지 변환 — 현재는 미구현, 복사 후 변환 적용 예정
-            shutil.copy2(src_path, dst_path)
-            for spec in image_plan.specs:
-                self._apply_image_operation(dst_path, spec)
+        try:
+            if image_plan.is_copy_only:
+                shutil.copy2(src_path, dst_path)
+            else:
+                # 이미지 변환 — 현재는 미구현, 복사 후 변환 적용 예정
+                shutil.copy2(src_path, dst_path)
+                for spec in image_plan.specs:
+                    self._apply_image_operation(dst_path, spec)
+        except FileNotFoundError:
+            logger.error(
+                "소스 이미지를 찾을 수 없음: src=%s, dst=%s",
+                src_path, dst_path,
+            )
+            raise
 
     def _apply_image_operation(self, image_path: Path, spec: 'ImageManipulationSpec') -> None:
         """

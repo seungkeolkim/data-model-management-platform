@@ -116,17 +116,25 @@ class PipelineDagExecutor:
                         )
                     input_metas.append(task_results[ref])
 
-            # 다중 입력이면 merge 후 manipulator 적용,
-            # 단일 입력이면 바로 manipulator 적용
-            if len(input_metas) == 1:
-                working_meta = input_metas[0]
+            # 다중 입력 포맷 일치 검증
+            if len(input_metas) > 1:
+                self._validate_input_formats(input_metas, task_config.operator)
+
+            # multi-input manipulator(예: merge_datasets)는 list를 직접 받고,
+            # 그 외 multi-input은 기존 _merge_metas()로 단건 병합 후 전달
+            if self._is_multi_input_manipulator(task_config.operator):
+                result_meta = self._apply_manipulator(
+                    input_metas, task_config.operator, task_config.params,
+                )
+            elif len(input_metas) == 1:
+                result_meta = self._apply_manipulator(
+                    input_metas[0], task_config.operator, task_config.params,
+                )
             else:
                 working_meta = self._merge_metas(input_metas)
-
-            # operator(manipulator) 적용
-            result_meta = self._apply_manipulator(
-                working_meta, task_config.operator, task_config.params,
-            )
+                result_meta = self._apply_manipulator(
+                    working_meta, task_config.operator, task_config.params,
+                )
             task_results[task_name] = result_meta
 
             logger.info(
@@ -222,22 +230,64 @@ class PipelineDagExecutor:
 
     def _apply_manipulator(
         self,
-        meta: DatasetMeta,
+        meta: DatasetMeta | list[DatasetMeta],
         operator_name: str,
         params: dict[str, Any],
     ) -> DatasetMeta:
-        """단일 manipulator(operator)를 DatasetMeta에 적용한다."""
+        """
+        manipulator(operator)를 DatasetMeta에 적용한다.
+
+        multi-input manipulator(accepts_multi_input=True)는 list[DatasetMeta]를 받고,
+        일반 manipulator는 단건 DatasetMeta를 받는다.
+        """
         manipulator_class = MANIPULATOR_REGISTRY.get(operator_name)
         if manipulator_class is None:
             raise ValueError(f"등록되지 않은 manipulator: {operator_name}")
 
         manipulator_instance = manipulator_class()
         result_meta = manipulator_instance.transform_annotation(meta, params)
+
+        # 로깅: list 입력일 경우 총 이미지 수 합산
+        if isinstance(meta, list):
+            input_image_count = sum(m.image_count for m in meta)
+        else:
+            input_image_count = meta.image_count
         logger.info(
             "manipulator 적용 완료: name=%s, input_images=%d, output_images=%d",
-            operator_name, meta.image_count, result_meta.image_count,
+            operator_name, input_image_count, result_meta.image_count,
         )
         return result_meta
+
+    def _is_multi_input_manipulator(self, operator_name: str) -> bool:
+        """
+        해당 operator가 list[DatasetMeta]를 직접 받는 multi-input manipulator인지 확인한다.
+        클래스에 accepts_multi_input = True 속성이 있으면 True.
+        """
+        manipulator_class = MANIPULATOR_REGISTRY.get(operator_name)
+        if manipulator_class is None:
+            return False
+        return getattr(manipulator_class, "accepts_multi_input", False)
+
+    def _validate_input_formats(
+        self,
+        input_metas: list[DatasetMeta],
+        operator_name: str,
+    ) -> None:
+        """
+        multi-input 태스크의 모든 입력이 동일 annotation_format인지 검증한다.
+
+        annotation_format이 불일치하면 DAG 실행 전에 빠르게 실패시킨다.
+        (DB 관점의 SQL parser처럼 실행 전 type mismatch를 감지)
+        """
+        formats = {meta.annotation_format.upper() for meta in input_metas}
+        if len(formats) > 1:
+            detail = [
+                (meta.dataset_id, meta.annotation_format) for meta in input_metas
+            ]
+            raise ValueError(
+                f"포맷 불일치: operator='{operator_name}'의 입력들이 "
+                f"서로 다른 annotation_format을 가지고 있습니다: {detail}"
+            )
 
     def _merge_metas(self, metas: list[DatasetMeta]) -> DatasetMeta:
         """
@@ -311,21 +361,32 @@ class PipelineDagExecutor:
         """
         output_meta의 image_records로부터 이미지 실체화 계획을 생성.
 
-        각 이미지가 어느 소스에서 왔는지 file_name 기반으로 탐색한다.
+        소스 이미지 경로 결정 방식:
+          1. record.extra에 source_storage_uri + original_file_name이 있으면 (merge 경로)
+             → 원본 파일명으로 소스 경로를 직접 구성
+          2. 없으면 (단일 소스 경로)
+             → source_storage_uris의 첫 번째 URI를 사용
+
+        storage.exists() 호출 없음 — 등록된 데이터는 존재한다고 가정.
+        파일이 실제로 없으면 ImageMaterializer에서 복사 시점에 에러 발생.
         """
         plans: list[ImagePlan] = []
 
         for record in output_meta.image_records:
-            src_uri: str | None = None
-            for source_uri in source_storage_uris:
-                candidate = f"{source_uri}/{self.images_dirname}/{record.file_name}"
-                if self.storage.exists(candidate):
-                    src_uri = candidate
-                    break
+            source_uri = record.extra.get("source_storage_uri")
+            original_file_name = record.extra.get("original_file_name")
 
-            if src_uri is None:
+            if source_uri and original_file_name:
+                # merge 경로: 원본 파일명으로 소스를 찾고, 현재 file_name(prefix 적용된)으로 출력
+                src_uri = f"{source_uri}/{self.images_dirname}/{original_file_name}"
+            elif source_storage_uris:
+                # 비-merge 경로: 첫 번째 소스 URI 사용 (단일 소스 전제)
+                src_uri = (
+                    f"{source_storage_uris[0]}/{self.images_dirname}/{record.file_name}"
+                )
+            else:
                 logger.warning(
-                    "소스 이미지를 찾을 수 없음 (건너뜀): file_name=%s",
+                    "소스 경로를 결정할 수 없음 (건너뜀): file_name=%s",
                     record.file_name,
                 )
                 continue

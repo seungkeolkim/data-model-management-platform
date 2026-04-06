@@ -349,18 +349,18 @@ class DatasetGroupService:
         docker-compose에서 LOCAL_UPLOAD_BASE만 마운트하므로 별도 경로 제한 불필요.
         expect_dir=True이면 디렉토리, False이면 파일이어야 함.
         """
-        p = Path(path_str)
+        validated_path = Path(path_str)
 
-        if not p.exists():
+        if not validated_path.exists():
             raise ValueError(f"경로가 존재하지 않습니다: {path_str}")
 
-        if expect_dir and not p.is_dir():
+        if expect_dir and not validated_path.is_dir():
             raise ValueError(f"디렉토리가 아닙니다: {path_str}")
 
-        if not expect_dir and not p.is_file():
+        if not expect_dir and not validated_path.is_file():
             raise ValueError(f"파일이 아닙니다: {path_str}")
 
-        return p
+        return validated_path
 
     # -------------------------------------------------------------------------
     # 포맷 검증

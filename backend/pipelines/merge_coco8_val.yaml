@@ -1,0 +1,20 @@
+pipeline:
+  name: "merged_coco8_val"
+  description: "coco8 VAL + coco8_v2 VAL → YOLO→COCO 변환 후 병합"
+  output:
+    dataset_type: PROCESSED
+    annotation_format: COCO
+    split: VAL
+  tasks:
+    convert_coco8:
+      operator: format_convert_to_coco
+      inputs: ["source:2b229b5f-e5c6-4f8f-bbba-efa3eb833f22"]
+      params: {}
+    convert_coco8_v2:
+      operator: format_convert_to_coco
+      inputs: ["source:bd6794a4-d23b-4eac-bad8-4bbd5a8d3573"]
+      params: {}
+    merge:
+      operator: merge_datasets
+      inputs: ["convert_coco8", "convert_coco8_v2"]
+      params: {}
