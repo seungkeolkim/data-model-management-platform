@@ -157,7 +157,10 @@ class StorageClient(ABC):
         self, source_abs_path: Path, dest_storage_uri: str
     ) -> str:
         """
-        어노테이션 메타 파일(예: data.yaml)을 관리 스토리지의 annotations/ 하위로 복사.
+        어노테이션 메타 파일(예: data.yaml)을 데이터셋 루트 디렉토리로 복사.
+
+        annotations/ 안에 넣으면 ls | wc 등으로 라벨 파일 수를 셀 때 오차가 발생하므로,
+        images/, annotations/와 같은 레벨인 데이터셋 루트에 배치한다.
 
         Args:
             source_abs_path: 원본 메타 파일 절대경로
@@ -254,12 +257,11 @@ class LocalStorageClient(StorageClient):
     def copy_annotation_meta_file(
         self, source_abs_path: Path, dest_storage_uri: str
     ) -> str:
-        """어노테이션 메타 파일을 {dest_storage_uri}/annotations/ 로 복사. 원본 파일명 유지."""
-        app_config = get_app_config()
-        dest_dir = self.resolve_path(dest_storage_uri) / app_config.annotations_dirname
+        """어노테이션 메타 파일을 데이터셋 루트({dest_storage_uri}/)로 복사. 원본 파일명 유지."""
+        dest_dir = self.resolve_path(dest_storage_uri)
         dest_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source_abs_path, dest_dir / source_abs_path.name)
-        logger.info("어노테이션 메타 파일 복사 완료", file=source_abs_path.name, dest=str(dest_dir))
+        logger.info("어노테이션 메타 파일 복사 완료 (데이터셋 루트)", file=source_abs_path.name, dest=str(dest_dir))
         return source_abs_path.name
 
     def delete_dataset_directory(self, storage_uri: str) -> bool:

@@ -226,10 +226,15 @@ class TestFullRoundTrip:
                         f"좌표 범위 초과: {coord_value}"
                     )
 
-        # 5. classes.txt 검증
-        classes_content = (yolo_output_dir / "classes.txt").read_text().strip().split("\n")
-        assert "person" in classes_content
-        assert "car" in classes_content
+        # 5. data.yaml 검증 — 상위 디렉토리에 별도 생성
+        from lib.pipeline.io.yolo_io import _write_yolo_data_yaml
+        sorted_cats = sorted(yolo_meta.categories, key=lambda c: c["id"])
+        _write_yolo_data_yaml(sorted_cats, yolo_output_dir.parent)
+        yaml_path = yolo_output_dir.parent / "data.yaml"
+        assert yaml_path.exists()
+        yaml_content = yaml_path.read_text()
+        assert "person" in yaml_content
+        assert "car" in yaml_content
 
     def test_yolo_to_coco_full_roundtrip(
         self, sample_yolo_dir: tuple[Path, list[str]], tmp_path: Path,
@@ -296,7 +301,11 @@ class TestFullRoundTrip:
         yolo_dir = tmp_path / "yolo"
         write_yolo_dir(yolo_meta, yolo_dir)
 
-        # YOLO 파일 재파싱
+        # YOLO 파일 재파싱 (data.yaml을 상위 디렉토리에 생성하여 클래스명 유지)
+        from lib.pipeline.io.yolo_io import _write_yolo_data_yaml
+        sorted_cats = sorted(yolo_meta.categories, key=lambda c: c["id"])
+        _write_yolo_data_yaml(sorted_cats, yolo_dir.parent)
+
         image_sizes = {
             "image_001": (IMAGE_1_WIDTH, IMAGE_1_HEIGHT),
             "image_002": (IMAGE_2_WIDTH, IMAGE_2_HEIGHT),

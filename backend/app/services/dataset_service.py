@@ -695,7 +695,7 @@ class DatasetGroupService:
         기존 데이터셋의 어노테이션 메타 파일을 교체한다.
 
         1. 업로드 경로의 파일을 검증
-        2. 관리 스토리지의 annotations/ 하위로 복사 (기존 파일 덮어쓰기)
+        2. 데이터셋 루트 디렉토리로 복사 (기존 파일 덮어쓰기)
         3. DB의 annotation_meta_file 컬럼 업데이트
 
         Args:
@@ -751,12 +751,12 @@ class DatasetGroupService:
     def _resolve_annotation_meta_absolute_path(self, dataset: Dataset) -> str | None:
         """
         Dataset의 annotation_meta_file이 있으면 절대 경로로 변환.
-        파일이 존재하지 않으면 None을 반환한다.
+        메타 파일은 데이터셋 루트에 위치한다.
         """
         if not dataset.annotation_meta_file:
             return None
         base_path = Path(settings.local_storage_base) / dataset.storage_uri
-        meta_path = base_path / app_config.annotations_dirname / dataset.annotation_meta_file
+        meta_path = base_path / dataset.annotation_meta_file
         if not meta_path.exists():
             logger.warning(
                 "어노테이션 메타 파일이 존재하지 않음",

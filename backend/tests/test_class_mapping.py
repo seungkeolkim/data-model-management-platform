@@ -363,15 +363,17 @@ class TestFormatConvertWithClassMapping:
 
         # YOLO 파일 검증: class_id가 0-based sequential인지 확인
         for txt_file in yolo_dir.glob("*.txt"):
-            if txt_file.name == "classes.txt":
-                continue
             for line in txt_file.read_text().strip().split("\n"):
                 if not line.strip():
                     continue
                 class_id = int(line.split()[0])
                 assert class_id in {0, 1, 2}, f"비표준 YOLO class_id 발견: {class_id}"
 
-        # 4. YOLO 재파싱
+        # 4. YOLO 재파싱 (data.yaml을 상위 디렉토리에 생성하여 클래스명 유지)
+        from lib.pipeline.io.yolo_io import _write_yolo_data_yaml
+        sorted_cats = sorted(yolo_meta.categories, key=lambda c: c["id"])
+        _write_yolo_data_yaml(sorted_cats, yolo_dir.parent)
+
         from app.pipeline.io.yolo_io import parse_yolo_dir
         image_sizes = {
             "img_001": (IMAGE_1_WIDTH, IMAGE_1_HEIGHT),

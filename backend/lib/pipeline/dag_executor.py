@@ -231,15 +231,16 @@ class PipelineDagExecutor:
         # annotation 파일 작성 (스킵된 이미지가 제거된 output_meta 기반)
         annotation_filenames = self._write_annotations(output_meta, output_storage_uri)
 
-        # meta file (yaml) 생성 — YOLO 출력인 경우
+        # data.yaml 생성 — YOLO 출력인 경우, 데이터셋 루트에 배치
+        # (annotations/ 안에 넣으면 ls | wc 등으로 라벨 파일 수를 셀 때 오차 발생)
         annotation_meta_filename: str | None = None
         if output_format.upper() == "YOLO":
-            annotations_dir = self.storage.get_annotations_dir(output_storage_uri)
+            output_root_dir = self.storage.resolve_path(output_storage_uri)
             from lib.pipeline.io.yolo_io import _write_yolo_data_yaml
             sorted_categories = sorted(output_meta.categories, key=lambda c: c["id"])
-            _write_yolo_data_yaml(sorted_categories, annotations_dir)
+            _write_yolo_data_yaml(sorted_categories, output_root_dir)
             annotation_meta_filename = "data.yaml"
-            logger.info("YOLO data.yaml 생성 완료")
+            logger.info("YOLO data.yaml 생성 완료 (데이터셋 루트)")
 
         logger.info(
             "파이프라인 실행 완료: output_uri=%s, images=%d, skipped=%d, annotations=%d",
@@ -657,7 +658,10 @@ def load_source_meta_from_storage(
     elif format_upper == "YOLO":
         yaml_path = None
         if annotation_meta_file:
-            yaml_path = annotations_dir / annotation_meta_file
+            dataset_root = storage.resolve_path(storage_uri)
+            yaml_path = dataset_root / annotation_meta_file
+            if not yaml_path.exists():
+                yaml_path = None
 
         image_sizes: dict[str, tuple[int, int]] = {}
         if images_dir.exists():

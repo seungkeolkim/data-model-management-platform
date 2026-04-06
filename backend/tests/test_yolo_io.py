@@ -191,26 +191,16 @@ class TestWriteYolo:
         assert abs(float(parts[3]) - PERSON_YOLO[2]) < _COORD_TOLERANCE
         assert abs(float(parts[4]) - PERSON_YOLO[3]) < _COORD_TOLERANCE
 
-    def test_write_classes_txt(
+    def test_write_no_classes_txt_or_data_yaml(
         self, tmp_path: Path, sample_dataset_meta_coco: DatasetMeta
     ):
-        """classes.txt가 올바르게 생성되는지 확인."""
+        """write_yolo_dir은 라벨 .txt만 생성하고 classes.txt/data.yaml은 생성하지 않는다."""
         output_dir = tmp_path / "output"
         write_yolo_dir(sample_dataset_meta_coco, output_dir)
 
-        classes_path = output_dir / "classes.txt"
-        assert classes_path.exists()
-        class_names = classes_path.read_text().strip().split("\n")
-        assert class_names == ["person", "car"]
-
-    def test_write_no_classes_txt(
-        self, tmp_path: Path, sample_dataset_meta_coco: DatasetMeta
-    ):
-        """write_classes_txt=False면 classes.txt가 생성되지 않는지 확인."""
-        output_dir = tmp_path / "output"
-        write_yolo_dir(sample_dataset_meta_coco, output_dir, write_classes_txt=False)
-
+        # 라벨 파일만 존재해야 함
         assert not (output_dir / "classes.txt").exists()
+        assert not (output_dir / "data.yaml").exists()
 
     def test_write_five_fields_per_line(
         self, tmp_path: Path, sample_dataset_meta_coco: DatasetMeta
@@ -345,6 +335,11 @@ class TestYoloRoundTrip:
         output_dir = tmp_path / "roundtrip_output"
         write_yolo_dir(original_meta, output_dir)
 
-        # classes.txt에서 자동 로드
+        # data.yaml을 상위 디렉토리(데이터셋 루트)에 생성하여 재파싱 시 클래스명 유지
+        from lib.pipeline.io.yolo_io import _write_yolo_data_yaml
+        sorted_categories = sorted(original_meta.categories, key=lambda c: c["id"])
+        _write_yolo_data_yaml(sorted_categories, output_dir.parent)
+
+        # 상위 디렉토리 yaml 자동 탐색으로 클래스명 로드
         reparsed_meta = parse_yolo_dir(output_dir, image_sizes=image_sizes)
         assert reparsed_meta.category_names == original_meta.category_names

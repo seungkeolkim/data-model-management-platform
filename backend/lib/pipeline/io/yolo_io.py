@@ -374,20 +374,17 @@ def parse_yolo_dir(
 def write_yolo_dir(
     meta: DatasetMeta,
     output_dir: Path,
-    write_classes_txt: bool = True,
-    write_data_yaml: bool = True,
 ) -> Path:
     """
-    DatasetMeta를 YOLO txt 파일들로 출력한다.
+    DatasetMeta를 YOLO txt 라벨 파일들로 출력한다.
 
     좌표 변환: COCO absolute [x, y, w, h] → YOLO normalized center.
-    이미지별 .txt 파일과 선택적으로 classes.txt, data.yaml을 생성한다.
+    이미지별 .txt 파일만 생성한다.
+    data.yaml은 상위 디렉토리(데이터셋 루트)에 별도로 생성해야 한다.
 
     Args:
         meta: 출력할 DatasetMeta
-        output_dir: 출력 디렉토리 경로
-        write_classes_txt: True면 classes.txt도 생성 (기본값: True)
-        write_data_yaml: True면 data.yaml도 생성 (기본값: True)
+        output_dir: 출력 디렉토리 경로 (annotations/)
 
     Returns:
         output_dir (동일 경로 반환)
@@ -443,17 +440,6 @@ def write_yolo_dir(
             file_handle.write("\n".join(lines))
             if lines:
                 file_handle.write("\n")
-
-    # classes.txt 생성 (category id 순서대로 이름 나열)
-    if write_classes_txt and meta.categories:
-        classes_txt_path = output_dir / "classes.txt"
-        with open(classes_txt_path, "w", encoding="utf-8") as file_handle:
-            for category in sorted_categories:
-                file_handle.write(f"{category['name']}\n")
-
-    # data.yaml 생성 (YOLO 표준 메타 파일)
-    if write_data_yaml and meta.categories:
-        _write_yolo_data_yaml(sorted_categories, output_dir)
 
     return output_dir
 
