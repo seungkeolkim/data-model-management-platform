@@ -19,6 +19,10 @@ from app.models.all_models import (
 )
 from app.schemas.pipeline import PipelineSubmitResponse
 from lib.pipeline.config import PipelineConfig
+from lib.pipeline.pipeline_validator import (
+    PipelineValidationResult,
+    validate_pipeline_config_static,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -29,6 +33,136 @@ class PipelineService:
     def __init__(self, db: AsyncSession):
         self.db = db
         self.storage = get_storage_client()
+
+    # -------------------------------------------------------------------------
+    # 파이프라인 검증
+    # -------------------------------------------------------------------------
+
+    async def validate_pipeline(self, config: PipelineConfig) -> PipelineValidationResult:
+        """
+        파이프라인 설정을 실행 전에 종합 검증한다.
+
+        정적 검증(lib/ 레이어)과 DB 의존 검증을 모두 수행하여
+        하나의 PipelineValidationResult로 통합 반환한다.
+        Web UI에서 실행 전 검증 단계에서 호출한다.
+
+        Args:
+            config: 검증할 파이프라인 설정
+
+        Returns:
+            PipelineValidationResult — is_valid와 개별 issues 목록
+        """
+        # 1단계: 정적 검증 (DB 불필요)
+        result = validate_pipeline_config_static(config)
+
+        # 2단계: DB 의존 검증
+        database_result = await self._validate_with_database(config)
+        result.merge(database_result)
+
+        if result.is_valid:
+            logger.info("파이프라인 검증 통과", name=config.name)
+        else:
+            logger.warning(
+                "파이프라인 검증 실패",
+                name=config.name,
+                error_count=result.error_count,
+                warning_count=result.warning_count,
+            )
+
+        return result
+
+    async def _validate_with_database(
+        self, config: PipelineConfig
+    ) -> PipelineValidationResult:
+        """
+        DB 조회가 필요한 검증을 수행한다.
+
+        검증 항목:
+          1. source dataset_id가 DB에 존재하는지
+          2. source dataset의 상태가 READY인지
+          3. source dataset에 annotation 파일이 등록되어 있는지
+        """
+        result = PipelineValidationResult()
+
+        # 모든 source dataset_id 수집 (태스크별로 추적하여 field 정보 제공)
+        for task_name, task_config in config.tasks.items():
+            for source_dataset_id in task_config.get_source_dataset_ids():
+                await self._validate_source_dataset(
+                    source_dataset_id, task_name, result,
+                )
+
+        return result
+
+    async def _validate_source_dataset(
+        self,
+        dataset_id: str,
+        task_name: str,
+        result: PipelineValidationResult,
+    ) -> None:
+        """
+        단일 source dataset_id에 대한 DB 검증을 수행한다.
+
+        검증 항목:
+          - DB에 존재하는지
+          - 소프트 삭제되지 않았는지
+          - 상태가 READY인지
+          - annotation_files가 비어있지 않은지
+        """
+        # Dataset 조회 (group JOIN으로 삭제 여부도 확인)
+        query_result = await self.db.execute(
+            select(Dataset, DatasetGroup)
+            .join(DatasetGroup, Dataset.group_id == DatasetGroup.id)
+            .where(Dataset.id == dataset_id)
+        )
+        row = query_result.first()
+
+        if row is None:
+            result.add_error(
+                code="SOURCE_DATASET_NOT_FOUND",
+                message=(
+                    f"태스크 '{task_name}'의 소스 데이터셋 '{dataset_id}'이(가) "
+                    f"DB에 존재하지 않습니다."
+                ),
+                issue_field=f"tasks.{task_name}.inputs",
+            )
+            return
+
+        dataset, dataset_group = row.tuple()
+
+        # 소프트 삭제 확인
+        if dataset_group.deleted_at is not None:
+            result.add_error(
+                code="SOURCE_DATASET_GROUP_DELETED",
+                message=(
+                    f"태스크 '{task_name}'의 소스 데이터셋 '{dataset_id}'이(가) 속한 "
+                    f"그룹 '{dataset_group.name}'이(가) 삭제되었습니다."
+                ),
+                issue_field=f"tasks.{task_name}.inputs",
+            )
+            return
+
+        # 상태 확인 (READY만 허용)
+        if dataset.status != "READY":
+            result.add_error(
+                code="SOURCE_DATASET_NOT_READY",
+                message=(
+                    f"태스크 '{task_name}'의 소스 데이터셋 '{dataset_id}'의 "
+                    f"상태가 '{dataset.status}'입니다. "
+                    f"READY 상태의 데이터셋만 파이프라인 입력으로 사용할 수 있습니다."
+                ),
+                issue_field=f"tasks.{task_name}.inputs",
+            )
+
+        # annotation_files 존재 확인
+        if not dataset.annotation_files:
+            result.add_warning(
+                code="SOURCE_DATASET_NO_ANNOTATIONS",
+                message=(
+                    f"태스크 '{task_name}'의 소스 데이터셋 '{dataset_id}'에 "
+                    f"annotation 파일이 등록되어 있지 않습니다."
+                ),
+                issue_field=f"tasks.{task_name}.inputs",
+            )
 
     # -------------------------------------------------------------------------
     # 파이프라인 제출

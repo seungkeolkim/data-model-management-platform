@@ -14,10 +14,45 @@ from app.schemas.pipeline import (
     PipelineExecutionResponse,
     PipelineListResponse,
     PipelineSubmitResponse,
+    PipelineValidationIssueResponse,
+    PipelineValidationResponse,
 )
 from app.services.pipeline_service import PipelineService
 
 router = APIRouter()
+
+
+@router.post("/validate", response_model=PipelineValidationResponse)
+async def validate_pipeline(
+    config: PipelineConfig,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    파이프라인 설정을 실행 전에 검증한다.
+
+    정적 검증(operator 존재, 입력 수, output 유효성)과
+    DB 검증(source dataset 존재/상태)을 모두 수행한다.
+
+    is_valid가 False이면 error 수준의 문제가 있어 실행할 수 없다.
+    issues 배열에 개별 사유가 담긴다.
+    """
+    service = PipelineService(db)
+    validation_result = await service.validate_pipeline(config)
+
+    return PipelineValidationResponse(
+        is_valid=validation_result.is_valid,
+        error_count=validation_result.error_count,
+        warning_count=validation_result.warning_count,
+        issues=[
+            PipelineValidationIssueResponse(
+                severity=issue.severity.value,
+                code=issue.code,
+                message=issue.message,
+                field=issue.field,
+            )
+            for issue in validation_result.issues
+        ],
+    )
 
 
 @router.post("/execute", response_model=PipelineSubmitResponse, status_code=202)
