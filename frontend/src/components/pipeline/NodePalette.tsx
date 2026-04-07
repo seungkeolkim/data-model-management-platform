@@ -31,7 +31,8 @@ const { Text } = Typography
 /** 카테고리별 표시 정보 */
 const CATEGORY_META: Record<string, { label: string; icon: React.ReactNode; color: string }> = {
   FORMAT_CONVERT: { label: '포맷 변환', icon: <SwapOutlined />, color: '#1677ff' },
-  FILTER: { label: '필터', icon: <FilterOutlined />, color: '#eb2f96' },
+  FILTER: { label: 'Annotation 필터', icon: <FilterOutlined />, color: '#eb2f96' },
+  IMAGE_FILTER: { label: 'Image 필터', icon: <FilterOutlined />, color: '#f5222d' },
   SAMPLE: { label: '샘플링', icon: <ScissorOutlined />, color: '#722ed1' },
   REMAP: { label: '리매핑', icon: <RetweetOutlined />, color: '#fa8c16' },
   AUGMENT: { label: '증강', icon: <ThunderboltOutlined />, color: '#13c2c2' },
@@ -95,8 +96,14 @@ export default function NodePalette({ onAddNode, taskType }: NodePaletteProps) {
     paramsSchema: m.params_schema as Record<string, unknown> | null,
   })
 
-  // Collapse 패널 아이템 구성
-  const collapseItems = Object.entries(groupedByCategory).map(([category, items]) => {
+  // Collapse 패널 아이템 구성 — CATEGORY_META 정의 순서대로 정렬
+  const categoryOrder = Object.keys(CATEGORY_META)
+  const sortedCategories = Object.entries(groupedByCategory).sort(([a], [b]) => {
+    const idxA = categoryOrder.indexOf(a)
+    const idxB = categoryOrder.indexOf(b)
+    return (idxA === -1 ? 999 : idxA) - (idxB === -1 ? 999 : idxB)
+  })
+  const collapseItems = sortedCategories.map(([category, items]) => {
     const meta = CATEGORY_META[category] ?? { ...DEFAULT_CATEGORY_META, label: category }
     return {
       key: category,

@@ -61,11 +61,15 @@ def _build_manipulator_seed_record(
 
 MANIPULATORS = [
     # =========================================================================
-    # PER_SOURCE - FILTER
+    # FILTER — Annotation 필터 (이미지는 유지, annotation만 제거)
+    # =========================================================================
+
+    # =========================================================================
+    # IMAGE_FILTER — Image 필터 (이미지 자체를 유지/제거)
     # =========================================================================
     _build_manipulator_seed_record(
         name="filter_keep_by_class",
-        category="FILTER",
+        category="IMAGE_FILTER",
         scope=["PER_SOURCE", "POST_MERGE"],
         task_types=["DETECTION", "SEGMENTATION", "ATTR_CLASSIFICATION"],
         annotation_fmts=["COCO", "YOLO"],
@@ -80,7 +84,7 @@ MANIPULATORS = [
     ),
     _build_manipulator_seed_record(
         name="filter_remove_by_class",
-        category="FILTER",
+        category="IMAGE_FILTER",
         scope=["PER_SOURCE", "POST_MERGE"],
         task_types=["DETECTION", "SEGMENTATION", "ATTR_CLASSIFICATION"],
         annotation_fmts=["COCO", "YOLO"],
@@ -95,7 +99,7 @@ MANIPULATORS = [
     ),
     _build_manipulator_seed_record(
         name="filter_invalid_class_name",
-        category="FILTER",
+        category="IMAGE_FILTER",
         scope=["PER_SOURCE", "POST_MERGE"],
         task_types=["DETECTION", "SEGMENTATION", "ATTR_CLASSIFICATION"],
         annotation_fmts=["COCO", "YOLO"],

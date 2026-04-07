@@ -28,6 +28,7 @@ const { Text } = Typography
 const CATEGORY_STYLE: Record<string, { color: string; icon: React.ReactNode }> = {
   FORMAT_CONVERT: { color: '#1677ff', icon: <SwapOutlined /> },
   FILTER: { color: '#eb2f96', icon: <FilterOutlined /> },
+  IMAGE_FILTER: { color: '#f5222d', icon: <FilterOutlined /> },
   SAMPLE: { color: '#722ed1', icon: <ScissorOutlined /> },
   REMAP: { color: '#fa8c16', icon: <RetweetOutlined /> },
   AUGMENT: { color: '#13c2c2', icon: <ThunderboltOutlined /> },
