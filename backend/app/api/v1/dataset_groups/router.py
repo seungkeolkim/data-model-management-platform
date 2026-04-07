@@ -32,7 +32,7 @@ router = APIRouter()
 # 정적 경로 먼저 등록 (동적 /{group_id} 보다 앞에 위치해야 함)
 # =============================================================================
 
-@router.post("/register", response_model=DatasetGroupResponse, status_code=201)
+@router.post("/register", response_model=DatasetGroupResponse, status_code=202)
 async def register_dataset(
     req: DatasetRegisterRequest,
     db: AsyncSession = Depends(get_db),
@@ -40,9 +40,9 @@ async def register_dataset(
     """
     GUI 방식 데이터셋 등록 (파일 브라우저).
 
-    source_image_dir 과 source_annotation_files 를 지정하면
-    플랫폼이 관리 스토리지로 파일을 복사하고 DB에 등록합니다.
-    버전은 자동 생성되며 원본 파일은 삭제되지 않습니다.
+    DB에 DatasetGroup + Dataset(PROCESSING)을 즉시 생성하고,
+    파일 복사는 Celery worker에서 비동기로 수행합니다.
+    복사 완료 시 READY, 실패 시 ERROR로 상태가 전이됩니다.
     """
     logger.info(
         "데이터셋 등록 요청 수신",
@@ -61,7 +61,7 @@ async def register_dataset(
         raise HTTPException(status_code=400, detail=str(e)) from e
 
     logger.info(
-        "데이터셋 등록 완료",
+        "데이터셋 등록 접수 (파일 복사 진행 중)",
         group_id=group.id,
         group_name=group.name,
         dataset_id=dataset.id,

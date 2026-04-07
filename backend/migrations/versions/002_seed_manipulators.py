@@ -117,14 +117,14 @@ MANIPULATORS = [
     _build_manipulator_seed_record(
         name="filter_final_classes",
         category="FILTER",
-        scope=["POST_MERGE"],
+        scope=["PER_SOURCE", "POST_MERGE"],
         task_types=["DETECTION", "SEGMENTATION"],
         annotation_fmts=["COCO", "YOLO"],
-        description="최종 annotation에 지정한 class만 남기기 (나머지 annotation 제거)",
+        description="지정 class만 남기기 (나머지 class는 annotation에서만 제거)",
         params_schema={
-            "class_names": {
-                "type": "multiselect",
-                "label": "남길 클래스 이름 목록",
+            "keep_class_names": {
+                "type": "textarea",
+                "label": "남길 class 이름 (줄바꿈 구분)",
                 "required": True,
             },
         },
@@ -219,7 +219,7 @@ MANIPULATORS = [
         task_types=["DETECTION"],
         annotation_fmts=["COCO"],
         output_fmt="YOLO",
-        description="COCO → YOLO 포맷 변환 (annotation 파일만 변환, 이미지 무변환)",
+        description="COCO → YOLO 포맷 변환",
         params_schema={},
     ),
     _build_manipulator_seed_record(
@@ -230,13 +230,7 @@ MANIPULATORS = [
         annotation_fmts=["YOLO"],
         output_fmt="COCO",
         description="YOLO → COCO 포맷 변환",
-        params_schema={
-            "category_names": {
-                "type": "textarea",
-                "label": "클래스 이름 목록 (줄바꿈 구분, id 순서대로)",
-                "required": True,
-            },
-        },
+        params_schema={},
     ),
     _build_manipulator_seed_record(
         name="format_convert_visdrone_to_coco",

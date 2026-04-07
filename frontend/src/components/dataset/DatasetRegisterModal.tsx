@@ -6,7 +6,7 @@
  *   Step 1. 이미지 폴더 선택 + 어노테이션 파일 선택 + Split 선택
  *   Step 2. Annotation format 선택 + 그룹 선택(기존 or 신규) → "등록"
  */
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Modal,
   Form,
@@ -136,10 +136,6 @@ function groupAnnotationFilesForDisplay(filePaths: string[]): AnnotationDisplayI
 
 const SPLIT_OPTIONS = ['TRAIN', 'VAL', 'TEST', 'NONE'] as const
 
-/** 등록 API 타임아웃 — .env의 VITE_REGISTER_TIMEOUT_MINUTES에서 읽음 (기본 60분) */
-const REGISTER_TIMEOUT_MINUTES = Number(import.meta.env.VITE_REGISTER_TIMEOUT_MINUTES) || 60
-const REGISTER_TIMEOUT_MS = REGISTER_TIMEOUT_MINUTES * 60 * 1000
-
 // ─── 컴포넌트 ─────────────────────────────────────────────────────────────────
 
 export default function DatasetRegisterModal({ open, onClose, onSuccess, existingGroup }: Props) {
@@ -149,10 +145,6 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
   const [selectedFormat, setSelectedFormat] = useState<AnnotationFormat>('NONE')
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
-  const [elapsedSeconds, setElapsedSeconds] = useState(0)
-  const elapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  /** 등록 중 표시할 복사 대상 경로 (상대경로) */
-  const [submittingDestPath, setSubmittingDestPath] = useState<string>('')
 
   // 파일 선택 상태
   const [imageDir, setImageDir] = useState<string | null>(null)
@@ -176,26 +168,6 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
   const [groupListLoading, setGroupListLoading] = useState(false)
   // 그룹 선택 상태: sentinel이면 신규 생성, group_id면 기존 그룹 선택
   const [selectedGroupOption, setSelectedGroupOption] = useState<string>(NEW_GROUP_SENTINEL)
-
-  // 등록 중 경과 시간 타이머
-  useEffect(() => {
-    if (submitting) {
-      setElapsedSeconds(0)
-      elapsedTimerRef.current = setInterval(() => {
-        setElapsedSeconds(prev => prev + 1)
-      }, 1000)
-    } else {
-      if (elapsedTimerRef.current) {
-        clearInterval(elapsedTimerRef.current)
-        elapsedTimerRef.current = null
-      }
-    }
-    return () => {
-      if (elapsedTimerRef.current) {
-        clearInterval(elapsedTimerRef.current)
-      }
-    }
-  }, [submitting])
 
   // 모달 열릴 때 기존 그룹 목록 fetch
   useEffect(() => {
@@ -254,13 +226,14 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
         }
       }
 
-      // 복사 대상 경로 계산 (안내 메시지용)
+      // 복사 대상 경로 (안내 메시지용)
       const displayGroupName = existingGroup?.name
         ?? resolvedGroupName
         ?? existingGroupList.find(g => g.id === resolvedGroupId)?.name
         ?? '?'
       const splitDir = (values.split as string).toLowerCase()
-      setSubmittingDestPath(`raw/${displayGroupName}/${splitDir}/`)
+      const destPath = `raw/${displayGroupName}/${splitDir}/`
+
       const payload = {
         group_id:                resolvedGroupId,
         group_name:              resolvedGroupName,
@@ -273,8 +246,27 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
         source_annotation_files: annotationFiles,
         source_annotation_meta_file: annotationMetaFile ?? undefined,
       }
-      const res = await datasetGroupsApi.register(payload, REGISTER_TIMEOUT_MS)
+
+      // 백엔드가 즉시 응답 (202) — 파일 복사는 Celery에서 비동기 수행
+      const res = await datasetGroupsApi.register(payload)
       onSuccess(res.data)
+
+      // 안내 모달 표시 후 닫기
+      Modal.info({
+        title: '데이터셋 등록 접수 완료',
+        content: (
+          <div>
+            <p>파일 복사가 진행 중입니다. 완료까지 시간이 걸릴 수 있습니다.</p>
+            <p>데이터셋 목록에서 상태를 확인하세요.</p>
+            <p style={{ marginTop: 8, fontSize: 12, color: '#888' }}>
+              복사 대상: <code>{destPath}</code>
+              <br />
+              <code>ls {destPath}</code> 로 진행 상황을 확인할 수 있습니다.
+            </p>
+          </div>
+        ),
+        okText: '확인',
+      })
       handleClose()
     } catch (err: unknown) {
       const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
@@ -791,29 +783,6 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
 
               {submitError && (
                 <Alert type="error" message={submitError} showIcon style={{ marginBottom: 16 }} />
-              )}
-
-              {submitting && (
-                <Alert
-                  type="info"
-                  showIcon
-                  style={{ marginBottom: 16 }}
-                  message="파일 복사 중입니다. 대용량 데이터의 경우 수 분이 소요될 수 있습니다."
-                  description={
-                    <div style={{ fontSize: 12 }}>
-                      <div>
-                        현재 설정된 타임아웃: {REGISTER_TIMEOUT_MINUTES}분
-                        ({Math.floor(elapsedSeconds / 60)}분 {elapsedSeconds % 60}초 경과)
-                      </div>
-                      <div style={{ marginTop: 4 }}>
-                        복사 대상: <Text code>{submittingDestPath}</Text>
-                      </div>
-                      <div style={{ marginTop: 2 }}>
-                        데이터셋 저장 경로에서 <Text code>ls {submittingDestPath}</Text> 로 진행 상황을 확인할 수 있습니다.
-                      </div>
-                    </div>
-                  }
-                />
               )}
 
               <Space style={{ width: '100%', justifyContent: 'flex-end' }}>

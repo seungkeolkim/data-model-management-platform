@@ -11,7 +11,6 @@ import type {
   PipelineNodeData,
   PipelineValidationResponse,
   PipelineValidationIssue,
-  PipelineExecutionResponse,
 } from '../types/pipeline'
 
 // =============================================================================
@@ -27,7 +26,6 @@ interface PipelineEditorState {
 
   // ── 실행 ──
   executionId: string | null
-  executionStatus: PipelineExecutionResponse | null
 
   // ── UI 상태 ──
   selectedNodeId: string | null
@@ -43,7 +41,6 @@ interface PipelineEditorState {
   applyValidationToNodes: (issues: PipelineValidationIssue[]) => void
   clearValidation: () => void
   setExecutionId: (id: string | null) => void
-  setExecutionStatus: (status: PipelineExecutionResponse | null) => void
   toggleJsonPreview: () => void
   /** 에디터 전체 초기화 */
   reset: () => void
@@ -57,7 +54,6 @@ const initialState = {
   nodeDataMap: {} as Record<string, PipelineNodeData>,
   validationResult: null as PipelineValidationResponse | null,
   executionId: null as string | null,
-  executionStatus: null as PipelineExecutionResponse | null,
   selectedNodeId: null as string | null,
   isJsonPreviewOpen: false,
 }
@@ -168,9 +164,6 @@ export const usePipelineEditorStore = create<PipelineEditorState>((set, get) => 
 
   setExecutionId: (id) =>
     set({ executionId: id }),
-
-  setExecutionStatus: (status) =>
-    set({ executionStatus: status }),
 
   toggleJsonPreview: () =>
     set((state) => ({ isJsonPreviewOpen: !state.isJsonPreviewOpen })),

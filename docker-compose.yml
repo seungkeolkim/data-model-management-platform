@@ -158,7 +158,6 @@ services:
     restart: unless-stopped
     environment:
       VITE_API_BASE_URL: /api/v1
-      VITE_REGISTER_TIMEOUT_MINUTES: ${VITE_REGISTER_TIMEOUT_MINUTES:-60}
       NODE_ENV: development
     volumes:
       - ./frontend:/app

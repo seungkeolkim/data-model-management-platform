@@ -19,6 +19,7 @@ import {
   ThunderboltOutlined,
   ToolOutlined,
 } from '@ant-design/icons'
+import { usePipelineEditorStore } from '@/stores/pipelineEditorStore'
 import type { OperatorNodeData } from '@/types/pipeline'
 
 const { Text } = Typography
@@ -35,24 +36,37 @@ const CATEGORY_STYLE: Record<string, { color: string; icon: React.ReactNode }> =
 
 const DEFAULT_STYLE = { color: '#8c8c8c', icon: <ToolOutlined /> }
 
-function OperatorNodeComponent({ id, data }: NodeProps) {
-  const nodeData = data as unknown as OperatorNodeData
+function OperatorNodeComponent({ id }: NodeProps) {
+  // store 직접 구독 — params 변경이 노드에 실시간 반영됨
+  const nodeData = usePipelineEditorStore(
+    (s) => (s.nodeDataMap[id] as OperatorNodeData) ?? null,
+  )
+
+  if (!nodeData) return null
   const style = CATEGORY_STYLE[nodeData.category] ?? DEFAULT_STYLE
 
   const hasErrors = (nodeData.validationIssues ?? []).some((i) => i.severity === 'error')
   const hasWarnings = (nodeData.validationIssues ?? []).some((i) => i.severity === 'warning')
   const borderColor = hasErrors ? '#ff4d4f' : hasWarnings ? '#faad14' : style.color
 
-  // params 요약 텍스트 (최대 2개 키만 표시)
-  const paramEntries = Object.entries(nodeData.params ?? {})
+  // params 요약: textarea 값은 줄바꿈→쉼표로 축약, 그 외는 key: value 형태
+  const paramEntries = Object.entries(nodeData.params ?? {}).filter(
+    ([, val]) => val !== '' && val !== null && val !== undefined,
+  )
   const paramsSummary =
     paramEntries.length === 0
       ? null
       : paramEntries
           .slice(0, 2)
-          .map(([key, val]) => {
-            const strVal = Array.isArray(val) ? `[${val.length}]` : String(val).slice(0, 20)
-            return `${key}: ${strVal}`
+          .map(([, val]) => {
+            if (typeof val === 'string' && val.includes('\n')) {
+              // textarea 값: 줄바꿈을 쉼표로 합쳐서 표시
+              const items = val.split('\n').map((s) => s.trim()).filter(Boolean)
+              const preview = items.slice(0, 4).join(', ')
+              return items.length > 4 ? `${preview} 외 ${items.length - 4}개` : preview
+            }
+            if (Array.isArray(val)) return `[${val.length}]`
+            return String(val).slice(0, 30)
           })
           .join(', ') + (paramEntries.length > 2 ? ' ...' : '')
 

@@ -189,11 +189,14 @@ class DatasetGroupService:
         1. source_image_dir, source_annotation_files 경로 검증
         2. DatasetGroup 신규 생성 또는 기존 그룹에 추가
         3. 버전 자동 생성
-        4. 관리 스토리지로 파일 복사
-        5. Dataset DB 저장
+        4. Dataset DB 즉시 저장 (status=PROCESSING)
+        5. Celery 태스크로 파일 복사 dispatch
 
         원본 파일은 복사(copy)하며 삭제하지 않음.
+        파일 복사는 Celery worker에서 비동기로 수행된다.
         """
+        from app.tasks.register_tasks import register_dataset as register_dataset_task
+
         # ------------------------------------------------------------------
         # 소스 경로 검증
         # ------------------------------------------------------------------
@@ -276,38 +279,11 @@ class DatasetGroupService:
             )
 
         # ------------------------------------------------------------------
-        # storage_uri 결정 및 파일 복사
+        # storage_uri 결정 + Dataset 즉시 생성 (PROCESSING)
         # ------------------------------------------------------------------
         group_name = group.name
         storage_uri = self.storage.build_dataset_uri("RAW", group_name, req.split, version)
-        dest_abs = Path(settings.local_storage_base) / storage_uri
-        logger.info("파일 복사 시작", storage_uri=storage_uri, dest=str(dest_abs))
 
-        try:
-            image_count = self.storage.copy_image_directory(image_dir, storage_uri)
-            logger.info("이미지 폴더 복사 완료", image_count=image_count)
-            annotation_filenames = self.storage.copy_annotation_files(annotation_paths, storage_uri)
-            logger.info("어노테이션 파일 복사 완료", files=annotation_filenames)
-
-            # 어노테이션 메타 파일 복사 (선택사항)
-            annotation_meta_filename: str | None = None
-            if annotation_meta_path:
-                annotation_meta_filename = self.storage.copy_annotation_meta_file(
-                    annotation_meta_path, storage_uri
-                )
-                logger.info("어노테이션 메타 파일 복사 완료", file=annotation_meta_filename)
-        except Exception as e:
-            logger.error("파일 복사 실패", error=str(e), storage_uri=storage_uri)
-            # 복사 실패 시 부분 생성된 디렉토리 정리
-            if dest_abs.exists():
-                shutil.rmtree(dest_abs, ignore_errors=True)
-                logger.info("부분 생성 디렉토리 정리 완료", path=str(dest_abs))
-            raise ValueError(f"파일 복사 중 오류가 발생했습니다: {e}") from e
-
-        # ------------------------------------------------------------------
-        # Dataset DB 저장
-        # ------------------------------------------------------------------
-        logger.info("Dataset DB 저장 시작", group_id=group.id, split=req.split, version=version)
         dataset = Dataset(
             id=str(uuid.uuid4()),
             group_id=group.id,
@@ -315,27 +291,28 @@ class DatasetGroupService:
             version=version,
             annotation_format=req.annotation_format,
             storage_uri=storage_uri,
-            status="READY",
-            image_count=image_count,
+            status="PROCESSING",
+            image_count=None,
             class_count=None,
-            annotation_files=annotation_filenames,
-            annotation_meta_file=annotation_meta_filename,
+            annotation_files=None,
+            annotation_meta_file=None,
         )
         self.db.add(dataset)
         await self.db.flush()
-        logger.info("Dataset DB 저장 완료", dataset_id=dataset.id)
+        logger.info("Dataset DB 저장 완료 (PROCESSING)", dataset_id=dataset.id)
 
-        # 어노테이션 포맷이 COCO/YOLO이면 클래스 정보 자동 추출 (best-effort)
-        if req.annotation_format.upper() in ("COCO", "YOLO"):
-            try:
-                await self._extract_and_persist_class_info(dataset)
-                logger.info("클래스 정보 자동 추출 완료", dataset_id=dataset.id)
-            except Exception as class_info_error:
-                logger.warning(
-                    "클래스 정보 자동 추출 실패 (등록은 정상 진행)",
-                    dataset_id=dataset.id,
-                    error=str(class_info_error),
-                )
+        # ------------------------------------------------------------------
+        # Celery 태스크 dispatch — 파일 복사는 worker에서 비동기 수행
+        # ------------------------------------------------------------------
+        register_dataset_task.delay(
+            dataset_id=dataset.id,
+            storage_uri=storage_uri,
+            source_image_dir=str(image_dir),
+            source_annotation_files=[str(p) for p in annotation_paths],
+            source_annotation_meta_file=str(annotation_meta_path) if annotation_meta_path else None,
+            annotation_format=req.annotation_format,
+        )
+        logger.info("Celery 파일 복사 태스크 dispatch 완료", dataset_id=dataset.id)
 
         return group, dataset
 

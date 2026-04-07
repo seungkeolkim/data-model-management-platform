@@ -30,7 +30,7 @@ import SaveNode from '@/components/pipeline/nodes/SaveNode'
 import NodePalette from '@/components/pipeline/NodePalette'
 import EditorToolbar from '@/components/pipeline/EditorToolbar'
 import PropertiesPanel from '@/components/pipeline/PropertiesPanel'
-import ExecutionStatusModal from '@/components/pipeline/ExecutionStatusModal'
+import ExecutionSubmittedModal from '@/components/pipeline/ExecutionStatusModal'
 import PipelineJsonPreview from '@/components/pipeline/PipelineJsonPreview'
 
 import { usePipelineEditorStore } from '@/stores/pipelineEditorStore'
@@ -296,7 +296,7 @@ function PipelineEditorContent() {
       </div>
 
       {/* 실행 상태 모달 */}
-      <ExecutionStatusModal />
+      <ExecutionSubmittedModal />
     </div>
   )
 }

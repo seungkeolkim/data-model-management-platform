@@ -9,7 +9,7 @@
  * 새로운 카테고리(UDM 등)가 추가되면 자동으로 팔레트에 나타난다.
  */
 
-import { Typography, Collapse, Button, Spin, Badge } from 'antd'
+import { Typography, Collapse, Button, Spin, Badge, Tooltip } from 'antd'
 import {
   DatabaseOutlined,
   SaveOutlined,
@@ -79,12 +79,18 @@ export default function NodePalette({ onAddNode, taskType }: NodePaletteProps) {
     }
   }
 
+  /** description에서 괄호 부분을 제거한 짧은 라벨을 반환 */
+  const extractShortLabel = (desc: string): string => {
+    const match = desc.match(/^(.+?)\s*\((.+)\)\s*$/)
+    return match ? match[1] : desc
+  }
+
   /** Operator 노드 데이터 생성 */
   const createOperatorNodeData = (m: Manipulator): PipelineNodeData => ({
     type: 'operator',
     operator: m.name,
     category: m.category,
-    label: m.description ?? m.name,
+    label: extractShortLabel(m.description ?? m.name),
     params: {},
     paramsSchema: m.params_schema as Record<string, unknown> | null,
   })
@@ -103,17 +109,33 @@ export default function NodePalette({ onAddNode, taskType }: NodePaletteProps) {
       ),
       children: (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          {items.map((m) => (
-            <Button
-              key={m.name}
-              size="small"
-              block
-              style={{ textAlign: 'left', fontSize: 12 }}
-              onClick={() => onAddNode(createOperatorNodeData(m))}
-            >
-              {m.description ?? m.name}
-            </Button>
-          ))}
+          {items.map((m) => {
+            const desc = m.description ?? m.name
+            // "버튼 텍스트 (도움말)" 패턴이면 괄호 안 내용을 툴팁으로 분리
+            const parenMatch = desc.match(/^(.+?)\s*\((.+)\)\s*$/)
+            const buttonLabel = parenMatch ? parenMatch[1] : desc
+            const tooltipText = parenMatch ? parenMatch[2] : null
+
+            const button = (
+              <Button
+                key={m.name}
+                size="small"
+                block
+                style={{ textAlign: 'left', fontSize: 12 }}
+                onClick={() => onAddNode(createOperatorNodeData(m))}
+              >
+                {buttonLabel}
+              </Button>
+            )
+
+            return tooltipText ? (
+              <Tooltip key={m.name} title={tooltipText} placement="right" mouseEnterDelay={0.3}>
+                {button}
+              </Tooltip>
+            ) : (
+              <span key={m.name}>{button}</span>
+            )
+          })}
         </div>
       ),
     }
