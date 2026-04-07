@@ -218,8 +218,8 @@ class LocalStorageClient(StorageClient):
         self.resolve_path(relative_path).mkdir(parents=True, exist_ok=True)
 
     def get_image_serve_url(self, relative_path: str) -> str:
-        """Nginx /static/* 경로로 매핑."""
-        return f"/static/{relative_path}"
+        """Nginx /static/datasets/* 경로로 매핑."""
+        return f"/static/datasets/{relative_path}"
 
     def get_eda_path(self, dataset_id: str) -> Path:
         path = self._eda_base / dataset_id

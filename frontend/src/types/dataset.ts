@@ -197,3 +197,88 @@ export interface PipelineExecution {
   finished_at: string | null
   created_at: string
 }
+
+// =============================================================================
+// 데이터셋 뷰어
+// =============================================================================
+
+export interface SampleAnnotationItem {
+  category_id: number
+  category_name: string
+  bbox: number[] | null
+  area: number | null
+}
+
+export interface SampleImageItem {
+  image_id: number | string
+  file_name: string
+  width: number | null
+  height: number | null
+  image_url: string
+  annotation_count: number
+  annotations: SampleAnnotationItem[]
+}
+
+export interface SampleListResponse {
+  items: SampleImageItem[]
+  total: number
+  page: number
+  page_size: number
+  categories: Array<{ id: number; name: string }>
+}
+
+// =============================================================================
+// EDA 통계
+// =============================================================================
+
+export interface ClassDistributionItem {
+  category_id: number
+  category_name: string
+  annotation_count: number
+  image_count: number
+}
+
+export interface BboxSizeDistributionItem {
+  range_label: string
+  count: number
+}
+
+export interface EdaStatsResponse {
+  total_images: number
+  total_annotations: number
+  total_classes: number
+  images_without_annotations: number
+  class_distribution: ClassDistributionItem[]
+  bbox_area_distribution: BboxSizeDistributionItem[]
+  image_width_min: number | null
+  image_width_max: number | null
+  image_height_min: number | null
+  image_height_max: number | null
+}
+
+// =============================================================================
+// Lineage 그래프
+// =============================================================================
+
+export interface LineageNode {
+  id: string
+  dataset_id: string
+  group_name: string
+  split: string
+  version: string
+  dataset_type: DatasetType
+  status: DatasetStatus
+  image_count: number | null
+}
+
+export interface LineageEdge {
+  id: string
+  source: string
+  target: string
+  transform_config: Record<string, unknown> | null
+}
+
+export interface LineageGraphResponse {
+  nodes: LineageNode[]
+  edges: LineageEdge[]
+}

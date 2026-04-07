@@ -543,6 +543,14 @@ export default function DatasetDetailPage() {
         rowKey="id"
         pagination={false}
         size="middle"
+        onRow={(record) => ({
+          onClick: () => {
+            if (record.status === 'READY') {
+              navigate(`/datasets/${groupId}/${record.id}`)
+            }
+          },
+          style: { cursor: record.status === 'READY' ? 'pointer' : 'default' },
+        })}
         locale={{
           emptyText: <Text type="secondary">등록된 데이터셋이 없습니다.</Text>,
         }}

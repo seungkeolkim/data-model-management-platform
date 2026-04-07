@@ -634,9 +634,11 @@ class DatasetGroupService:
     # -------------------------------------------------------------------------
 
     async def get_dataset(self, dataset_id: str) -> Dataset | None:
-        """단건 Dataset 조회. 소프트 삭제된 데이터셋은 제외."""
+        """단건 Dataset 조회. 소프트 삭제된 데이터셋은 제외. group 관계도 함께 로드."""
         result = await self.db.execute(
-            select(Dataset).where(Dataset.id == dataset_id, Dataset.deleted_at.is_(None))
+            select(Dataset)
+            .where(Dataset.id == dataset_id, Dataset.deleted_at.is_(None))
+            .options(selectinload(Dataset.group))
         )
         return result.scalar_one_or_none()
 
@@ -823,3 +825,305 @@ class DatasetGroupService:
                 "class_mapping": class_mapping,
             },
         }
+
+    # -------------------------------------------------------------------------
+    # 데이터셋 뷰어: 샘플 인덱스 캐싱 + 샘플 목록 + EDA 통계
+    # -------------------------------------------------------------------------
+
+    SAMPLE_INDEX_FILENAME = "sample_index.json"
+
+    def _load_dataset_meta(self, dataset: Dataset) -> "DatasetMeta | None":
+        """
+        데이터셋의 annotation 파일을 파싱하여 DatasetMeta로 반환.
+        READY 상태이고 annotation_files가 있을 때만 동작.
+        파싱 실패 시 None 반환.
+        """
+        annotation_format = dataset.annotation_format or dataset.group.annotation_format
+        if not annotation_format or annotation_format == "NONE":
+            return None
+        if not dataset.annotation_files:
+            return None
+
+        try:
+            from lib.pipeline.dag_executor import load_source_meta_from_storage
+            return load_source_meta_from_storage(
+                storage=self.storage,
+                storage_uri=dataset.storage_uri,
+                annotation_format=annotation_format,
+                annotation_files=dataset.annotation_files,
+                annotation_meta_file=dataset.annotation_meta_file,
+                dataset_id=dataset.id,
+                skip_image_sizes=True,
+            )
+        except Exception as parse_error:
+            logger.warning(
+                "annotation 파싱 실패",
+                dataset_id=dataset.id,
+                error=str(parse_error),
+            )
+            return None
+
+    def _get_sample_index_path(self, dataset: Dataset) -> Path:
+        """sample_index.json의 절대경로를 반환."""
+        return self.storage.resolve_path(dataset.storage_uri) / self.SAMPLE_INDEX_FILENAME
+
+    def _get_or_create_sample_index(self, dataset: Dataset) -> dict | None:
+        """
+        sample_index.json 캐시를 반환한다.
+        파일이 있으면 읽어서 반환, 없으면 annotation을 파싱하여 생성 후 반환.
+
+        캐시 구조:
+            {
+                "categories": [{"id": 1, "name": "person"}, ...],
+                "images": [
+                    {
+                        "image_id": 1,
+                        "file_name": "000001.jpg",
+                        "width": 640,
+                        "height": 480,
+                        "annotation_count": 3,
+                        "annotations": [
+                            {"category_id": 1, "category_name": "person", "bbox": [...], "area": 1234.5},
+                            ...
+                        ]
+                    },
+                    ...
+                ]
+            }
+
+        READY 데이터셋은 내용이 변하지 않으므로 캐시 무효화가 불필요하다.
+        """
+        index_path = self._get_sample_index_path(dataset)
+
+        # 캐시 파일이 이미 있으면 읽기만 하고 반환
+        if index_path.exists():
+            try:
+                return json.loads(index_path.read_text(encoding="utf-8"))
+            except Exception as read_error:
+                logger.warning(
+                    "sample_index.json 읽기 실패 — 재생성",
+                    dataset_id=dataset.id,
+                    error=str(read_error),
+                )
+
+        # 캐시 없음 → annotation 전체 파싱 후 인덱스 생성
+        meta = self._load_dataset_meta(dataset)
+        if meta is None:
+            return None
+
+        category_id_to_name = {cat["id"]: cat["name"] for cat in meta.categories}
+
+        images = []
+        for record in meta.image_records:
+            annotation_items = []
+            for ann in record.annotations:
+                area = None
+                if ann.bbox and len(ann.bbox) == 4:
+                    area = round(ann.bbox[2] * ann.bbox[3], 1)
+                annotation_items.append({
+                    "category_id": ann.category_id,
+                    "category_name": category_id_to_name.get(
+                        ann.category_id, str(ann.category_id)
+                    ),
+                    "bbox": ann.bbox,
+                    "area": area,
+                })
+
+            images.append({
+                "image_id": record.image_id,
+                "file_name": record.file_name,
+                "width": record.width,
+                "height": record.height,
+                "annotation_count": len(record.annotations),
+                "annotations": annotation_items,
+            })
+
+        sample_index = {
+            "categories": meta.categories,
+            "images": images,
+        }
+
+        # 디스크에 캐시 저장
+        try:
+            index_path.write_text(
+                json.dumps(sample_index, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            logger.info(
+                "sample_index.json 생성 완료",
+                dataset_id=dataset.id,
+                image_count=len(images),
+            )
+        except Exception as write_error:
+            logger.warning(
+                "sample_index.json 저장 실패 — 캐시 없이 계속 진행",
+                dataset_id=dataset.id,
+                error=str(write_error),
+            )
+
+        return sample_index
+
+    def get_sample_list(
+        self,
+        dataset: Dataset,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> dict:
+        """
+        데이터셋의 이미지 + annotation 목록을 페이지네이션하여 반환.
+        sample_index.json 캐시가 있으면 파싱 없이 바로 응답한다.
+        nginx static 서빙 URL을 포함한다.
+        """
+        sample_index = self._get_or_create_sample_index(dataset)
+        if sample_index is None:
+            return {
+                "items": [],
+                "total": 0,
+                "page": page,
+                "page_size": page_size,
+                "categories": [],
+            }
+
+        all_images = sample_index["images"]
+        total = len(all_images)
+
+        # 이미지 서빙 URL base
+        image_url_base = self.storage.get_image_serve_url(
+            f"{dataset.storage_uri}/images"
+        )
+
+        start_index = (page - 1) * page_size
+        end_index = min(start_index + page_size, total)
+        page_images = all_images[start_index:end_index]
+
+        # 각 이미지에 서빙 URL 부여
+        items = []
+        for image_entry in page_images:
+            items.append({
+                **image_entry,
+                "image_url": f"{image_url_base}/{image_entry['file_name']}",
+            })
+
+        return {
+            "items": items,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "categories": sample_index["categories"],
+        }
+
+    def get_eda_stats(self, dataset: Dataset) -> dict:
+        """
+        데이터셋의 annotation을 분석하여 EDA 통계를 반환.
+        sample_index.json 캐시가 있으면 파싱 없이 바로 계산한다.
+        클래스 분포, bbox 크기 분포, 이미지 해상도 범위 등.
+        """
+        sample_index = self._get_or_create_sample_index(dataset)
+        if sample_index is None:
+            return {
+                "total_images": dataset.image_count or 0,
+                "total_annotations": 0,
+                "total_classes": dataset.class_count or 0,
+                "images_without_annotations": 0,
+                "class_distribution": [],
+                "bbox_area_distribution": [],
+            }
+
+        all_images = sample_index["images"]
+        categories = sample_index["categories"]
+        category_id_to_name = {cat["id"]: cat["name"] for cat in categories}
+
+        # 클래스별 통계
+        class_annotation_count: dict[int, int] = {}
+        class_image_set: dict[int, set] = {}
+        total_annotations = 0
+        images_without_annotations = 0
+
+        # 이미지 해상도 범위
+        widths = []
+        heights = []
+
+        # bbox area 수집
+        bbox_areas: list[float] = []
+
+        for image_entry in all_images:
+            if image_entry.get("width") is not None:
+                widths.append(image_entry["width"])
+            if image_entry.get("height") is not None:
+                heights.append(image_entry["height"])
+
+            annotations = image_entry.get("annotations", [])
+            if not annotations:
+                images_without_annotations += 1
+
+            seen_categories_in_image: set[int] = set()
+            for ann in annotations:
+                total_annotations += 1
+                category_id = ann["category_id"]
+                class_annotation_count[category_id] = (
+                    class_annotation_count.get(category_id, 0) + 1
+                )
+                seen_categories_in_image.add(category_id)
+
+                if ann.get("bbox") and len(ann["bbox"]) == 4:
+                    bbox_areas.append(ann["bbox"][2] * ann["bbox"][3])
+
+            for category_id in seen_categories_in_image:
+                if category_id not in class_image_set:
+                    class_image_set[category_id] = set()
+                class_image_set[category_id].add(image_entry["image_id"])
+
+        # 클래스 분포 (annotation 수 내림차순)
+        class_distribution = []
+        for category_id, annotation_count in sorted(
+            class_annotation_count.items(),
+            key=lambda item: item[1],
+            reverse=True,
+        ):
+            class_distribution.append({
+                "category_id": category_id,
+                "category_name": category_id_to_name.get(
+                    category_id, str(category_id)
+                ),
+                "annotation_count": annotation_count,
+                "image_count": len(class_image_set.get(category_id, set())),
+            })
+
+        # bbox 면적 분포 (구간별)
+        bbox_area_distribution = _compute_bbox_area_distribution(bbox_areas)
+
+        return {
+            "total_images": len(all_images),
+            "total_annotations": total_annotations,
+            "total_classes": len(categories),
+            "images_without_annotations": images_without_annotations,
+            "class_distribution": class_distribution,
+            "bbox_area_distribution": bbox_area_distribution,
+            "image_width_min": min(widths) if widths else None,
+            "image_width_max": max(widths) if widths else None,
+            "image_height_min": min(heights) if heights else None,
+            "image_height_max": max(heights) if heights else None,
+        }
+
+
+def _compute_bbox_area_distribution(
+    bbox_areas: list[float],
+) -> list[dict[str, str | int]]:
+    """bbox 면적을 구간별로 분류하여 분포를 반환한다."""
+    if not bbox_areas:
+        return []
+
+    # 고정 구간: 면적 기준
+    bins = [
+        (0, 1024, "Tiny (< 32²)"),
+        (1024, 9216, "Small (32²–96²)"),
+        (9216, 65536, "Medium (96²–256²)"),
+        (65536, 262144, "Large (256²–512²)"),
+        (262144, float("inf"), "XLarge (> 512²)"),
+    ]
+    distribution = []
+    for low, high, label in bins:
+        count = sum(1 for area in bbox_areas if low <= area < high)
+        if count > 0:
+            distribution.append({"range_label": label, "count": count})
+    return distribution

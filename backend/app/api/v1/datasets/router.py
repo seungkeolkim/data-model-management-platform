@@ -7,16 +7,22 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
-from app.models.all_models import Dataset, DatasetGroup
+from app.models.all_models import Dataset, DatasetGroup, DatasetLineage
 from app.schemas.dataset import (
     DatasetMetaFileReplaceRequest,
     DatasetResponse,
     DatasetUpdate,
     DatasetValidateRequest,
+    EdaStatsResponse,
     FormatValidateResponse,
+    LineageGraphResponse,
+    LineageNodeResponse,
+    LineageEdgeResponse,
     MessageResponse,
+    SampleListResponse,
 )
 from app.services.dataset_service import DatasetGroupService
 
@@ -141,3 +147,136 @@ async def delete_dataset(
         version=dataset.version,
     )
     return MessageResponse(message=f"Dataset {dataset.split}/{dataset.version} 삭제 완료")
+
+
+# ─────────────────────────────────────────────────────────────────
+# 데이터셋 뷰어 API
+# ─────────────────────────────────────────────────────────────────
+
+
+@router.get("/{dataset_id}/samples", response_model=SampleListResponse)
+async def get_dataset_samples(
+    dataset_id: str,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    데이터셋 이미지 + annotation 목록 조회 (페이지네이션).
+    이미지 URL은 nginx static 서빙 경로로 반환된다.
+    """
+    svc = DatasetGroupService(db)
+    dataset = await svc.get_dataset(dataset_id)
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    return svc.get_sample_list(dataset, page=page, page_size=page_size)
+
+
+@router.get("/{dataset_id}/eda", response_model=EdaStatsResponse)
+async def get_dataset_eda(
+    dataset_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    데이터셋 EDA 통계 조회.
+    클래스 분포, bbox 크기 분포, 이미지 해상도 범위 등 자동 분석 결과.
+    """
+    svc = DatasetGroupService(db)
+    dataset = await svc.get_dataset(dataset_id)
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    return svc.get_eda_stats(dataset)
+
+
+@router.get("/{dataset_id}/lineage", response_model=LineageGraphResponse)
+async def get_dataset_lineage(
+    dataset_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    데이터셋 lineage 그래프 조회.
+    현재 데이터셋의 upstream(부모) 전체를 재귀적으로 탐색하여
+    React Flow 형식(nodes + edges)으로 반환한다.
+    """
+    # 대상 데이터셋 존재 확인
+    target_result = await db.execute(
+        select(Dataset)
+        .where(Dataset.id == dataset_id, Dataset.deleted_at.is_(None))
+        .options(selectinload(Dataset.group))
+    )
+    target_dataset = target_result.scalar_one_or_none()
+    if not target_dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    # BFS로 upstream lineage 탐색
+    visited_dataset_ids: set[str] = set()
+    queue = [dataset_id]
+    lineage_edges: list[DatasetLineage] = []
+    dataset_map: dict[str, Dataset] = {dataset_id: target_dataset}
+
+    while queue:
+        current_id = queue.pop(0)
+        if current_id in visited_dataset_ids:
+            continue
+        visited_dataset_ids.add(current_id)
+
+        # 이 데이터셋이 child인 lineage 엣지 조회 (= 부모 찾기)
+        edge_result = await db.execute(
+            select(DatasetLineage)
+            .where(DatasetLineage.child_id == current_id)
+            .options(
+                selectinload(DatasetLineage.parent).selectinload(Dataset.group)
+            )
+        )
+        edges = list(edge_result.scalars().all())
+
+        for edge in edges:
+            lineage_edges.append(edge)
+            parent = edge.parent
+            if parent and parent.id not in dataset_map:
+                dataset_map[parent.id] = parent
+                queue.append(parent.id)
+
+    # 또한 이 데이터셋이 parent인 엣지도 조회 (= 자식, downstream 1단계만)
+    downstream_result = await db.execute(
+        select(DatasetLineage)
+        .where(DatasetLineage.parent_id == dataset_id)
+        .options(
+            selectinload(DatasetLineage.child).selectinload(Dataset.group)
+        )
+    )
+    downstream_edges = list(downstream_result.scalars().all())
+    for edge in downstream_edges:
+        lineage_edges.append(edge)
+        child = edge.child
+        if child and child.id not in dataset_map:
+            dataset_map[child.id] = child
+
+    # React Flow 형식으로 변환
+    nodes = []
+    for ds in dataset_map.values():
+        group = ds.group
+        nodes.append(LineageNodeResponse(
+            id=ds.id,
+            dataset_id=ds.id,
+            group_name=group.name if group else "Unknown",
+            split=ds.split,
+            version=ds.version,
+            dataset_type=group.dataset_type if group else "UNKNOWN",
+            status=ds.status,
+            image_count=ds.image_count,
+        ))
+
+    edges = []
+    seen_edge_ids: set[str] = set()
+    for edge in lineage_edges:
+        if edge.id not in seen_edge_ids:
+            seen_edge_ids.add(edge.id)
+            edges.append(LineageEdgeResponse(
+                id=edge.id,
+                source=edge.parent_id,
+                target=edge.child_id,
+                transform_config=edge.transform_config,
+            ))
+
+    return LineageGraphResponse(nodes=nodes, edges=edges)

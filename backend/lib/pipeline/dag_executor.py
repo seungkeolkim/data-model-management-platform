@@ -351,50 +351,36 @@ class PipelineDagExecutor:
         image_id 충돌 방지를 위해 재번호 매김.
         categories는 union (동일 name이면 동일 id 유지).
 
-        COCO 포맷의 경우 원본 비순차 ID를 보존한다.
+        annotation_format에 무관하게 원본 category_id를 최대한 보존한다.
+        동일 이름은 첫 등장 ID로 통일, ID 충돌 시 91번부터 새 ID 할당.
+        YOLO 저장 시 0-based 순차 재매핑은 write_yolo_dir()가 담당한다.
         """
         if not metas:
             raise ValueError("병합할 DatasetMeta가 없습니다.")
 
-        is_coco = metas[0].annotation_format.upper() == "COCO"
-
-        # 카테고리 통합: 이름 → ID 매핑
+        # 카테고리 통합: 이름 → ID 매핑 (원본 ID 보존, 충돌 시 91+)
         merged_categories: list[dict[str, Any]] = []
         category_name_to_id: dict[str, int] = {}
         used_ids: set[int] = set()
 
-        if is_coco:
-            # COCO: 원본 ID 보존 (첫 등장 소스의 ID를 사용)
-            for meta in metas:
-                for category in meta.categories:
-                    if category["name"] not in category_name_to_id:
-                        original_id = category["id"]
-                        if original_id not in used_ids:
-                            assigned_id = original_id
-                        else:
-                            # ID 충돌 → 91번부터 새 ID 할당
-                            assigned_id = 91
-                            while assigned_id in used_ids:
-                                assigned_id += 1
-                        category_name_to_id[category["name"]] = assigned_id
-                        merged_categories.append({
-                            "id": assigned_id,
-                            "name": category["name"],
-                        })
-                        used_ids.add(assigned_id)
-            merged_categories.sort(key=lambda cat: cat["id"])
-        else:
-            # YOLO 등: 0부터 순차 할당
-            next_category_id = 0
-            for meta in metas:
-                for category in meta.categories:
-                    if category["name"] not in category_name_to_id:
-                        category_name_to_id[category["name"]] = next_category_id
-                        merged_categories.append({
-                            "id": next_category_id,
-                            "name": category["name"],
-                        })
-                        next_category_id += 1
+        for meta in metas:
+            for category in meta.categories:
+                if category["name"] not in category_name_to_id:
+                    original_id = category["id"]
+                    if original_id not in used_ids:
+                        assigned_id = original_id
+                    else:
+                        # ID 충돌 → 91번부터 새 ID 할당
+                        assigned_id = 91
+                        while assigned_id in used_ids:
+                            assigned_id += 1
+                    category_name_to_id[category["name"]] = assigned_id
+                    merged_categories.append({
+                        "id": assigned_id,
+                        "name": category["name"],
+                    })
+                    used_ids.add(assigned_id)
+        merged_categories.sort(key=lambda cat: cat["id"])
 
         merged_records: list[ImageRecord] = []
         image_id_counter = 1
@@ -630,6 +616,7 @@ def load_source_meta_from_storage(
     annotation_files: list[str],
     annotation_meta_file: str | None = None,
     dataset_id: str = "",
+    skip_image_sizes: bool = False,
 ) -> DatasetMeta:
     """
     스토리지에 저장된 데이터셋의 annotation을 파싱하여 DatasetMeta로 반환.
@@ -663,8 +650,10 @@ def load_source_meta_from_storage(
             if not yaml_path.exists():
                 yaml_path = None
 
+        # YOLO txt에는 이미지 크기 정보가 없으므로 Pillow로 읽어야 한다.
+        # skip_image_sizes=True면 건너뛴다 (뷰어 등 크기 정보가 필수가 아닌 경우).
         image_sizes: dict[str, tuple[int, int]] = {}
-        if images_dir.exists():
+        if not skip_image_sizes and images_dir.exists():
             try:
                 from PIL import Image
                 for img_path in images_dir.iterdir():

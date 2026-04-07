@@ -14,6 +14,9 @@ import type {
   Dataset,
   FileBrowserListResponse,
   FileBrowserRootsResponse,
+  SampleListResponse,
+  EdaStatsResponse,
+  LineageGraphResponse,
 } from '../types/dataset'
 
 // Dataset Groups
@@ -71,6 +74,15 @@ export const datasetsApi = {
     api.put<Dataset>(`/datasets/${datasetId}/meta-file`, {
       source_annotation_meta_file: sourceMetaFilePath,
     }),
+
+  samples: (datasetId: string, params?: { page?: number; page_size?: number }) =>
+    api.get<SampleListResponse>(`/datasets/${datasetId}/samples`, { params }),
+
+  eda: (datasetId: string) =>
+    api.get<EdaStatsResponse>(`/datasets/${datasetId}/eda`),
+
+  lineage: (datasetId: string) =>
+    api.get<LineageGraphResponse>(`/datasets/${datasetId}/lineage`),
 }
 
 // File Browser

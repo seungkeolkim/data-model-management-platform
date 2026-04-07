@@ -302,3 +302,67 @@ class MessageResponse(BaseModel):
 class ErrorResponse(BaseModel):
     detail: str
     code: str | None = None
+
+
+# =============================================================================
+# 데이터셋 뷰어 스키마
+# =============================================================================
+
+class SampleAnnotationItem(BaseModel):
+    """개별 annotation 정보 (bbox 1개)."""
+    category_id: int
+    category_name: str
+    bbox: list[float] | None = None
+    area: float | None = None
+
+
+class SampleImageItem(BaseModel):
+    """이미지 1장의 요약 정보 + annotation 목록."""
+    image_id: int | str
+    file_name: str
+    width: int | None = None
+    height: int | None = None
+    image_url: str
+    annotation_count: int
+    annotations: list[SampleAnnotationItem] = []
+
+
+class SampleListResponse(BaseModel):
+    """샘플 뷰어용 이미지 목록 응답 (페이지네이션)."""
+    items: list[SampleImageItem]
+    total: int
+    page: int
+    page_size: int
+    categories: list[dict[str, Any]] = []
+
+
+# =============================================================================
+# EDA 통계 스키마
+# =============================================================================
+
+class ClassDistributionItem(BaseModel):
+    """클래스별 annotation 수 + 이미지 수."""
+    category_id: int
+    category_name: str
+    annotation_count: int
+    image_count: int
+
+
+class BboxSizeDistributionItem(BaseModel):
+    """bbox 크기 구간별 분포."""
+    range_label: str
+    count: int
+
+
+class EdaStatsResponse(BaseModel):
+    """EDA 통계 응답."""
+    total_images: int
+    total_annotations: int
+    total_classes: int
+    images_without_annotations: int
+    class_distribution: list[ClassDistributionItem] = []
+    bbox_area_distribution: list[BboxSizeDistributionItem] = []
+    image_width_min: int | None = None
+    image_width_max: int | None = None
+    image_height_min: int | None = None
+    image_height_max: int | None = None

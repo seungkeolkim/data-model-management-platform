@@ -4,6 +4,7 @@ import koKR from 'antd/locale/ko_KR'
 import AppLayout from './components/common/AppLayout'
 import DatasetListPage from './pages/DatasetListPage'
 import DatasetDetailPage from './pages/DatasetDetailPage'
+import DatasetViewerPage from './pages/DatasetViewerPage'
 import PipelineEditorPage from './pages/PipelineEditorPage'
 import PipelineHistoryPage from './pages/PipelineHistoryPage'
 import ManipulatorListPage from './pages/ManipulatorListPage'
@@ -32,6 +33,7 @@ export default function App() {
             <Route index element={<Navigate to="/datasets" replace />} />
             <Route path="datasets" element={<DatasetListPage />} />
             <Route path="datasets/:groupId" element={<DatasetDetailPage />} />
+            <Route path="datasets/:groupId/:datasetId" element={<DatasetViewerPage />} />
 
             {/* Phase 2 — 파이프라인 (데이터 변형) */}
             <Route path="pipelines" element={<PipelineHistoryPage />} />

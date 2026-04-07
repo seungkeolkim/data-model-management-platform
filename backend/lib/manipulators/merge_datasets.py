@@ -238,69 +238,20 @@ def _build_unified_categories(
     """
     카테고리를 이름(name) 기준으로 통합하고, 소스별 category_id 재매핑 테이블을 생성한다.
 
-    COCO 포맷의 경우:
-      - 원본 category_id를 최대한 보존한다 (COCO 공식 비순차 ID 유지).
+    annotation_format에 무관하게 동일한 전략을 적용한다:
+      - 원본 category_id를 최대한 보존한다 (첫 등장 소스의 ID 유지).
       - 동일 이름의 카테고리가 여러 소스에 있으면 첫 등장한 소스의 ID를 사용.
       - 동일 이름인데 다른 ID인 경우 → 첫 등장 ID로 통일 (재매핑 로깅).
-      - 동일 ID인데 다른 이름인 경우 → 충돌하는 쪽에 새 ID 할당.
+      - 동일 ID인데 다른 이름인 경우 → 충돌하는 쪽에 새 ID 할당 (91번부터).
 
-    YOLO 등 순차 포맷의 경우:
-      - 기존대로 0부터 순차 ID 할당.
+    내부 표현에서 category_id는 포맷과 무관한 정수일 뿐이다.
+    YOLO 저장 시 0-based 순차 재매핑은 write_yolo_dir()가 담당한다.
 
     Returns:
         (unified_categories, per_source_remap)
         per_source_remap: {dataset_id: {old_category_id: new_category_id}}
     """
-    annotation_format = metas[0].annotation_format.upper()
-    is_coco_format = annotation_format == "COCO"
-
-    if is_coco_format:
-        return _build_unified_categories_preserve_ids(metas)
-    else:
-        return _build_unified_categories_sequential(metas)
-
-
-def _build_unified_categories_sequential(
-    metas: list[DatasetMeta],
-) -> tuple[list[dict[str, Any]], dict[str, dict[int, int]]]:
-    """
-    카테고리를 0부터 순차 ID로 통합한다 (YOLO 등 순차 ID 포맷용).
-
-    동일 이름 → 같은 새 ID로 통합.
-    결과 categories는 0부터 순차 번호.
-    """
-    category_name_to_new_id: dict[str, int] = {}
-    unified_categories: list[dict[str, Any]] = []
-    next_category_id = 0
-
-    for meta in metas:
-        for category in meta.categories:
-            category_name = category["name"]
-            if category_name not in category_name_to_new_id:
-                category_name_to_new_id[category_name] = next_category_id
-                unified_categories.append({
-                    "id": next_category_id,
-                    "name": category_name,
-                })
-                next_category_id += 1
-
-    per_source_remap: dict[str, dict[int, int]] = {}
-    for meta in metas:
-        remap: dict[int, int] = {}
-        for category in meta.categories:
-            old_id = category["id"]
-            new_id = category_name_to_new_id[category["name"]]
-            remap[old_id] = new_id
-
-            if old_id != new_id:
-                logger.info(
-                    "카테고리 ID 재매핑: dataset=%s, '%s' id %d → %d",
-                    meta.dataset_id, category["name"], old_id, new_id,
-                )
-
-        per_source_remap[meta.dataset_id] = remap
-
-    return unified_categories, per_source_remap
+    return _build_unified_categories_preserve_ids(metas)
 
 
 def _build_unified_categories_preserve_ids(
