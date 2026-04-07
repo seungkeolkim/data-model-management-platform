@@ -269,6 +269,7 @@ export interface LineageNode {
   dataset_type: DatasetType
   status: DatasetStatus
   image_count: number | null
+  pipeline_image_url: string | null
 }
 
 export interface LineageEdge {
@@ -276,6 +277,7 @@ export interface LineageEdge {
   source: string
   target: string
   transform_config: Record<string, unknown> | null
+  pipeline_summary: string | null
 }
 
 export interface LineageGraphResponse {

@@ -252,10 +252,23 @@ async def get_dataset_lineage(
         if child and child.id not in dataset_map:
             dataset_map[child.id] = child
 
+    # pipeline.png 존재 여부 확인을 위한 storage 클라이언트
+    from app.core.storage import get_storage_client
+    storage = get_storage_client()
+
     # React Flow 형식으로 변환
     nodes = []
     for ds in dataset_map.values():
         group = ds.group
+        # pipeline.png가 존재하면 서빙 URL 포함
+        pipeline_image_url = None
+        if ds.storage_uri:
+            png_path = storage.resolve_path(ds.storage_uri) / "pipeline.png"
+            if png_path.exists():
+                pipeline_image_url = storage.get_image_serve_url(
+                    f"{ds.storage_uri}/pipeline.png"
+                )
+
         nodes.append(LineageNodeResponse(
             id=ds.id,
             dataset_id=ds.id,
@@ -265,6 +278,7 @@ async def get_dataset_lineage(
             dataset_type=group.dataset_type if group else "UNKNOWN",
             status=ds.status,
             image_count=ds.image_count,
+            pipeline_image_url=pipeline_image_url,
         ))
 
     edges = []
@@ -272,11 +286,39 @@ async def get_dataset_lineage(
     for edge in lineage_edges:
         if edge.id not in seen_edge_ids:
             seen_edge_ids.add(edge.id)
+
+            # transform_config에서 manipulator 요약 생성
+            pipeline_summary = _build_pipeline_summary(edge.transform_config)
+
             edges.append(LineageEdgeResponse(
                 id=edge.id,
                 source=edge.parent_id,
                 target=edge.child_id,
                 transform_config=edge.transform_config,
+                pipeline_summary=pipeline_summary,
             ))
 
     return LineageGraphResponse(nodes=nodes, edges=edges)
+
+
+def _build_pipeline_summary(transform_config: dict | None) -> str | None:
+    """
+    transform_config(PipelineConfig dict)에서 태스크 목록을 요약 문자열로 반환.
+    예: "format_convert_to_coco → filter_final_classes"
+    파싱 실패 시 None.
+    """
+    if not transform_config:
+        return None
+    try:
+        tasks = transform_config.get("tasks", {})
+        if not tasks:
+            return None
+
+        # topological order가 없으므로, 간단히 operator 이름을 나열
+        operators = [
+            task_conf.get("operator", "?")
+            for task_conf in tasks.values()
+        ]
+        return " → ".join(operators)
+    except Exception:
+        return None

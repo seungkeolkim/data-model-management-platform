@@ -76,21 +76,46 @@ export default function LineageTab({ datasetId }: Props) {
     )
   }
 
+  // 현재 데이터셋 노드의 pipeline.png URL
+  const currentNode = data?.nodes.find(n => n.id === datasetId)
+  const pipelineImageUrl = currentNode?.pipeline_image_url ?? null
+
   return (
-    <div style={{ height: 500, border: '1px solid #f0f0f0', borderRadius: 6 }}>
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        fitView
-        fitViewOptions={{ padding: 0.3 }}
-        nodesDraggable={false}
-        nodesConnectable={false}
-        elementsSelectable={false}
-        proOptions={{ hideAttribution: true }}
-      >
-        <Background />
-        <Controls showInteractive={false} />
-      </ReactFlow>
+    <div>
+      <div style={{ height: 500, border: '1px solid #f0f0f0', borderRadius: 6 }}>
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          fitView
+          fitViewOptions={{ padding: 0.3 }}
+          nodesDraggable={false}
+          nodesConnectable={false}
+          elementsSelectable={false}
+          proOptions={{ hideAttribution: true }}
+        >
+          <Background />
+          <Controls showInteractive={false} />
+        </ReactFlow>
+      </div>
+
+      {/* pipeline.png 폴백 이미지 — 생성 시점에 저장된 DAG 스냅샷 */}
+      {pipelineImageUrl && (
+        <div style={{ marginTop: 16 }}>
+          <Text type="secondary" style={{ fontSize: 12, marginBottom: 8, display: 'block' }}>
+            파이프라인 실행 시점 DAG 스냅샷
+          </Text>
+          <img
+            src={pipelineImageUrl}
+            alt="Pipeline DAG"
+            style={{
+              maxWidth: '100%',
+              border: '1px solid #f0f0f0',
+              borderRadius: 6,
+              background: '#fafafa',
+            }}
+          />
+        </div>
+      )}
     </div>
   )
 }
@@ -224,6 +249,10 @@ function buildFlowGraph(
     source: edge.source,
     target: edge.target,
     animated: edge.target === currentDatasetId,
+    label: edge.pipeline_summary ?? undefined,
+    labelStyle: { fontSize: 10, fill: '#666' },
+    labelBgStyle: { fill: '#fff', fillOpacity: 0.85 },
+    labelBgPadding: [4, 2] as [number, number],
     style: { stroke: '#b0b0b0' },
     markerEnd: { type: MarkerType.ArrowClosed, color: '#b0b0b0' },
   }))

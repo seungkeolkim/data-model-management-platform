@@ -243,6 +243,7 @@ class LineageNodeResponse(BaseModel):
     dataset_type: str
     status: str
     image_count: int | None
+    pipeline_image_url: str | None = None
 
 
 class LineageEdgeResponse(BaseModel):
@@ -251,6 +252,7 @@ class LineageEdgeResponse(BaseModel):
     source: str
     target: str
     transform_config: dict[str, Any] | None
+    pipeline_summary: str | None = None
 
 
 class LineageGraphResponse(BaseModel):
