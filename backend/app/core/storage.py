@@ -14,7 +14,6 @@
     source/...
     processed/...
     fusion/...
-    eda/{dataset_id}/
 """
 from __future__ import annotations
 
@@ -80,11 +79,6 @@ class StorageClient(ABC):
         GUI에서 이미지를 표시하기 위한 URL 반환.
         Nginx static 서빙 URL 형태로 반환.
         """
-        ...
-
-    @abstractmethod
-    def get_eda_path(self, dataset_id: str) -> Path:
-        """EDA 결과 저장 경로 반환."""
         ...
 
     def build_dataset_uri(
@@ -191,9 +185,8 @@ class LocalStorageClient(StorageClient):
     1~2차 단계에서 사용.
     """
 
-    def __init__(self, base_path: str, eda_base_path: str) -> None:
+    def __init__(self, base_path: str) -> None:
         self._base = Path(base_path)
-        self._eda_base = Path(eda_base_path)
 
     def resolve_path(self, relative_path: str) -> Path:
         return self._base / relative_path
@@ -220,11 +213,6 @@ class LocalStorageClient(StorageClient):
     def get_image_serve_url(self, relative_path: str) -> str:
         """Nginx /static/datasets/* 경로로 매핑."""
         return f"/static/datasets/{relative_path}"
-
-    def get_eda_path(self, dataset_id: str) -> Path:
-        path = self._eda_base / dataset_id
-        path.mkdir(parents=True, exist_ok=True)
-        return path
 
     def copy_image_directory(self, source_abs: Path, dest_storage_uri: str) -> int:
         """이미지 폴더를 {dest_storage_uri}/images/ 로 복사."""
@@ -351,9 +339,6 @@ class S3StorageClient(StorageClient):
     def get_image_serve_url(self, relative_path: str) -> str:
         raise NotImplementedError
 
-    def get_eda_path(self, dataset_id: str) -> Path:
-        raise NotImplementedError
-
     def copy_image_directory(self, source_abs: Path, dest_storage_uri: str) -> int:
         raise NotImplementedError
 
@@ -383,7 +368,6 @@ def get_storage_client() -> StorageClient:
     if storage_backend_config.storage_backend == "local":
         return LocalStorageClient(
             base_path=storage_backend_config.local_storage_base,
-            eda_base_path=storage_backend_config.local_eda_base,
         )
     elif storage_backend_config.storage_backend == "s3":
         return S3StorageClient(

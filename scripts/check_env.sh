@@ -93,7 +93,6 @@ if [[ -f "${ENV_FILE}" ]]; then
         "POSTGRES_PORT"
         "STORAGE_BACKEND"
         "LOCAL_STORAGE_BASE"
-        "LOCAL_EDA_BASE"
     )
 
     for var in "${required_vars[@]}"; do
@@ -124,8 +123,6 @@ echo "[ 스토리지 경로 ]"
 
 if [[ -f "${ENV_FILE}" ]]; then
     LOCAL_STORAGE_BASE=$(grep "^LOCAL_STORAGE_BASE=" "${ENV_FILE}" | cut -d'=' -f2 | tr -d '"' | tr -d "'" 2>/dev/null || echo "")
-    LOCAL_EDA_BASE=$(grep "^LOCAL_EDA_BASE=" "${ENV_FILE}" | cut -d'=' -f2 | tr -d '"' | tr -d "'" 2>/dev/null || echo "")
-
     # -------------------------------------------------------------------------
     # LOCAL_STORAGE_BASE 검사
     # 이 값은 docker-compose.yml 볼륨 마운트 소스 경로로 직접 사용됩니다.
@@ -164,19 +161,6 @@ if [[ -f "${ENV_FILE}" ]]; then
         fi
     fi
 
-    # -------------------------------------------------------------------------
-    # LOCAL_EDA_BASE 검사
-    # -------------------------------------------------------------------------
-    if [[ -z "${LOCAL_EDA_BASE}" ]]; then
-        check_fail "LOCAL_EDA_BASE 값이 비어 있음"
-        echo "  예) LOCAL_EDA_BASE=./data/eda"
-    else
-        if [[ -d "${LOCAL_EDA_BASE}" ]]; then
-            check_ok "LOCAL_EDA_BASE 접근 가능: ${LOCAL_EDA_BASE}"
-        else
-            check_warn "LOCAL_EDA_BASE 경로 없음: ${LOCAL_EDA_BASE} (EDA 기능 사용 시 생성 필요)"
-        fi
-    fi
 fi
 
 echo ""

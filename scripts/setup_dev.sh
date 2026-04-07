@@ -154,7 +154,6 @@ else
     echo -e "${YELLOW}>>> .env 파일에서 아래 항목을 확인/수정하세요:${NC}"
     echo "    - POSTGRES_PASSWORD"
     echo "    - LOCAL_STORAGE_BASE  (NAS 마운트 경로)"
-    echo "    - LOCAL_EDA_BASE      (EDA 저장 경로)"
     echo "    - SECRET_KEY"
     echo ""
 fi

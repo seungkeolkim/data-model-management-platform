@@ -16,7 +16,6 @@ cd data-model-management-platform
 cp .env.example .env
 # .env에서 아래 항목 반드시 설정:
 #   LOCAL_STORAGE_BASE  ← 데이터셋 NAS 마운트 경로 (개발: ./data/datasets)
-#   LOCAL_EDA_BASE      ← EDA 저장 경로            (개발: ./data/eda)
 #   POSTGRES_PASSWORD   ← DB 비밀번호
 #   SECRET_KEY          ← 랜덤 시크릿 키
 
@@ -104,7 +103,6 @@ POSTGRES_PORT=5432
 POSTGRES_EXTERNAL_PORT=15432      # ← 호스트에서 DB 접근 시 포트
 
 LOCAL_STORAGE_BASE=/mnt/nas/datasets  # ← NAS 마운트 경로 변경 필수
-LOCAL_EDA_BASE=/mnt/nas/eda
 
 SECRET_KEY=...                  # ← 변경 필수
 ```
@@ -134,10 +132,6 @@ images_dirname = images
 ├── processed/...
 └── fusion/...
 
-{LOCAL_EDA_BASE}/
-└── {dataset_id}/
-    ├── class_distribution.png
-    └── eda_result.json
 ```
 
 데이터셋 등록 시 **`storage_uri`** 는 `LOCAL_STORAGE_BASE` 기준 상대경로로 입력합니다.  
@@ -219,7 +213,7 @@ images_dirname = images
 - **Check Data Validation 버튼** — 팝업으로 경로·파일·COCO 정합성 결과 표시 (COCO 선택 시 annotation 수·클래스 목록 포함)
 - **데이터셋 목록 페이지** — task_types·포맷·Split 태그·이미지 수·상태·등록일 표시, 검색 및 페이지네이션
 - **Split 추가** — 기존 그룹에 TRAIN/VAL/TEST Split 추가 가능
-- **환경변수 분리** — `LOCAL_STORAGE_BASE`, `LOCAL_EDA_BASE` 필수 환경변수화 (하드코딩 제거)
+- **환경변수 분리** — `LOCAL_STORAGE_BASE` 필수 환경변수화 (하드코딩 제거)
 
 ### 주요 설계 결정
 

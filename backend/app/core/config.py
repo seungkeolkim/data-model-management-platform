@@ -53,7 +53,6 @@ class Settings(BaseSettings):
 
     # local 백엔드
     local_storage_base: str = "/mnt/datasets"
-    local_eda_base: str = "/mnt/eda"
     # 사용자 업로드 전용 경로 (docker-compose에서 /mnt/uploads 로 마운트)
     local_upload_base: str = "/mnt/uploads"
 
