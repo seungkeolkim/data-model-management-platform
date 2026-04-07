@@ -143,8 +143,33 @@ def _execute_pipeline(
         # ── 2. PipelineConfig 복원 ──
         config = PipelineConfig(**pipeline_config)
 
-        # ── 3. Executor 생성 + 실행 ──
+        # ── 2-a. pipeline.png 생성 (보험용 스냅샷, 실행 전에 저장) ──
         storage = get_storage_client()
+        try:
+            from lib.pipeline.pipeline_visualizer import render_pipeline_png
+
+            # 소스 데이터셋의 그룹 이름을 조회하여 표시용 매핑 생성
+            source_dataset_names: dict[str, str] = {}
+            for source_id in config.get_all_source_dataset_ids():
+                source_ds = db.query(Dataset).filter_by(id=source_id).one_or_none()
+                if source_ds:
+                    source_group = db.query(DatasetGroup).filter_by(id=source_ds.group_id).one_or_none()
+                    if source_group:
+                        source_dataset_names[source_id] = (
+                            f"{source_group.name}\n{source_ds.split}/{source_ds.version}"
+                        )
+
+            png_output_dir = storage.resolve_path(output_dataset.storage_uri)
+            png_output_dir.mkdir(parents=True, exist_ok=True)
+            render_pipeline_png(
+                pipeline_config=config,
+                output_path=png_output_dir / "pipeline.png",
+                source_dataset_names=source_dataset_names,
+            )
+        except Exception as png_error:
+            logger.warning("pipeline.png 생성 건너뜀: %s", str(png_error))
+
+        # ── 3. Executor 생성 + 실행 ──
         executor = _DbAwareDagExecutor(storage=storage, sync_db_session=db)
 
         # 서비스 레이어에서 사전 생성한 version 추출

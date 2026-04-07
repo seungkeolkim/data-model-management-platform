@@ -19,6 +19,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
     # PostgreSQL 클라이언트 (alembic 등)
     libpq-dev \
+    # Graphviz (파이프라인 DAG 시각화 PNG 생성)
+    graphviz \
     # 빌드 도구
     gcc \
     g++ \
@@ -69,6 +71,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxrender-dev \
     libgomp1 \
     libpq5 \
+    graphviz \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
