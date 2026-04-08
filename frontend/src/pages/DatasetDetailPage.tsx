@@ -544,7 +544,10 @@ export default function DatasetDetailPage() {
         pagination={false}
         size="middle"
         onRow={(record) => ({
-          onClick: () => {
+          onClick: (e: React.MouseEvent) => {
+            // 버튼, 링크, Popover 등 인터랙티브 요소 클릭 시 행 네비게이션 무시
+            const target = e.target as HTMLElement
+            if (target.closest('button, a, .ant-popover, .ant-select, .ant-btn')) return
             if (record.status === 'READY') {
               navigate(`/datasets/${groupId}/${record.id}`)
             }
