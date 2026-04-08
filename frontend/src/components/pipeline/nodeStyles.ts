@@ -8,7 +8,7 @@
 export const CATEGORY_STYLE: Record<string, { color: string; emoji: string; label: string }> = {
   // 필터 계열 — 동일 색상(#eb2f96)
   ANNOTATION_FILTER: { color: '#eb2f96', emoji: '🏷️', label: 'Annotation 필터' },
-  IMAGE_FILTER:      { color: '#f5222d', emoji: '🖼️', label: 'Image 필터' },
+  IMAGE_FILTER:      { color: '#cf1322', emoji: '🖼️', label: 'Image 필터' },
   // 변환
   FORMAT_CONVERT:    { color: '#1677ff', emoji: '🔄', label: '포맷 변환' },
   // 기타 조작

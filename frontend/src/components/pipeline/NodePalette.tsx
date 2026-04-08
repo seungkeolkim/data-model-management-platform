@@ -105,7 +105,7 @@ export default function NodePalette({ onAddNode, taskType }: NodePaletteProps) {
                 key={m.name}
                 size="small"
                 block
-                style={{ textAlign: 'left', fontSize: 12 }}
+                style={{ textAlign: 'left', fontSize: 12, borderColor: meta.color, color: meta.color }}
                 onClick={() => onAddNode(createOperatorNodeData(m))}
               >
                 {getManipulatorEmoji(m.name, category)} {buttonLabel}
