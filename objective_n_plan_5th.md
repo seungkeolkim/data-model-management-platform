@@ -333,18 +333,21 @@ const nodeData = usePipelineEditorStore(
 
 ---
 
-## 6. MANIPULATOR_REGISTRY (현재 7종 구현)
+## 6. MANIPULATOR_REGISTRY (현재 10종 구현)
 
 ### 코드 구현 완료
 
 ```python
 MANIPULATOR_REGISTRY = {
-    "format_convert_to_coco": FormatConvertToCoco,                                           # FORMAT_CONVERT, COCO 출력
-    "format_convert_to_yolo": FormatConvertToYolo,                                           # FORMAT_CONVERT, YOLO 출력
-    "merge_datasets": MergeDatasets,                                                          # MERGE, multi-input
+    "format_convert_to_coco": FormatConvertToCoco,                                           # FORMAT_CONVERT
+    "format_convert_to_yolo": FormatConvertToYolo,                                           # FORMAT_CONVERT
+    "merge_datasets": MergeDatasets,                                                          # MERGE
     "filter_remain_selected_class_names_only_in_annotation": FilterRemainSelectedClassNamesOnlyInAnnotation,  # ANNOTATION_FILTER
     "filter_keep_images_containing_class_name": FilterKeepImagesContainingClassName,          # IMAGE_FILTER
     "filter_remove_images_containing_class_name": FilterRemoveImagesContainingClassName,      # IMAGE_FILTER
+    "remap_class_name": RemapClassName,                                                       # REMAP
+    "rotate_image": RotateImage,                                                              # AUGMENT (이미지 변형)
+    "mask_region_by_class": MaskRegionByClass,                                                # AUGMENT (이미지 변형)
     "sample_n_images": SampleNImages,                                                         # SAMPLE
 }
 ```
@@ -353,10 +356,7 @@ MANIPULATOR_REGISTRY = {
 
 | 이름 | 카테고리 | 상태 |
 |------|----------|------|
-| `remap_class_name` | REMAP | seed만, 코드 미구현 |
-| `rotate_180` | AUGMENT | seed만, 코드 미구현 |
 | `change_compression` | AUGMENT | seed만, 코드 미구현 |
-| `mask_region_by_class` | AUGMENT | seed만, EXPERIMENTAL |
 | `format_convert_visdrone_to_coco` | FORMAT_CONVERT | seed만, 코드 미구현 |
 | `format_convert_visdrone_to_yolo` | FORMAT_CONVERT | seed만, 코드 미구현 |
 | `shuffle_image_ids` | SAMPLE | seed만, 코드 미구현 |
@@ -394,7 +394,7 @@ source/output_name/train/v1.0.0/
 |---|---|---|
 | 네이밍 점검 | `_write_data_yaml` 등 general한 함수명 리네이밍 | 별도 세션 |
 | YOLO yaml path | data.yaml에 이미지 경로 미포함 -> 학습 시 path 주입 필요 | Step 2 (학습 자동화) |
-| ImageManipulationSpec 체인 | spec 누적 로직 구현 | 이미지 변환 manipulator 구현 시 |
+| ~~ImageManipulationSpec 체인~~ | ~~spec 누적 로직 구현~~ | ✅ 완료 (record.extra에 누적, _build_image_plans에서 추출) |
 | S3StorageClient | 3차 K8S 전환 시 구현 | Step 3 |
 | React Flow Lineage 시각화 | DatasetLineage 데이터는 이미 생성됨 | Phase 2-b |
 | EDA 자동화 | `app/tasks/eda_tasks.py` skeleton만 존재 | Phase 2-a |
