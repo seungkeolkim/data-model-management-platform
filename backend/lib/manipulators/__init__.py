@@ -13,6 +13,7 @@ from lib.manipulators.filter_remain_selected_class_names_only_in_annotation impo
 from lib.manipulators.filter_remove_images_containing_class_name import FilterRemoveImagesContainingClassName
 from lib.manipulators.format_convert import FormatConvertToCoco, FormatConvertToYolo
 from lib.manipulators.merge_datasets import MergeDatasets
+from lib.manipulators.sample_n_images import SampleNImages
 
 if TYPE_CHECKING:
     from lib.pipeline.manipulator_base import UnitManipulator
@@ -24,4 +25,5 @@ MANIPULATOR_REGISTRY: dict[str, type[UnitManipulator]] = {
     "filter_remain_selected_class_names_only_in_annotation": FilterRemainSelectedClassNamesOnlyInAnnotation,
     "filter_keep_images_containing_class_name": FilterKeepImagesContainingClassName,
     "filter_remove_images_containing_class_name": FilterRemoveImagesContainingClassName,
+    "sample_n_images": SampleNImages,
 }

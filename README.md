@@ -195,9 +195,9 @@ images_dirname = images
 |-------|------|------|
 | **Phase 0** | 인프라, DB 스키마, `/health` | ✅ 완료 |
 | **Phase 1** | Dataset 등록/관리 GUI | ✅ 완료 |
-| **Phase 2** | Manipulator + Celery 파이프라인 | ⏳ |
-| **Phase 2-a** | EDA 자동화 | ⏳ |
-| **Phase 2-b** | 샘플 뷰어 + Lineage 시각화 | ⏳ |
+| **Phase 2** | Manipulator + Celery 파이프라인 + GUI 에디터 | 🔧 진행 중 (실행엔진/Celery/GUI 에디터/7종 manipulator 완료, 추가 manipulator 미완) |
+| **Phase 2-a** | EDA 자동화 | ✅ 완료 |
+| **Phase 2-b** | 샘플 뷰어 + Lineage 시각화 | ✅ 완료 |
 | **Phase 3** | 학습 실행 자동화 | ⏳ |
 
 ---

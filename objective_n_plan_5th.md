@@ -333,16 +333,19 @@ const nodeData = usePipelineEditorStore(
 
 ---
 
-## 6. MANIPULATOR_REGISTRY (현재 4종)
+## 6. MANIPULATOR_REGISTRY (현재 7종 구현)
 
 ### 코드 구현 완료
 
 ```python
 MANIPULATOR_REGISTRY = {
-    "format_convert_to_coco": FormatConvertToCoco,     # PER_SOURCE, COCO 출력
-    "format_convert_to_yolo": FormatConvertToYolo,     # PER_SOURCE, YOLO 출력
-    "merge_datasets": MergeDatasets,                    # POST_MERGE, multi-input
-    "filter_final_classes": FilterFinalClasses,         # PER_SOURCE/POST_MERGE, annotation 레벨 필터
+    "format_convert_to_coco": FormatConvertToCoco,                                           # FORMAT_CONVERT, COCO 출력
+    "format_convert_to_yolo": FormatConvertToYolo,                                           # FORMAT_CONVERT, YOLO 출력
+    "merge_datasets": MergeDatasets,                                                          # MERGE, multi-input
+    "filter_remain_selected_class_names_only_in_annotation": FilterRemainSelectedClassNamesOnlyInAnnotation,  # ANNOTATION_FILTER
+    "filter_keep_images_containing_class_name": FilterKeepImagesContainingClassName,          # IMAGE_FILTER
+    "filter_remove_images_containing_class_name": FilterRemoveImagesContainingClassName,      # IMAGE_FILTER
+    "sample_n_images": SampleNImages,                                                         # SAMPLE
 }
 ```
 
@@ -350,16 +353,12 @@ MANIPULATOR_REGISTRY = {
 
 | 이름 | 카테고리 | 상태 |
 |------|----------|------|
-| `filter_keep_by_class` | IMAGE_FILTER | seed만, 코드 미구현 |
-| `filter_remove_by_class` | IMAGE_FILTER | seed만, 코드 미구현 |
-| `filter_invalid_class_name` | IMAGE_FILTER | seed만, 코드 미구현 |
 | `remap_class_name` | REMAP | seed만, 코드 미구현 |
 | `rotate_180` | AUGMENT | seed만, 코드 미구현 |
 | `change_compression` | AUGMENT | seed만, 코드 미구현 |
 | `mask_region_by_class` | AUGMENT | seed만, EXPERIMENTAL |
 | `format_convert_visdrone_to_coco` | FORMAT_CONVERT | seed만, 코드 미구현 |
 | `format_convert_visdrone_to_yolo` | FORMAT_CONVERT | seed만, 코드 미구현 |
-| `sample_n_images` | SAMPLE | seed만, 코드 미구현 |
 | `shuffle_image_ids` | SAMPLE | seed만, 코드 미구현 |
 
 ---
