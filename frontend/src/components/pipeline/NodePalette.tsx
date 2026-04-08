@@ -63,15 +63,31 @@ export default function NodePalette({ onAddNode, taskType }: NodePaletteProps) {
     return match ? match[1] : desc
   }
 
+  /** params_schema에 default가 있는 필드를 추출하여 초기 params를 구성 */
+  const buildDefaultParams = (schema: Record<string, unknown> | null): Record<string, unknown> => {
+    if (!schema) return {}
+    const defaults: Record<string, unknown> = {}
+    for (const [key, field] of Object.entries(schema)) {
+      const fieldDef = field as { default?: unknown }
+      if (fieldDef.default !== undefined) {
+        defaults[key] = fieldDef.default
+      }
+    }
+    return defaults
+  }
+
   /** Operator 노드 데이터 생성 */
-  const createOperatorNodeData = (m: Manipulator): PipelineNodeData => ({
-    type: 'operator',
-    operator: m.name,
-    category: m.category,
-    label: extractShortLabel(m.description ?? m.name),
-    params: {},
-    paramsSchema: m.params_schema as Record<string, unknown> | null,
-  })
+  const createOperatorNodeData = (m: Manipulator): PipelineNodeData => {
+    const paramsSchema = m.params_schema as Record<string, unknown> | null
+    return {
+      type: 'operator',
+      operator: m.name,
+      category: m.category,
+      label: extractShortLabel(m.description ?? m.name),
+      params: buildDefaultParams(paramsSchema),
+      paramsSchema,
+    }
+  }
 
   // Collapse 패널 아이템 구성 — CATEGORY_STYLE 정의 순서대로 정렬
   const categoryOrder = Object.keys(CATEGORY_STYLE)

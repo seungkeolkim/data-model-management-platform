@@ -122,7 +122,7 @@ MANIPULATORS = [
         scope=["PER_SOURCE", "POST_MERGE"],
         task_types=["DETECTION", "SEGMENTATION", "ATTR_CLASSIFICATION"],
         annotation_fmts=["COCO", "YOLO"],
-        description="category_id 기준으로 class name 변경 (rename 매핑)",
+        description="class명 변경 (rename 매핑)",
         params_schema={
             "mapping": {
                 "type": "key_value",

@@ -30,26 +30,20 @@ function OperatorNodeComponent({ id }: NodeProps) {
   const hasWarnings = (nodeData.validationIssues ?? []).some((i) => i.severity === 'warning')
   const borderColor = hasErrors ? '#ff4d4f' : hasWarnings ? '#faad14' : style.color
 
-  // params 요약: textarea 값은 줄바꿈→쉼표로 축약, 그 외는 key: value 형태
+  // params 요약 — key_value(object) 타입은 줄바꿈 렌더링, 나머지는 label: value 형태
+  const paramsSchema = (nodeData.paramsSchema ?? {}) as Record<string, { label?: string; type?: string }>
   const paramEntries = Object.entries(nodeData.params ?? {}).filter(
     ([, val]) => val !== '' && val !== null && val !== undefined,
   )
-  const paramsSummary =
-    paramEntries.length === 0
-      ? null
-      : paramEntries
-          .slice(0, 2)
-          .map(([, val]) => {
-            if (typeof val === 'string' && val.includes('\n')) {
-              // textarea 값: 줄바꿈을 쉼표로 합쳐서 표시
-              const items = val.split('\n').map((s) => s.trim()).filter(Boolean)
-              const preview = items.slice(0, 4).join(', ')
-              return items.length > 4 ? `${preview} 외 ${items.length - 4}개` : preview
-            }
-            if (Array.isArray(val)) return `[${val.length}]`
-            return String(val).slice(0, 30)
-          })
-          .join(', ') + (paramEntries.length > 2 ? ' ...' : '')
+
+  // key_value 매핑 항목 추출 (예: mapping: { person: "human", car: "vehicle" })
+  const keyValueEntries = paramEntries.filter(
+    ([, val]) => typeof val === 'object' && val !== null && !Array.isArray(val),
+  )
+  // 그 외 일반 params — label: value 한 줄씩 표시
+  const nonKeyValueEntries = paramEntries.filter(
+    ([, val]) => !(typeof val === 'object' && val !== null && !Array.isArray(val)),
+  )
 
   return (
     <div
@@ -96,11 +90,44 @@ function OperatorNodeComponent({ id }: NodeProps) {
         <Text type="secondary" style={{ fontSize: 11 }}>
           {nodeData.operator}
         </Text>
-        {paramsSummary && (
+        {/* 일반 params: label: value 한 줄씩 */}
+        {nonKeyValueEntries.length > 0 && (
           <div style={{ marginTop: 4 }}>
-            <Text style={{ fontSize: 10, color: '#8c8c8c' }}>{paramsSummary}</Text>
+            {nonKeyValueEntries.map(([paramKey, val]) => {
+              const label = paramsSchema[paramKey]?.label ?? paramKey
+              let displayValue: string
+              if (typeof val === 'string' && val.includes('\n')) {
+                const items = val.split('\n').map((s) => s.trim()).filter(Boolean)
+                const preview = items.slice(0, 4).join(', ')
+                displayValue = items.length > 4 ? `${preview} 외 ${items.length - 4}개` : preview
+              } else if (Array.isArray(val)) {
+                displayValue = `[${val.length}]`
+              } else {
+                displayValue = String(val).slice(0, 30)
+              }
+              return (
+                <div key={paramKey} style={{ fontSize: 10, color: '#8c8c8c', lineHeight: '16px' }}>
+                  {label}: {displayValue}
+                </div>
+              )
+            })}
           </div>
         )}
+
+        {/* key_value 매핑: 한 줄에 하나씩 "old → new" 표시 */}
+        {keyValueEntries.map(([paramKey, val]) => {
+          const entries = Object.entries(val as Record<string, string>)
+          if (entries.length === 0) return null
+          return (
+            <div key={paramKey} style={{ marginTop: 4 }}>
+              {entries.map(([k, v]) => (
+                <div key={k} style={{ fontSize: 10, color: '#8c8c8c', lineHeight: '16px' }}>
+                  {k} → {v}
+                </div>
+              ))}
+            </div>
+          )
+        })}
 
         {/* 검증 이슈 표시 */}
         {(nodeData.validationIssues ?? []).length > 0 && (

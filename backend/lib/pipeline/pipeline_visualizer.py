@@ -91,19 +91,22 @@ def render_pipeline_png(
         # 태스크 노드 (파란 계열)
         for task_name, task_config in pipeline_config.tasks.items():
             label_lines = [task_name, f"({task_config.operator})"]
-            # 주요 파라미터 표시 (최대 3개)
+            # 주요 파라미터 표시
             if task_config.params:
                 param_lines = []
-                for key, value in list(task_config.params.items())[:3]:
-                    value_str = str(value)
-                    if len(value_str) > 25:
-                        value_str = value_str[:22] + "..."
-                    param_lines.append(f"{key}={value_str}")
+                for key, value in task_config.params.items():
+                    if isinstance(value, dict):
+                        # key_value 매핑: "old → new" 형식으로 한 줄씩
+                        for old_name, new_name in value.items():
+                            param_lines.append(f"{old_name} → {new_name}")
+                    else:
+                        value_str = str(value)
+                        if len(value_str) > 25:
+                            value_str = value_str[:22] + "..."
+                        param_lines.append(f"{key}={value_str}")
                 if param_lines:
                     label_lines.append("─" * 16)
                     label_lines.extend(param_lines)
-                if len(task_config.params) > 3:
-                    label_lines.append(f"... +{len(task_config.params) - 3}")
 
             dot.node(
                 f"task_{task_name}",

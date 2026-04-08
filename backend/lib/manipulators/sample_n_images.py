@@ -37,6 +37,8 @@ class SampleNImages(UnitManipulator):
     DB seed name: "sample_n_images"
     """
 
+    REQUIRED_PARAMS = ["n"]
+
     @property
     def name(self) -> str:
         return "sample_n_images"

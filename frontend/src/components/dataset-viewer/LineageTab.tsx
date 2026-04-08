@@ -186,12 +186,19 @@ function buildFlowGraph(
       const operator = taskConf.operator ?? taskName
       const nodeId = `task_${childId}_${taskName}`
 
-      // 주요 파라미터 요약 (최대 2개)
-      const paramEntries = Object.entries(taskConf.params ?? {}).slice(0, 2)
-      const paramLines = paramEntries.map(([key, value]) => {
-        const valueStr = String(value)
-        return `${key}: ${valueStr.length > 20 ? valueStr.slice(0, 17) + '...' : valueStr}`
-      })
+      // 파라미터 요약 — key_value(object)는 "old → new" 형식, 나머지는 "label: value"
+      const paramEntries = Object.entries(taskConf.params ?? {})
+      const paramLines: string[] = []
+      for (const [key, value] of paramEntries) {
+        if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+          for (const [k, v] of Object.entries(value as Record<string, string>)) {
+            paramLines.push(`${k} → ${v}`)
+          }
+        } else {
+          const valueStr = String(value)
+          paramLines.push(`${key}: ${valueStr.length > 20 ? valueStr.slice(0, 17) + '...' : valueStr}`)
+        }
+      }
 
       flowNodes.push({
         id: nodeId,
@@ -204,7 +211,9 @@ function buildFlowGraph(
               <div style={{ fontWeight: 600, color: '#d97706' }}>{operator}</div>
               {paramLines.length > 0 && (
                 <div style={{ color: '#8c8c8c', fontSize: 10, marginTop: 2 }}>
-                  {paramLines.join(', ')}
+                  {paramLines.map((line, idx) => (
+                    <div key={idx}>{line}</div>
+                  ))}
                 </div>
               )}
             </div>

@@ -37,6 +37,8 @@ class FilterRemainSelectedClassNamesOnlyInAnnotation(UnitManipulator):
     DB seed name: "filter_remain_selected_class_names_only_in_annotation"
     """
 
+    REQUIRED_PARAMS = ["keep_class_names"]
+
     @property
     def name(self) -> str:
         return "filter_remain_selected_class_names_only_in_annotation"

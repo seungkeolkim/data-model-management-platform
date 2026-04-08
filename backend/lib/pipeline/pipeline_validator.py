@@ -155,6 +155,9 @@ def validate_pipeline_config_static(config: PipelineConfig) -> PipelineValidatio
     # (6) 단일 입력 전용 operator에 다중 입력 금지
     _validate_single_input_operators(config, result)
 
+    # (7) required params 누락 검사
+    _validate_required_params(config, result)
+
     return result
 
 
@@ -264,6 +267,35 @@ def _validate_merge_minimum_inputs(
                 ),
                 issue_field=f"tasks.{task_name}.inputs",
             )
+
+
+def _validate_required_params(
+    config: PipelineConfig,
+    result: PipelineValidationResult,
+) -> None:
+    """
+    required params가 비어있는 태스크를 경고한다.
+
+    params_schema DB 조회 없이, 각 manipulator 클래스의 REQUIRED_PARAMS를 참조한다.
+    REQUIRED_PARAMS가 정의되지 않은 클래스는 검사를 건너뛴다.
+    """
+    for task_name, task_config in config.tasks.items():
+        manipulator_class = MANIPULATOR_REGISTRY.get(task_config.operator)
+        if manipulator_class is None:
+            continue
+
+        required_param_names: list[str] = getattr(manipulator_class, "REQUIRED_PARAMS", [])
+        for param_name in required_param_names:
+            param_value = task_config.params.get(param_name)
+            # None, 빈 문자열, 빈 dict, 빈 list 모두 누락으로 판단
+            if not param_value:
+                result.add_error(
+                    code="MISSING_REQUIRED_PARAM",
+                    message=(
+                        f"'{param_name}' 설정값이 비어있습니다. 값을 입력해 주세요."
+                    ),
+                    issue_field=f"tasks.{task_name}.params.{param_name}",
+                )
 
 
 def _validate_single_input_operators(

@@ -40,6 +40,8 @@ class FilterKeepImagesContainingClassName(UnitManipulator):
     DB seed name: "filter_keep_images_containing_class_name"
     """
 
+    REQUIRED_PARAMS = ["class_names"]
+
     @property
     def name(self) -> str:
         return "filter_keep_images_containing_class_name"
