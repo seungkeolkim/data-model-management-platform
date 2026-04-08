@@ -9,13 +9,14 @@ import { memo } from 'react'
 import { Handle, Position } from '@xyflow/react'
 import type { NodeProps } from '@xyflow/react'
 import { Input, Select, Tag, Typography } from 'antd'
-import { SaveOutlined } from '@ant-design/icons'
 import { usePipelineEditorStore } from '@/stores/pipelineEditorStore'
 import type { SaveNodeData } from '@/types/pipeline'
+import { SPECIAL_NODE_STYLE } from '../nodeStyles'
 
 const { Text } = Typography
 
-const SAVE_COLOR = '#fa541c'
+const SV = SPECIAL_NODE_STYLE.SAVE
+const SAVE_COLOR = SV.color
 
 const DATASET_TYPE_OPTIONS = [
   { value: 'SOURCE', label: 'SOURCE' },
@@ -89,7 +90,7 @@ function SaveNodeComponent({ id }: NodeProps) {
           fontWeight: 600,
         }}
       >
-        <SaveOutlined />
+        <span>{SV.emoji}</span>
         Save (출력 설정)
       </div>
 

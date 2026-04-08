@@ -10,36 +10,13 @@
  */
 
 import { Typography, Collapse, Button, Spin, Badge, Tooltip } from 'antd'
-import {
-  DatabaseOutlined,
-  SaveOutlined,
-  MergeCellsOutlined,
-  SwapOutlined,
-  FilterOutlined,
-  ScissorOutlined,
-  RetweetOutlined,
-  ThunderboltOutlined,
-  ToolOutlined,
-} from '@ant-design/icons'
 import { useQuery } from '@tanstack/react-query'
 import { manipulatorsApi } from '@/api/pipeline'
 import type { Manipulator } from '@/types/dataset'
 import type { PipelineNodeData } from '@/types/pipeline'
+import { CATEGORY_STYLE, DEFAULT_CATEGORY_STYLE, SPECIAL_NODE_STYLE, getManipulatorEmoji } from './nodeStyles'
 
 const { Text } = Typography
-
-/** 카테고리별 표시 정보 */
-const CATEGORY_META: Record<string, { label: string; icon: React.ReactNode; color: string }> = {
-  FORMAT_CONVERT: { label: '포맷 변환', icon: <SwapOutlined />, color: '#1677ff' },
-  FILTER: { label: 'Annotation 필터', icon: <FilterOutlined />, color: '#eb2f96' },
-  IMAGE_FILTER: { label: 'Image 필터', icon: <FilterOutlined />, color: '#f5222d' },
-  SAMPLE: { label: '샘플링', icon: <ScissorOutlined />, color: '#722ed1' },
-  REMAP: { label: '리매핑', icon: <RetweetOutlined />, color: '#fa8c16' },
-  AUGMENT: { label: '증강', icon: <ThunderboltOutlined />, color: '#13c2c2' },
-  MERGE: { label: '병합', icon: <MergeCellsOutlined />, color: '#9254de' },
-}
-
-const DEFAULT_CATEGORY_META = { label: '기타', icon: <ToolOutlined />, color: '#8c8c8c' }
 
 interface NodePaletteProps {
   onAddNode: (data: PipelineNodeData) => void
@@ -96,20 +73,20 @@ export default function NodePalette({ onAddNode, taskType }: NodePaletteProps) {
     paramsSchema: m.params_schema as Record<string, unknown> | null,
   })
 
-  // Collapse 패널 아이템 구성 — CATEGORY_META 정의 순서대로 정렬
-  const categoryOrder = Object.keys(CATEGORY_META)
+  // Collapse 패널 아이템 구성 — CATEGORY_STYLE 정의 순서대로 정렬
+  const categoryOrder = Object.keys(CATEGORY_STYLE)
   const sortedCategories = Object.entries(groupedByCategory).sort(([a], [b]) => {
     const idxA = categoryOrder.indexOf(a)
     const idxB = categoryOrder.indexOf(b)
     return (idxA === -1 ? 999 : idxA) - (idxB === -1 ? 999 : idxB)
   })
   const collapseItems = sortedCategories.map(([category, items]) => {
-    const meta = CATEGORY_META[category] ?? { ...DEFAULT_CATEGORY_META, label: category }
+    const meta = CATEGORY_STYLE[category] ?? DEFAULT_CATEGORY_STYLE
     return {
       key: category,
       label: (
         <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          {meta.icon}
+          <span>{meta.emoji}</span>
           <span>{meta.label}</span>
           <Badge count={items.length} style={{ backgroundColor: meta.color }} size="small" />
         </span>
@@ -131,7 +108,7 @@ export default function NodePalette({ onAddNode, taskType }: NodePaletteProps) {
                 style={{ textAlign: 'left', fontSize: 12 }}
                 onClick={() => onAddNode(createOperatorNodeData(m))}
               >
-                {buttonLabel}
+                {getManipulatorEmoji(m.name, category)} {buttonLabel}
               </Button>
             )
 
@@ -147,6 +124,10 @@ export default function NodePalette({ onAddNode, taskType }: NodePaletteProps) {
       ),
     }
   })
+
+  const dl = SPECIAL_NODE_STYLE.DATA_LOAD
+  const mg = SPECIAL_NODE_STYLE.MERGE
+  const sv = SPECIAL_NODE_STYLE.SAVE
 
   return (
     <div
@@ -172,8 +153,7 @@ export default function NodePalette({ onAddNode, taskType }: NodePaletteProps) {
         <Button
           size="small"
           block
-          icon={<DatabaseOutlined />}
-          style={{ textAlign: 'left', marginBottom: 4, borderColor: '#52c41a', color: '#52c41a' }}
+          style={{ textAlign: 'left', marginBottom: 4, borderColor: dl.color, color: dl.color }}
           onClick={() =>
             onAddNode({
               type: 'dataLoad',
@@ -186,14 +166,13 @@ export default function NodePalette({ onAddNode, taskType }: NodePaletteProps) {
             })
           }
         >
-          Data Load
+          {dl.emoji} Data Load
         </Button>
 
         <Button
           size="small"
           block
-          icon={<MergeCellsOutlined />}
-          style={{ textAlign: 'left', marginBottom: 4, borderColor: '#9254de', color: '#9254de' }}
+          style={{ textAlign: 'left', marginBottom: 4, borderColor: mg.color, color: mg.color }}
           onClick={() =>
             onAddNode({
               type: 'merge',
@@ -203,14 +182,13 @@ export default function NodePalette({ onAddNode, taskType }: NodePaletteProps) {
             })
           }
         >
-          Merge (병합)
+          {mg.emoji} Merge (병합)
         </Button>
 
         <Button
           size="small"
           block
-          icon={<SaveOutlined />}
-          style={{ textAlign: 'left', borderColor: '#fa541c', color: '#fa541c' }}
+          style={{ textAlign: 'left', borderColor: sv.color, color: sv.color }}
           onClick={() =>
             onAddNode({
               type: 'save',
@@ -222,7 +200,7 @@ export default function NodePalette({ onAddNode, taskType }: NodePaletteProps) {
             })
           }
         >
-          Save (출력 설정)
+          {sv.emoji} Save (출력 설정)
         </Button>
       </div>
 

@@ -9,12 +9,13 @@ import { memo, useMemo } from 'react'
 import { Handle, Position, useEdges } from '@xyflow/react'
 import type { NodeProps } from '@xyflow/react'
 import { Typography, Tag } from 'antd'
-import { MergeCellsOutlined } from '@ant-design/icons'
 import type { MergeNodeData } from '@/types/pipeline'
+import { SPECIAL_NODE_STYLE } from '../nodeStyles'
 
 const { Text } = Typography
 
-const MERGE_COLOR = '#9254de'
+const MG = SPECIAL_NODE_STYLE.MERGE
+const MERGE_COLOR = MG.color
 
 function MergeNodeComponent({ id, data }: NodeProps) {
   const nodeData = data as unknown as MergeNodeData
@@ -73,7 +74,7 @@ function MergeNodeComponent({ id, data }: NodeProps) {
           fontWeight: 600,
         }}
       >
-        <MergeCellsOutlined />
+        <span>{MG.emoji}</span>
         Merge
       </div>
 

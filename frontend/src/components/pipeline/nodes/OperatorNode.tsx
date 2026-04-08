@@ -11,31 +11,11 @@ import { memo } from 'react'
 import { Handle, Position } from '@xyflow/react'
 import type { NodeProps } from '@xyflow/react'
 import { Typography, Tag } from 'antd'
-import {
-  SwapOutlined,
-  FilterOutlined,
-  ScissorOutlined,
-  RetweetOutlined,
-  ThunderboltOutlined,
-  ToolOutlined,
-} from '@ant-design/icons'
 import { usePipelineEditorStore } from '@/stores/pipelineEditorStore'
 import type { OperatorNodeData } from '@/types/pipeline'
+import { getCategoryStyle, getManipulatorEmoji } from '../nodeStyles'
 
 const { Text } = Typography
-
-/** 카테고리별 색상 및 아이콘 */
-const CATEGORY_STYLE: Record<string, { color: string; icon: React.ReactNode }> = {
-  FORMAT_CONVERT: { color: '#1677ff', icon: <SwapOutlined /> },
-  FILTER: { color: '#eb2f96', icon: <FilterOutlined /> },
-  IMAGE_FILTER: { color: '#f5222d', icon: <FilterOutlined /> },
-  SAMPLE: { color: '#722ed1', icon: <ScissorOutlined /> },
-  REMAP: { color: '#fa8c16', icon: <RetweetOutlined /> },
-  AUGMENT: { color: '#13c2c2', icon: <ThunderboltOutlined /> },
-  UDM: { color: '#595959', icon: <ToolOutlined /> },
-}
-
-const DEFAULT_STYLE = { color: '#8c8c8c', icon: <ToolOutlined /> }
 
 function OperatorNodeComponent({ id }: NodeProps) {
   // store 직접 구독 — params 변경이 노드에 실시간 반영됨
@@ -44,7 +24,7 @@ function OperatorNodeComponent({ id }: NodeProps) {
   )
 
   if (!nodeData) return null
-  const style = CATEGORY_STYLE[nodeData.category] ?? DEFAULT_STYLE
+  const style = getCategoryStyle(nodeData.category)
 
   const hasErrors = (nodeData.validationIssues ?? []).some((i) => i.severity === 'error')
   const hasWarnings = (nodeData.validationIssues ?? []).some((i) => i.severity === 'warning')
@@ -107,7 +87,7 @@ function OperatorNodeComponent({ id }: NodeProps) {
           fontWeight: 600,
         }}
       >
-        {style.icon}
+        <span>{getManipulatorEmoji(nodeData.operator, nodeData.category)}</span>
         {nodeData.label}
       </div>
 

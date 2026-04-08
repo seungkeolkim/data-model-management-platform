@@ -16,12 +16,14 @@ import { memo, useMemo } from 'react'
 import { Handle, Position } from '@xyflow/react'
 import type { NodeProps } from '@xyflow/react'
 import { Select, Typography, Tag } from 'antd'
-import { DatabaseOutlined } from '@ant-design/icons'
 import { useQuery } from '@tanstack/react-query'
 import { datasetsForPipelineApi } from '@/api/pipeline'
 import { usePipelineEditorStore } from '@/stores/pipelineEditorStore'
 import type { DataLoadNodeData } from '@/types/pipeline'
 import type { DatasetGroup, DatasetSummary } from '@/types/dataset'
+import { SPECIAL_NODE_STYLE } from '../nodeStyles'
+
+const DL = SPECIAL_NODE_STYLE.DATA_LOAD
 
 const { Text } = Typography
 
@@ -86,7 +88,7 @@ function DataLoadNodeComponent({ id }: NodeProps) {
   // ── 검증 상태 ──
   const hasErrors = (nodeData.validationIssues ?? []).some((i) => i.severity === 'error')
   const hasWarnings = (nodeData.validationIssues ?? []).some((i) => i.severity === 'warning')
-  const borderColor = hasErrors ? '#ff4d4f' : hasWarnings ? '#faad14' : '#52c41a'
+  const borderColor = hasErrors ? '#ff4d4f' : hasWarnings ? '#faad14' : DL.color
 
   // ── 핸들러 ──
   const handleGroupChange = (groupId: string) => {
@@ -135,7 +137,7 @@ function DataLoadNodeComponent({ id }: NodeProps) {
       {/* 헤더 */}
       <div
         style={{
-          background: '#52c41a',
+          background: DL.color,
           color: '#fff',
           padding: '6px 12px',
           borderRadius: '6px 6px 0 0',
@@ -146,7 +148,7 @@ function DataLoadNodeComponent({ id }: NodeProps) {
           fontWeight: 600,
         }}
       >
-        <DatabaseOutlined />
+        <span>{DL.emoji}</span>
         Data Load
       </div>
 
@@ -234,7 +236,7 @@ function DataLoadNodeComponent({ id }: NodeProps) {
         style={{
           width: 10,
           height: 10,
-          background: '#52c41a',
+          background: DL.color,
           border: '2px solid #fff',
         }}
       />
