@@ -183,21 +183,22 @@ MANIPULATORS = [
         category="AUGMENT",
         scope=["PER_SOURCE"],
         task_types=["DETECTION", "SEGMENTATION"],
-        annotation_fmts=["COCO"],
-        description="특정 class의 bbox/segmentation 영역을 이미지에서 masking (검게 칠하기)",
+        annotation_fmts=["COCO", "YOLO"],
+        description="이미지 마스킹 (지정 class bbox 영역 채우기)",
         params_schema={
             "class_names": {
-                "type": "multiselect",
-                "label": "masking할 클래스 이름 목록",
+                "type": "textarea",
+                "label": "마스킹할 클래스 이름 (줄바꿈 구분)",
                 "required": True,
             },
             "fill_color": {
-                "type": "color",
-                "label": "fill 색상 (기본: 검정)",
-                "default": "#000000",
+                "type": "select",
+                "label": "채우기 색상",
+                "options": ["black", "white"],
+                "default": "black",
+                "required": True,
             },
         },
-        status="EXPERIMENTAL",
     ),
 
     # =========================================================================

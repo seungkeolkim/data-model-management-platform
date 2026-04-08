@@ -12,6 +12,7 @@ from lib.manipulators.filter_keep_images_containing_class_name import FilterKeep
 from lib.manipulators.filter_remain_selected_class_names_only_in_annotation import FilterRemainSelectedClassNamesOnlyInAnnotation
 from lib.manipulators.filter_remove_images_containing_class_name import FilterRemoveImagesContainingClassName
 from lib.manipulators.format_convert import FormatConvertToCoco, FormatConvertToYolo
+from lib.manipulators.mask_region_by_class import MaskRegionByClass
 from lib.manipulators.merge_datasets import MergeDatasets
 from lib.manipulators.remap_class_name import RemapClassName
 from lib.manipulators.rotate_image import RotateImage
@@ -27,6 +28,7 @@ MANIPULATOR_REGISTRY: dict[str, type[UnitManipulator]] = {
     "filter_remain_selected_class_names_only_in_annotation": FilterRemainSelectedClassNamesOnlyInAnnotation,
     "filter_keep_images_containing_class_name": FilterKeepImagesContainingClassName,
     "filter_remove_images_containing_class_name": FilterRemoveImagesContainingClassName,
+    "mask_region_by_class": MaskRegionByClass,
     "remap_class_name": RemapClassName,
     "rotate_image": RotateImage,
     "sample_n_images": SampleNImages,

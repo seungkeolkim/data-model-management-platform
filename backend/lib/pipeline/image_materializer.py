@@ -142,45 +142,113 @@ class ImageMaterializer:
         if image_plan.is_copy_only:
             shutil.copy2(src_path, dst_path)
         else:
-            # 이미지 변환 — 현재는 미구현, 복사 후 변환 적용 예정
-            shutil.copy2(src_path, dst_path)
-            for spec in image_plan.specs:
-                self._apply_image_operation(dst_path, spec)
+            # 변환이 있는 이미지: 소스를 PIL로 열어 변환 체인을 적용한 뒤 한 번만 저장
+            # 복사 + 재저장 대비 I/O 1회 절약
+            self._transform_and_save(src_path, dst_path, image_plan.specs)
 
         return False
 
-    def _apply_image_operation(self, image_path: Path, spec: 'ImageManipulationSpec') -> None:
+    def _transform_and_save(
+        self,
+        src_path: Path,
+        dst_path: Path,
+        specs: list,
+    ) -> None:
         """
-        단일 이미지에 변환 operation을 적용한다.
+        소스 이미지를 열어 모든 변환 spec을 순차 적용한 뒤 한 번에 저장한다.
+
+        복사 없이 바로 변환 → 저장하므로 I/O 비용을 절약한다.
+        원본 포맷(JPEG/PNG 등)과 EXIF 메타데이터를 유지한다.
+        """
+        from PIL import Image
+
+        with Image.open(src_path) as img:
+            # EXIF 정보 보존 (있으면)
+            exif_data = img.info.get("exif")
+
+            for spec in specs:
+                img = self._apply_image_operation(img, spec)
+
+            # 원본 포맷으로 저장 — JPEG이면 quality 유지, PNG이면 그대로
+            save_kwargs: dict = {}
+            output_format = src_path.suffix.lower()
+            if output_format in (".jpg", ".jpeg"):
+                save_kwargs["quality"] = 95
+                save_kwargs["subsampling"] = 0  # 4:4:4 — 색상 손실 최소화
+            if exif_data:
+                save_kwargs["exif"] = exif_data
+
+            img.save(dst_path, **save_kwargs)
+
+    def _apply_image_operation(self, img: 'Image.Image', spec: 'ImageManipulationSpec') -> 'Image.Image':
+        """
+        PIL Image에 단일 변환 operation을 적용하여 반환한다.
 
         지원 operation:
           - rotate_image: 이미지를 지정 각도(90/180/270)로 시계 방향 회전
+          - mask_region: 지정 bbox 영역을 단색으로 채우기
         """
         if spec.operation == "rotate_image":
-            self._apply_rotate(image_path, spec.params)
-        else:
-            logger.warning(
-                "미지원 이미지 변환 operation: %s (파일: %s)",
-                spec.operation, image_path.name,
-            )
+            return self._apply_rotate(img, spec.params)
+        if spec.operation == "mask_region":
+            return self._apply_mask_region(img, spec.params)
 
-    def _apply_rotate(self, image_path: Path, params: dict) -> None:
-        """PIL을 사용하여 이미지를 회전한다."""
+        logger.warning(
+            "미지원 이미지 변환 operation: %s (건너뜀)", spec.operation,
+        )
+        return img
+
+    def _apply_rotate(self, img: 'Image.Image', params: dict) -> 'Image.Image':
+        """PIL Image를 회전하여 반환한다."""
         from PIL import Image
 
         degrees = int(params.get("degrees", 180))
 
-        with Image.open(image_path) as img:
-            # PIL의 rotate는 반시계 방향이므로 360 - degrees로 보정
-            # 또는 transpose 사용 (무손실, 더 정확)
-            if degrees == 90:
-                rotated = img.transpose(Image.Transpose.ROTATE_270)  # 시계 90° = PIL 반시계 270°
-            elif degrees == 180:
-                rotated = img.transpose(Image.Transpose.ROTATE_180)
-            elif degrees == 270:
-                rotated = img.transpose(Image.Transpose.ROTATE_90)   # 시계 270° = PIL 반시계 90°
-            else:
-                logger.warning("지원하지 않는 회전 각도: %d (건너뜀)", degrees)
-                return
+        # PIL transpose는 무손실 픽셀 재배치 (보간 없음)
+        if degrees == 90:
+            return img.transpose(Image.Transpose.ROTATE_270)   # 시계 90° = PIL 반시계 270°
+        elif degrees == 180:
+            return img.transpose(Image.Transpose.ROTATE_180)
+        elif degrees == 270:
+            return img.transpose(Image.Transpose.ROTATE_90)    # 시계 270° = PIL 반시계 90°
 
-            rotated.save(image_path, quality=95)
+        logger.warning("지원하지 않는 회전 각도: %d (건너뜀)", degrees)
+        return img
+
+    def _apply_mask_region(self, img: 'Image.Image', params: dict) -> 'Image.Image':
+        """
+        지정된 bbox 영역들을 단색으로 채워 마스킹한다.
+
+        params:
+            bboxes: list[list[float]] — COCO [x, y, w, h] 형식 bbox 목록
+            fill_color: str — "black" | "white"
+            bbox_normalized: bool — True이면 0~1 정규화 좌표 (이미지 크기로 변환)
+        """
+        from PIL import ImageDraw
+
+        bboxes = params.get("bboxes", [])
+        fill_color_name = params.get("fill_color", "black")
+        bbox_normalized = params.get("bbox_normalized", False)
+
+        # RGB 이미지로 변환 — 그레이스케일(L), 팔레트(P) 등에서 tuple fill이 동작하도록
+        if img.mode not in ("RGB", "RGBA"):
+            img = img.convert("RGB")
+        fill_rgb = (0, 0, 0) if fill_color_name == "black" else (255, 255, 255)
+        draw = ImageDraw.Draw(img)
+        image_width, image_height = img.size
+
+        for bbox in bboxes:
+            bx, by, bw, bh = bbox
+            if bbox_normalized:
+                bx *= image_width
+                by *= image_height
+                bw *= image_width
+                bh *= image_height
+
+            # PIL rectangle은 (left, top, right, bottom)
+            draw.rectangle(
+                [int(bx), int(by), int(bx + bw), int(by + bh)],
+                fill=fill_rgb,
+            )
+
+        return img

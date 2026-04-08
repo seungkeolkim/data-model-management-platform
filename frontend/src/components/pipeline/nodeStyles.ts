@@ -14,7 +14,7 @@ export const CATEGORY_STYLE: Record<string, { color: string; emoji: string; labe
   // 기타 조작
   SAMPLE:            { color: '#722ed1', emoji: '🎲', label: '샘플링' },
   REMAP:             { color: '#fa8c16', emoji: '🔀', label: '리매핑' },
-  AUGMENT:           { color: '#13c2c2', emoji: '✨', label: '증강' },
+  AUGMENT:           { color: '#13c2c2', emoji: '✨', label: 'Image 변형' },
   MERGE:             { color: '#9254de', emoji: '🔗', label: '병합' },
 }
 
