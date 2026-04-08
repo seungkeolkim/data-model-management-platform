@@ -152,9 +152,35 @@ class ImageMaterializer:
     def _apply_image_operation(self, image_path: Path, spec: 'ImageManipulationSpec') -> None:
         """
         단일 이미지에 변환 operation을 적용한다.
-        현재는 stub — 이미지 변환 manipulator 구현 시 함께 작업 예정.
+
+        지원 operation:
+          - rotate_image: 이미지를 지정 각도(90/180/270)로 시계 방향 회전
         """
-        logger.warning(
-            "이미지 변환 operation은 아직 미구현: %s (파일: %s)",
-            spec.operation, image_path.name,
-        )
+        if spec.operation == "rotate_image":
+            self._apply_rotate(image_path, spec.params)
+        else:
+            logger.warning(
+                "미지원 이미지 변환 operation: %s (파일: %s)",
+                spec.operation, image_path.name,
+            )
+
+    def _apply_rotate(self, image_path: Path, params: dict) -> None:
+        """PIL을 사용하여 이미지를 회전한다."""
+        from PIL import Image
+
+        degrees = int(params.get("degrees", 180))
+
+        with Image.open(image_path) as img:
+            # PIL의 rotate는 반시계 방향이므로 360 - degrees로 보정
+            # 또는 transpose 사용 (무손실, 더 정확)
+            if degrees == 90:
+                rotated = img.transpose(Image.Transpose.ROTATE_270)  # 시계 90° = PIL 반시계 270°
+            elif degrees == 180:
+                rotated = img.transpose(Image.Transpose.ROTATE_180)
+            elif degrees == 270:
+                rotated = img.transpose(Image.Transpose.ROTATE_90)   # 시계 270° = PIL 반시계 90°
+            else:
+                logger.warning("지원하지 않는 회전 각도: %d (건너뜀)", degrees)
+                return
+
+            rotated.save(image_path, quality=95)

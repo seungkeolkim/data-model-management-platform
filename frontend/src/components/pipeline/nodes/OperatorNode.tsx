@@ -10,7 +10,7 @@
 import { memo } from 'react'
 import { Handle, Position } from '@xyflow/react'
 import type { NodeProps } from '@xyflow/react'
-import { Typography, Tag } from 'antd'
+import { Typography, Tag, Select } from 'antd'
 import { usePipelineEditorStore } from '@/stores/pipelineEditorStore'
 import type { OperatorNodeData } from '@/types/pipeline'
 import { getCategoryStyle, getManipulatorEmoji } from '../nodeStyles'
@@ -22,6 +22,7 @@ function OperatorNodeComponent({ id }: NodeProps) {
   const nodeData = usePipelineEditorStore(
     (s) => (s.nodeDataMap[id] as OperatorNodeData) ?? null,
   )
+  const setNodeData = usePipelineEditorStore((s) => s.setNodeData)
 
   if (!nodeData) return null
   const style = getCategoryStyle(nodeData.category)
@@ -30,20 +31,30 @@ function OperatorNodeComponent({ id }: NodeProps) {
   const hasWarnings = (nodeData.validationIssues ?? []).some((i) => i.severity === 'warning')
   const borderColor = hasErrors ? '#ff4d4f' : hasWarnings ? '#faad14' : style.color
 
-  // params 요약 — key_value(object) 타입은 줄바꿈 렌더링, 나머지는 label: value 형태
-  const paramsSchema = (nodeData.paramsSchema ?? {}) as Record<string, { label?: string; type?: string }>
+  // params 요약 — select는 인라인 드롭다운, key_value는 줄바꿈 렌더링, 나머지는 label: value 텍스트
+  const paramsSchema = (nodeData.paramsSchema ?? {}) as Record<string, { label?: string; type?: string; options?: string[] }>
   const paramEntries = Object.entries(nodeData.params ?? {}).filter(
     ([, val]) => val !== '' && val !== null && val !== undefined,
   )
 
+  // select 타입 — 노드 본문에서 인라인 드롭다운으로 편집
+  const selectEntries = Object.entries(paramsSchema).filter(([, schema]) => schema.type === 'select')
+
   // key_value 매핑 항목 추출 (예: mapping: { person: "human", car: "vehicle" })
   const keyValueEntries = paramEntries.filter(
-    ([, val]) => typeof val === 'object' && val !== null && !Array.isArray(val),
+    ([key, val]) => typeof val === 'object' && val !== null && !Array.isArray(val) && paramsSchema[key]?.type !== 'select',
   )
-  // 그 외 일반 params — label: value 한 줄씩 표시
+  // 그 외 일반 params — label: value 한 줄씩 표시 (select, key_value 제외)
   const nonKeyValueEntries = paramEntries.filter(
-    ([, val]) => !(typeof val === 'object' && val !== null && !Array.isArray(val)),
+    ([key, val]) =>
+      !(typeof val === 'object' && val !== null && !Array.isArray(val)) &&
+      paramsSchema[key]?.type !== 'select',
   )
+
+  /** select 파라미터 변경 핸들러 */
+  const handleSelectChange = (paramKey: string, value: string) => {
+    setNodeData(id, { ...nodeData, params: { ...nodeData.params, [paramKey]: value } })
+  }
 
   return (
     <div
@@ -90,6 +101,22 @@ function OperatorNodeComponent({ id }: NodeProps) {
         <Text type="secondary" style={{ fontSize: 11 }}>
           {nodeData.operator}
         </Text>
+        {/* select 타입: 인라인 드롭다운 */}
+        {selectEntries.map(([paramKey, schema]) => (
+          <div key={paramKey} className="nodrag" style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Text style={{ fontSize: 10, color: '#8c8c8c', whiteSpace: 'nowrap' }}>
+              {schema.label ?? paramKey}:
+            </Text>
+            <Select
+              size="small"
+              value={(nodeData.params?.[paramKey] as string) ?? schema.options?.[0]}
+              options={(schema.options ?? []).map((opt) => ({ value: opt, label: opt }))}
+              onChange={(val) => handleSelectChange(paramKey, val)}
+              style={{ flex: 1, fontSize: 11 }}
+            />
+          </div>
+        ))}
+
         {/* 일반 params: label: value 한 줄씩 */}
         {nonKeyValueEntries.length > 0 && (
           <div style={{ marginTop: 4 }}>

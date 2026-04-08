@@ -14,6 +14,7 @@ from lib.manipulators.filter_remove_images_containing_class_name import FilterRe
 from lib.manipulators.format_convert import FormatConvertToCoco, FormatConvertToYolo
 from lib.manipulators.merge_datasets import MergeDatasets
 from lib.manipulators.remap_class_name import RemapClassName
+from lib.manipulators.rotate_image import RotateImage
 from lib.manipulators.sample_n_images import SampleNImages
 
 if TYPE_CHECKING:
@@ -27,5 +28,6 @@ MANIPULATOR_REGISTRY: dict[str, type[UnitManipulator]] = {
     "filter_keep_images_containing_class_name": FilterKeepImagesContainingClassName,
     "filter_remove_images_containing_class_name": FilterRemoveImagesContainingClassName,
     "remap_class_name": RemapClassName,
+    "rotate_image": RotateImage,
     "sample_n_images": SampleNImages,
 }

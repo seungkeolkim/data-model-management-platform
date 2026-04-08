@@ -41,7 +41,7 @@ const MANIPULATOR_EMOJI: Record<string, string> = {
   // REMAP
   remap_class_name:   '🏷️',
   // AUGMENT
-  rotate_180:            '↩️',
+  rotate_image:          '↩️',
   change_compression:    '📐',
   mask_region_by_class:  '🎭',
   // MERGE

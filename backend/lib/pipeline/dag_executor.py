@@ -28,7 +28,7 @@ from lib.pipeline.image_materializer import ImageMaterializer
 from lib.pipeline.io.coco_io import parse_coco_json, write_coco_json
 from lib.pipeline.io.yolo_io import parse_yolo_dir, write_yolo_dir
 from lib.pipeline.pipeline_data_models import (
-    Annotation, DatasetMeta, DatasetPlan, ImagePlan, ImageRecord,
+    Annotation, DatasetMeta, DatasetPlan, ImageManipulationSpec, ImagePlan, ImageRecord,
 )
 from lib.pipeline.storage_protocol import StorageProtocol
 
@@ -462,7 +462,15 @@ class PipelineDagExecutor:
                 continue
 
             dst_uri = f"{output_storage_uri}/{self.images_dirname}/{record.file_name}"
-            plans.append(ImagePlan(src_uri=src_uri, dst_uri=dst_uri))
+
+            # record.extra에 누적된 이미지 변환 명세 추출
+            raw_specs = record.extra.pop("image_manipulation_specs", [])
+            specs = [
+                ImageManipulationSpec(operation=s["operation"], params=s.get("params", {}))
+                for s in raw_specs
+            ]
+
+            plans.append(ImagePlan(src_uri=src_uri, dst_uri=dst_uri, specs=specs))
 
         return plans
 

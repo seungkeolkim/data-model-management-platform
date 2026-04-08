@@ -138,13 +138,21 @@ MANIPULATORS = [
     # PER_SOURCE - AUGMENT
     # =========================================================================
     _build_manipulator_seed_record(
-        name="rotate_180",
+        name="rotate_image",
         category="AUGMENT",
         scope=["PER_SOURCE"],
         task_types=["DETECTION", "SEGMENTATION"],
         annotation_fmts=["COCO", "YOLO"],
-        description="이미지 180도 회전 (annotation bbox/seg 좌표 자동 변환)",
-        params_schema={},  # 파라미터 없음
+        description="이미지 회전 (bbox 좌표 자동 변환)",
+        params_schema={
+            "degrees": {
+                "type": "select",
+                "label": "회전 각도",
+                "options": ["90", "180", "270"],
+                "default": "180",
+                "required": True,
+            },
+        },
     ),
     _build_manipulator_seed_record(
         name="change_compression",
