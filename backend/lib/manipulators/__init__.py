@@ -8,7 +8,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from lib.manipulators.filter_final_classes import FilterFinalClasses
+from lib.manipulators.filter_keep_images_containing_class_name import FilterKeepImagesContainingClassName
+from lib.manipulators.filter_remain_selected_class_names_only_in_annotation import FilterRemainSelectedClassNamesOnlyInAnnotation
+from lib.manipulators.filter_remove_images_containing_class_name import FilterRemoveImagesContainingClassName
 from lib.manipulators.format_convert import FormatConvertToCoco, FormatConvertToYolo
 from lib.manipulators.merge_datasets import MergeDatasets
 
@@ -19,5 +21,7 @@ MANIPULATOR_REGISTRY: dict[str, type[UnitManipulator]] = {
     "format_convert_to_coco": FormatConvertToCoco,
     "format_convert_to_yolo": FormatConvertToYolo,
     "merge_datasets": MergeDatasets,
-    "filter_final_classes": FilterFinalClasses,
+    "filter_remain_selected_class_names_only_in_annotation": FilterRemainSelectedClassNamesOnlyInAnnotation,
+    "filter_keep_images_containing_class_name": FilterKeepImagesContainingClassName,
+    "filter_remove_images_containing_class_name": FilterRemoveImagesContainingClassName,
 }

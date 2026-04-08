@@ -167,7 +167,7 @@ export interface FileBrowserRootsResponse {
 export interface Manipulator {
   id: string
   name: string
-  category: 'FILTER' | 'AUGMENT' | 'FORMAT_CONVERT' | 'MERGE' | 'SAMPLE' | 'REMAP'
+  category: 'ANNOTATION_FILTER' | 'IMAGE_FILTER' | 'AUGMENT' | 'FORMAT_CONVERT' | 'MERGE' | 'SAMPLE' | 'REMAP'
   scope: ('PER_SOURCE' | 'POST_MERGE')[]
   compatible_task_types: TaskType[] | null
   compatible_annotation_fmts: AnnotationFormat[] | null
@@ -225,6 +225,8 @@ export interface SampleListResponse {
   page: number
   page_size: number
   categories: Array<{ id: number; name: string }>
+  /** bbox가 정규화 좌표(0~1)인 경우 true (YOLO + 이미지 크기 미로드 시) */
+  bbox_normalized: boolean
 }
 
 // =============================================================================

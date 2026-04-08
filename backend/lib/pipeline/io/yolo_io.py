@@ -325,17 +325,26 @@ def parse_yolo_dir(
                 class_id = int(parts[0])
                 observed_class_ids.add(class_id)
 
-                # 좌표 변환: 이미지 크기가 있어야 absolute 변환 가능
+                # 좌표 변환: 이미지 크기가 있으면 absolute, 없으면 normalized [x,y,w,h] 그대로 저장
+                center_x = float(parts[1])
+                center_y = float(parts[2])
+                box_width = float(parts[3])
+                box_height = float(parts[4])
+
                 bbox: list[float] | None = None
                 if image_width is not None and image_height is not None:
-                    center_x = float(parts[1])
-                    center_y = float(parts[2])
-                    box_width = float(parts[3])
-                    box_height = float(parts[4])
                     bbox = _convert_yolo_to_absolute_bbox(
                         center_x, center_y, box_width, box_height,
                         image_width, image_height,
                     )
+                else:
+                    # 이미지 크기 없음 — YOLO center→COCO top-left 변환만 수행 (정규화 유지)
+                    bbox = [
+                        center_x - box_width / 2,
+                        center_y - box_height / 2,
+                        box_width,
+                        box_height,
+                    ]
 
                 annotations.append(Annotation(
                     annotation_type="BBOX",

@@ -61,74 +61,53 @@ def _build_manipulator_seed_record(
 
 MANIPULATORS = [
     # =========================================================================
-    # FILTER — Annotation 필터 (이미지는 유지, annotation만 제거)
-    # =========================================================================
-
-    # =========================================================================
-    # IMAGE_FILTER — Image 필터 (이미지 자체를 유지/제거)
+    # ANNOTATION_FILTER — Annotation 필터 (이미지는 유지, annotation만 제거)
     # =========================================================================
     _build_manipulator_seed_record(
-        name="filter_keep_by_class",
-        category="IMAGE_FILTER",
-        scope=["PER_SOURCE", "POST_MERGE"],
-        task_types=["DETECTION", "SEGMENTATION", "ATTR_CLASSIFICATION"],
-        annotation_fmts=["COCO", "YOLO"],
-        description="특정 class를 반드시 포함하는 이미지만 유지 (OR 조건)",
-        params_schema={
-            "class_names": {
-                "type": "multiselect",
-                "label": "유지할 클래스 이름 목록",
-                "required": True,
-            },
-        },
-    ),
-    _build_manipulator_seed_record(
-        name="filter_remove_by_class",
-        category="IMAGE_FILTER",
-        scope=["PER_SOURCE", "POST_MERGE"],
-        task_types=["DETECTION", "SEGMENTATION", "ATTR_CLASSIFICATION"],
-        annotation_fmts=["COCO", "YOLO"],
-        description="특정 class를 포함하는 이미지 제거 (OR 조건)",
-        params_schema={
-            "class_names": {
-                "type": "multiselect",
-                "label": "제거할 클래스 이름 목록",
-                "required": True,
-            },
-        },
-    ),
-    _build_manipulator_seed_record(
-        name="filter_invalid_class_name",
-        category="IMAGE_FILTER",
-        scope=["PER_SOURCE", "POST_MERGE"],
-        task_types=["DETECTION", "SEGMENTATION", "ATTR_CLASSIFICATION"],
-        annotation_fmts=["COCO", "YOLO"],
-        description="regex 또는 blacklist와 일치하는 class name을 포함한 이미지 제거",
-        params_schema={
-            "mode": {
-                "type": "select",
-                "label": "필터 방식",
-                "options": ["regex", "blacklist"],
-                "required": True,
-            },
-            "patterns": {
-                "type": "textarea",
-                "label": "regex 패턴 또는 blacklist (줄바꿈 구분)",
-                "required": True,
-            },
-        },
-    ),
-    _build_manipulator_seed_record(
-        name="filter_final_classes",
-        category="FILTER",
+        name="filter_remain_selected_class_names_only_in_annotation",
+        category="ANNOTATION_FILTER",
         scope=["PER_SOURCE", "POST_MERGE"],
         task_types=["DETECTION", "SEGMENTATION"],
         annotation_fmts=["COCO", "YOLO"],
-        description="지정 class만 남기기 (나머지 class는 annotation에서만 제거)",
+        description="Annotation에 지정 class만 남기기 (나머지 class는 annotation에서만 제거)",
         params_schema={
             "keep_class_names": {
                 "type": "textarea",
                 "label": "남길 class 이름 (줄바꿈 구분)",
+                "required": True,
+            },
+        },
+    ),
+    
+    # =========================================================================
+    # IMAGE_FILTER — Image 필터 (이미지 자체를 유지/제거)
+    # =========================================================================
+    _build_manipulator_seed_record(
+        name="filter_keep_images_containing_class_name",
+        category="IMAGE_FILTER",
+        scope=["PER_SOURCE", "POST_MERGE"],
+        task_types=["DETECTION", "SEGMENTATION", "ATTR_CLASSIFICATION"],
+        annotation_fmts=["COCO", "YOLO"],
+        description="지정 class 포함 이미지만 유지 (지정 class가 1개도 없는 이미지 제거)",
+        params_schema={
+            "class_names": {
+                "type": "textarea",
+                "label": "유지할 클래스 이름 (줄바꿈 구분)",
+                "required": True,
+            },
+        },
+    ),
+    _build_manipulator_seed_record(
+        name="filter_remove_images_containing_class_name",
+        category="IMAGE_FILTER",
+        scope=["PER_SOURCE", "POST_MERGE"],
+        task_types=["DETECTION", "SEGMENTATION", "ATTR_CLASSIFICATION"],
+        annotation_fmts=["COCO", "YOLO"],
+        description="지정 class 포함 이미지 제거 (class중 1개라도 포함한 이미지 제거)",
+        params_schema={
+            "class_names": {
+                "type": "textarea",
+                "label": "제거할 클래스 이름 (줄바꿈 구분)",
                 "required": True,
             },
         },

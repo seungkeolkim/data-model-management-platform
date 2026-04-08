@@ -1,5 +1,5 @@
 """
-filter_final_classes — 지정 class만 남기고 나머지 annotation 제거.
+filter_remain_selected_class_names_only_in_annotation — 지정 class만 남기고 나머지 annotation 제거.
 
 이미지 자체는 삭제하지 않는다.
 annotation이 0개가 된 이미지도 image_records에 유지한다 (빈 이미지로 남김).
@@ -27,19 +27,19 @@ from lib.pipeline.pipeline_data_models import DatasetMeta
 logger = logging.getLogger(__name__)
 
 
-class FilterFinalClasses(UnitManipulator):
+class FilterRemainSelectedClassNamesOnlyInAnnotation(UnitManipulator):
     """
     지정한 class 이름에 해당하는 annotation만 유지하고 나머지를 제거한다.
 
     이미지 파일은 건드리지 않는다 (annotation 레벨만 처리).
     annotation이 전부 제거된 이미지도 image_records에 유지한다.
 
-    DB seed name: "filter_final_classes"
+    DB seed name: "filter_remain_selected_class_names_only_in_annotation"
     """
 
     @property
     def name(self) -> str:
-        return "filter_final_classes"
+        return "filter_remain_selected_class_names_only_in_annotation"
 
     def transform_annotation(
         self,
@@ -65,7 +65,7 @@ class FilterFinalClasses(UnitManipulator):
         """
         if isinstance(input_meta, list):
             raise TypeError(
-                "filter_final_classes는 단건 DatasetMeta만 입력 가능합니다."
+                "filter_remain_selected_class_names_only_in_annotation는 단건 DatasetMeta만 입력 가능합니다."
             )
 
         raw_names = params.get("keep_class_names", "")
@@ -119,7 +119,7 @@ class FilterFinalClasses(UnitManipulator):
         ]
 
         logger.info(
-            "filter_final_classes 완료: 유지 class %d개, 제거된 annotation %d개, "
+            "filter_remain_selected_class_names_only_in_annotation 완료: 유지 class %d개, 제거된 annotation %d개, "
             "이미지 수 변동 없음 (%d장)",
             len(keep_category_ids), total_removed, len(filtered_meta.image_records),
         )

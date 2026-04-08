@@ -336,6 +336,8 @@ class SampleListResponse(BaseModel):
     page: int
     page_size: int
     categories: list[dict[str, Any]] = []
+    bbox_normalized: bool = False
+    """bbox가 정규화 좌표(0~1)인 경우 True (YOLO 포맷, 이미지 크기 미로드 시)"""
 
 
 # =============================================================================

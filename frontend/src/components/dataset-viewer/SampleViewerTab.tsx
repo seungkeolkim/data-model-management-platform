@@ -238,6 +238,7 @@ export default function SampleViewerTab({ datasetId }: Props) {
               image={selectedImage}
               filteredAnnotations={filteredAnnotations}
               getCategoryColor={getCategoryColor}
+              bboxNormalized={data?.bbox_normalized ?? false}
             />
             <AnnotationTable
               annotations={filteredAnnotations}
@@ -261,10 +262,13 @@ function ImageWithBboxOverlay({
   image,
   filteredAnnotations,
   getCategoryColor,
+  bboxNormalized = false,
 }: {
   image: SampleImageItem
   filteredAnnotations: SampleAnnotationItem[]
   getCategoryColor: (id: number) => string
+  /** bbox가 0~1 정규화 좌표인 경우 true (YOLO 포맷, 이미지 크기 미로드 시) */
+  bboxNormalized?: boolean
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -307,7 +311,16 @@ function ImageWithBboxOverlay({
     for (const ann of filteredAnnotations) {
       if (!ann.bbox || ann.bbox.length !== 4) continue
 
-      const [bboxX, bboxY, bboxW, bboxH] = ann.bbox
+      let [bboxX, bboxY, bboxW, bboxH] = ann.bbox
+
+      // 정규화 좌표(0~1)인 경우 이미지 자연 크기 기준으로 절대 좌표 변환
+      if (bboxNormalized) {
+        bboxX *= naturalWidth
+        bboxY *= naturalHeight
+        bboxW *= naturalWidth
+        bboxH *= naturalHeight
+      }
+
       const drawX = bboxX * scale
       const drawY = bboxY * scale
       const drawW = bboxW * scale
@@ -335,7 +348,7 @@ function ImageWithBboxOverlay({
       ctx.fillStyle = '#fff'
       ctx.fillText(labelText, drawX + 3, labelY + 12)
     }
-  }, [filteredAnnotations, imageLoaded, getCategoryColor])
+  }, [filteredAnnotations, imageLoaded, getCategoryColor, bboxNormalized])
 
   useEffect(() => {
     setImageLoaded(false)

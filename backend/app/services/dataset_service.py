@@ -938,9 +938,13 @@ class DatasetGroupService:
                 "annotations": annotation_items,
             })
 
+        # 이미지 크기 정보가 없으면 bbox가 정규화 좌표(0~1)로 저장됨 (YOLO + skip_image_sizes)
+        has_image_sizes = any(record.width is not None for record in meta.image_records)
+
         sample_index = {
             "categories": meta.categories,
             "images": images,
+            "bbox_normalized": not has_image_sizes,
         }
 
         # 디스크에 캐시 저장
@@ -1010,6 +1014,7 @@ class DatasetGroupService:
             "page": page,
             "page_size": page_size,
             "categories": sample_index["categories"],
+            "bbox_normalized": sample_index.get("bbox_normalized", False),
         }
 
     def get_eda_stats(self, dataset: Dataset) -> dict:

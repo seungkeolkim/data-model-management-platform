@@ -152,14 +152,18 @@ export default function DatasetViewerPage() {
             label: (
               <span><EyeOutlined /> 샘플 뷰어</span>
             ),
-            children: <SampleViewerTab datasetId={datasetId!} />,
+            children: dataset.status === 'READY'
+              ? <SampleViewerTab datasetId={datasetId!} />
+              : <Alert type="info" message={`데이터셋 상태가 ${dataset.status}입니다. READY 상태에서만 샘플을 조회할 수 있습니다.`} showIcon style={{ marginTop: 16 }} />,
           },
           {
             key: 'eda',
             label: (
               <span><BarChartOutlined /> EDA</span>
             ),
-            children: <EdaTab datasetId={datasetId!} />,
+            children: dataset.status === 'READY'
+              ? <EdaTab datasetId={datasetId!} />
+              : <Alert type="info" message={`데이터셋 상태가 ${dataset.status}입니다. READY 상태에서만 EDA를 조회할 수 있습니다.`} showIcon style={{ marginTop: 16 }} />,
           },
           {
             key: 'lineage',

@@ -184,7 +184,7 @@ class Manipulator(Base):
     name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
     category: Mapped[str] = mapped_column(
         String(30), nullable=False,
-        comment="FILTER | AUGMENT | FORMAT_CONVERT | MERGE | SAMPLE | REMAP"
+        comment="ANNOTATION_FILTER | IMAGE_FILTER | AUGMENT | FORMAT_CONVERT | MERGE | SAMPLE | REMAP"
     )
     scope: Mapped[list | None] = mapped_column(
         JSONB, nullable=False,

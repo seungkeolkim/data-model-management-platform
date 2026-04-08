@@ -304,7 +304,7 @@ async def get_dataset_lineage(
 def _build_pipeline_summary(transform_config: dict | None) -> str | None:
     """
     transform_config(PipelineConfig dict)에서 태스크 목록을 요약 문자열로 반환.
-    예: "format_convert_to_coco → filter_final_classes"
+    예: "format_convert_to_coco → filter_remain_selected_class_names_only_in_annotation"
     파싱 실패 시 None.
     """
     if not transform_config:
