@@ -23,8 +23,9 @@ StorageProtocol을 통해 스토리지 접근을 추상화한다.
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 
 from lib.manipulators import MANIPULATOR_REGISTRY
 from lib.pipeline.config import PipelineConfig, TaskConfig
@@ -51,13 +52,21 @@ class PipelineDagExecutor:
         images_dirname: 이미지 서브디렉토리 이름 (기본: "images")
     """
 
+    # 태스크 진행 콜백 시그니처:
+    #   (task_name, status, detail_dict) -> None
+    #   status: "PENDING" | "RUNNING" | "DONE" | "FAILED"
+    #   detail_dict: {"operator": str, "started_at": str, "finished_at": str, "input_images": int, "output_images": int, ...}
+    TaskProgressCallback = Callable[[str, str, dict[str, Any]], None]
+
     def __init__(
         self,
         storage: StorageProtocol,
         images_dirname: str = "images",
+        on_task_progress: TaskProgressCallback | None = None,
     ) -> None:
         self.storage = storage
         self.images_dirname = images_dirname
+        self._on_task_progress = on_task_progress
 
     def run(
         self,
@@ -113,12 +122,29 @@ class PipelineDagExecutor:
         # 태스크별 source storage_uri 수집 (이미지 실체화용)
         all_source_storage_uris: list[str] = []
 
+        # 태스크 진행 콜백: 전체 태스크를 PENDING으로 초기화
+        if self._on_task_progress:
+            for task_name in execution_order:
+                task_config = config.tasks[task_name]
+                self._on_task_progress(task_name, "PENDING", {
+                    "operator": task_config.operator,
+                })
+
         for task_name in execution_order:
             task_config = config.tasks[task_name]
+            task_started_at = datetime.now(timezone.utc).isoformat()
+
             logger.info(
                 "태스크 실행: %s (operator=%s, inputs=%s)",
                 task_name, task_config.operator, task_config.inputs,
             )
+
+            # 태스크 진행 콜백: RUNNING
+            if self._on_task_progress:
+                self._on_task_progress(task_name, "RUNNING", {
+                    "operator": task_config.operator,
+                    "started_at": task_started_at,
+                })
 
             # 입력 DatasetMeta 수집
             input_metas: list[DatasetMeta] = []
@@ -144,6 +170,9 @@ class PipelineDagExecutor:
                         )
                     input_metas.append(task_results[ref])
 
+            # 입력 이미지 수 집계 (진행 추적용)
+            input_image_count = sum(m.image_count for m in input_metas)
+
             # multi-input manipulator(예: merge_datasets)는 list를 직접 받고,
             # 그 외 multi-input은 기존 _merge_metas()로 단건 병합 후 전달
             if self._is_multi_input_manipulator(task_config.operator):
@@ -159,12 +188,28 @@ class PipelineDagExecutor:
                 result_meta = self._apply_manipulator(
                     working_meta, task_config.operator, task_config.params,
                 )
+            # DAG 분기 시 동일 소스의 중간 결과를 구분하기 위해
+            # 각 태스크 출력에 고유 dataset_id를 부여한다.
+            # 이것이 없으면 merge가 같은 dataset_id를 가진 레코드들의
+            # 파일명 충돌을 감지하지 못해 이미지가 덮어쓰기된다.
+            result_meta.dataset_id = f"__task__{task_name}__{uuid.uuid4().hex[:8]}"
             task_results[task_name] = result_meta
 
+            task_finished_at = datetime.now(timezone.utc).isoformat()
             logger.info(
                 "태스크 완료: %s → images=%d, categories=%d",
                 task_name, result_meta.image_count, len(result_meta.categories),
             )
+
+            # 태스크 진행 콜백: DONE
+            if self._on_task_progress:
+                self._on_task_progress(task_name, "DONE", {
+                    "operator": task_config.operator,
+                    "started_at": task_started_at,
+                    "finished_at": task_finished_at,
+                    "input_images": input_image_count,
+                    "output_images": result_meta.image_count,
+                })
 
         # 최종 태스크의 출력이 파이프라인의 최종 결과
         output_meta = task_results[terminal_task_name]
@@ -176,6 +221,15 @@ class PipelineDagExecutor:
             "Phase A 완료 (annotation 처리): images=%d, categories=%d, output_format=%s",
             output_meta.image_count, len(output_meta.categories), output_format,
         )
+
+        # 태스크 진행 콜백: 이미지 실체화 단계 시작
+        image_materialize_started_at = datetime.now(timezone.utc).isoformat()
+        if self._on_task_progress:
+            self._on_task_progress("__image_materialize__", "RUNNING", {
+                "operator": "image_materialize",
+                "started_at": image_materialize_started_at,
+                "total_images": output_meta.image_count,
+            })
 
         # ── Phase B: 출력 경로 결정 + 이미지 실체화 + annotation 파일 작성 ──
         output_dataset_type = config.output.dataset_type.upper()
@@ -236,6 +290,17 @@ class PipelineDagExecutor:
             _write_yolo_data_yaml(sorted_category_names, output_root_dir)
             annotation_meta_filename = "data.yaml"
             logger.info("YOLO data.yaml 생성 완료 (데이터셋 루트)")
+
+        # 태스크 진행 콜백: 이미지 실체화 완료
+        if self._on_task_progress:
+            self._on_task_progress("__image_materialize__", "DONE", {
+                "operator": "image_materialize",
+                "started_at": image_materialize_started_at,
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+                "total_images": output_meta.image_count,
+                "materialized": materialize_result.materialized_count,
+                "skipped": materialize_result.skipped_count,
+            })
 
         logger.info(
             "파이프라인 실행 완료: output_uri=%s, images=%d, skipped=%d, annotations=%d",

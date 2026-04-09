@@ -11,6 +11,7 @@ import {
   PlayCircleOutlined,
   CodeOutlined,
   DeleteOutlined,
+  ImportOutlined,
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { usePipelineEditorStore } from '@/stores/pipelineEditorStore'
@@ -30,6 +31,7 @@ interface EditorToolbarProps {
   onValidate: () => void
   onExecute: () => void
   onClearCanvas: () => void
+  onLoadJson: () => void
   isValidating: boolean
   isExecuting: boolean
   taskType: string
@@ -39,6 +41,7 @@ export default function EditorToolbar({
   onValidate,
   onExecute,
   onClearCanvas,
+  onLoadJson,
   isValidating,
   isExecuting,
   taskType,
@@ -96,6 +99,13 @@ export default function EditorToolbar({
             )}
           </Space>
         )}
+
+        <Button
+          icon={<ImportOutlined />}
+          onClick={onLoadJson}
+        >
+          JSON 불러오기
+        </Button>
 
         <Button
           icon={<CodeOutlined />}

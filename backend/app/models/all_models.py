@@ -241,6 +241,10 @@ class PipelineExecution(Base):
     total_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     celery_task_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    task_progress: Mapped[dict | None] = mapped_column(
+        JSONB, nullable=True,
+        comment="DAG 태스크별 진행 상태. {task_name: {status, started_at, finished_at, ...}}"
+    )
     started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=False), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=False), nullable=True)
     created_at: Mapped[datetime] = mapped_column(

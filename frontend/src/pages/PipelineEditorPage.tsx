@@ -20,7 +20,7 @@ import {
   ReactFlowProvider,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { message, ConfigProvider, theme } from 'antd'
+import { message, ConfigProvider, theme, Modal, Input, Spin } from 'antd'
 import koKR from 'antd/locale/ko_KR'
 
 import DataLoadNode from '@/components/pipeline/nodes/DataLoadNode'
@@ -34,9 +34,17 @@ import ExecutionSubmittedModal from '@/components/pipeline/ExecutionStatusModal'
 import PipelineJsonPreview from '@/components/pipeline/PipelineJsonPreview'
 
 import { usePipelineEditorStore } from '@/stores/pipelineEditorStore'
-import { validateGraphStructure, graphToPipelineConfig } from '@/utils/pipelineConverter'
-import { pipelinesApi } from '@/api/pipeline'
-import type { PipelineNodeData, PipelineNode, PipelineEdge } from '@/types/pipeline'
+import {
+  validateGraphStructure,
+  graphToPipelineConfig,
+  pipelineConfigToGraph,
+  extractSourceDatasetIdsFromConfig,
+} from '@/utils/pipelineConverter'
+import type { DatasetDisplayInfo } from '@/utils/pipelineConverter'
+import { pipelinesApi, manipulatorsApi } from '@/api/pipeline'
+import { datasetsApi, datasetGroupsApi } from '@/api/dataset'
+import type { PipelineConfig, PipelineNodeData, PipelineNode, PipelineEdge } from '@/types/pipeline'
+import type { Manipulator } from '@/types/dataset'
 
 // React Flow 커스텀 노드 타입 등록
 const nodeTypes: NodeTypes = {
@@ -63,6 +71,10 @@ function PipelineEditorContent() {
   const [isExecuting, setIsExecuting] = useState(false)
   const [jsonPreviewContent, setJsonPreviewContent] = useState('')
   const [jsonPreviewError, setJsonPreviewError] = useState<string | null>(null)
+  const [isJsonLoadModalOpen, setIsJsonLoadModalOpen] = useState(false)
+  const [jsonLoadInput, setJsonLoadInput] = useState('')
+  const [isJsonLoading, setIsJsonLoading] = useState(false)
+  const [jsonLoadError, setJsonLoadError] = useState<string | null>(null)
 
   const {
     nodeDataMap,
@@ -246,6 +258,101 @@ function PipelineEditorContent() {
     reset()
   }, [setNodes, setEdges, reset])
 
+  // ── JSON 불러오기 모달 열기 ──
+  const handleOpenJsonLoadModal = useCallback(() => {
+    setJsonLoadInput('')
+    setJsonLoadError(null)
+    setIsJsonLoadModalOpen(true)
+  }, [])
+
+  // ── JSON 불러오기 실행 ──
+  const handleLoadJson = useCallback(async () => {
+    // 1. JSON 파싱
+    let config: PipelineConfig
+    try {
+      config = JSON.parse(jsonLoadInput)
+    } catch {
+      setJsonLoadError('유효하지 않은 JSON 형식입니다.')
+      return
+    }
+
+    // 기본 구조 검증
+    if (!config.name || !config.output || !config.tasks) {
+      setJsonLoadError('PipelineConfig 형식이 아닙니다. name, output, tasks 필드가 필요합니다.')
+      return
+    }
+
+    setIsJsonLoading(true)
+    setJsonLoadError(null)
+
+    try {
+      // 2. manipulator 메타 정보 조회 (operator name → Manipulator 매핑)
+      const manipulatorResponse = await manipulatorsApi.list({ status: 'ACTIVE' })
+      const manipulatorMap: Record<string, Manipulator> = {}
+      for (const manipulator of manipulatorResponse.data.items) {
+        manipulatorMap[manipulator.name] = manipulator
+      }
+
+      // config에 사용된 operator가 등록된 manipulator인지 검증
+      const unknownOperators: string[] = []
+      for (const task of Object.values(config.tasks)) {
+        if (task.operator !== 'merge_datasets' && !manipulatorMap[task.operator]) {
+          unknownOperators.push(task.operator)
+        }
+      }
+      if (unknownOperators.length > 0) {
+        setJsonLoadError(
+          `등록되지 않은 operator가 포함되어 있습니다: ${unknownOperators.join(', ')}`,
+        )
+        setIsJsonLoading(false)
+        return
+      }
+
+      // 3. 소스 dataset 표시 정보 조회
+      const sourceDatasetIds = extractSourceDatasetIdsFromConfig(config)
+      const datasetDisplayMap: Record<string, DatasetDisplayInfo> = {}
+
+      for (const datasetId of sourceDatasetIds) {
+        try {
+          const datasetResponse = await datasetsApi.get(datasetId)
+          const dataset = datasetResponse.data
+          const groupResponse = await datasetGroupsApi.get(dataset.group_id)
+          const group = groupResponse.data
+
+          datasetDisplayMap[datasetId] = {
+            datasetId,
+            groupId: dataset.group_id,
+            groupName: group.name,
+            split: dataset.split,
+            version: dataset.version,
+          }
+        } catch {
+          // 삭제된 데이터셋이면 표시 정보 없이 진행 (ID만 표시)
+          console.warn(`데이터셋 조회 실패 (삭제되었을 수 있음): ${datasetId}`)
+        }
+      }
+
+      // 4. 역변환 실행
+      const { nodes: restoredNodes, edges: restoredEdges, nodeDataMap: restoredNodeDataMap } =
+        pipelineConfigToGraph(config, manipulatorMap, datasetDisplayMap)
+
+      // 5. 캔버스에 적용 (기존 내용 교체)
+      reset()
+      setNodes(restoredNodes)
+      setEdges(restoredEdges)
+      for (const [nodeId, data] of Object.entries(restoredNodeDataMap)) {
+        setNodeData(nodeId, data)
+      }
+
+      setIsJsonLoadModalOpen(false)
+      message.success(`파이프라인 복원 완료 (노드 ${restoredNodes.length}개, 엣지 ${restoredEdges.length}개)`)
+    } catch (err) {
+      setJsonLoadError(`복원 중 오류 발생: ${(err as Error).message}`)
+    } finally {
+      setIsJsonLoading(false)
+    }
+  }, [jsonLoadInput, reset, setNodes, setEdges, setNodeData])
+
   return (
     <div style={{ width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column' }}>
       {/* 상단 툴바 */}
@@ -253,6 +360,7 @@ function PipelineEditorContent() {
         onValidate={handleValidate}
         onExecute={handleExecute}
         onClearCanvas={handleClearCanvas}
+        onLoadJson={handleOpenJsonLoadModal}
         isValidating={isValidating}
         isExecuting={isExecuting}
         taskType={taskType}
@@ -297,6 +405,58 @@ function PipelineEditorContent() {
 
       {/* 실행 상태 모달 */}
       <ExecutionSubmittedModal />
+
+      {/* JSON 불러오기 모달 */}
+      <Modal
+        title="PipelineConfig JSON 불러오기"
+        open={isJsonLoadModalOpen}
+        onCancel={() => setIsJsonLoadModalOpen(false)}
+        onOk={handleLoadJson}
+        okText="불러오기"
+        cancelText="취소"
+        confirmLoading={isJsonLoading}
+        okButtonProps={{ disabled: !jsonLoadInput.trim() }}
+        width={640}
+        destroyOnClose
+      >
+        <div style={{ marginBottom: 8, color: '#8c8c8c', fontSize: 13 }}>
+          PipelineConfig JSON을 붙여넣으면 노드와 연결을 복원합니다.
+          기존 캔버스 내용은 교체됩니다.
+        </div>
+        <Input.TextArea
+          rows={16}
+          value={jsonLoadInput}
+          onChange={(e) => {
+            setJsonLoadInput(e.target.value)
+            setJsonLoadError(null)
+          }}
+          placeholder='{"name": "...", "output": {...}, "tasks": {...}}'
+          style={{ fontFamily: 'monospace', fontSize: 12 }}
+        />
+        {isJsonLoading && (
+          <div style={{ marginTop: 12, textAlign: 'center' }}>
+            <Spin size="small" />
+            <span style={{ marginLeft: 8, color: '#8c8c8c', fontSize: 12 }}>
+              manipulator / 데이터셋 정보 조회 중...
+            </span>
+          </div>
+        )}
+        {jsonLoadError && (
+          <div
+            style={{
+              marginTop: 8,
+              padding: '8px 12px',
+              background: '#fff2f0',
+              border: '1px solid #ffccc7',
+              borderRadius: 4,
+              color: '#cf1322',
+              fontSize: 12,
+            }}
+          >
+            {jsonLoadError}
+          </div>
+        )}
+      </Modal>
     </div>
   )
 }

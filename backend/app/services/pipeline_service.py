@@ -10,6 +10,7 @@ import uuid
 import structlog
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.storage import get_storage_client
 from app.models.all_models import (
@@ -263,9 +264,11 @@ class PipelineService:
     # -------------------------------------------------------------------------
 
     async def get_execution_status(self, execution_id: str) -> PipelineExecution | None:
-        """PipelineExecution 단건 조회."""
+        """PipelineExecution 단건 조회 (output_dataset eager load)."""
         result = await self.db.execute(
-            select(PipelineExecution).where(PipelineExecution.id == execution_id)
+            select(PipelineExecution)
+            .options(selectinload(PipelineExecution.output_dataset))
+            .where(PipelineExecution.id == execution_id)
         )
         return result.scalar_one_or_none()
 
@@ -278,7 +281,7 @@ class PipelineService:
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list[PipelineExecution], int]:
-        """PipelineExecution 목록 조회 (페이지네이션, 최신순)."""
+        """PipelineExecution 목록 조회 (페이지네이션, 최신순, output_dataset eager load)."""
         base_query = select(PipelineExecution)
 
         count_query = select(func.count()).select_from(base_query.subquery())
@@ -286,6 +289,7 @@ class PipelineService:
 
         list_query = (
             base_query
+            .options(selectinload(PipelineExecution.output_dataset))
             .order_by(PipelineExecution.created_at.desc())
             .offset((page - 1) * page_size)
             .limit(page_size)

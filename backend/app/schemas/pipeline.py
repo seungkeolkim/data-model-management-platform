@@ -63,6 +63,8 @@ class PipelineExecutionResponse(BaseModel):
     total_count: int
     error_message: str | None
     celery_task_id: str | None
+    task_progress: dict[str, Any] | None = None
+    pipeline_image_url: str | None = None
     started_at: datetime | None
     finished_at: datetime | None
     created_at: datetime

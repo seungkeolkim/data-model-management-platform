@@ -46,8 +46,13 @@ class _DbAwareDagExecutor(PipelineDagExecutor):
     load_source_meta_from_storage()로 annotation을 파싱한다.
     """
 
-    def __init__(self, storage: StorageProtocol, sync_db_session) -> None:
-        super().__init__(storage)
+    def __init__(
+        self,
+        storage: StorageProtocol,
+        sync_db_session,
+        on_task_progress=None,
+    ) -> None:
+        super().__init__(storage, on_task_progress=on_task_progress)
         self._sync_db = sync_db_session
 
     def _load_source_meta(self, dataset_id: str) -> DatasetMeta:
@@ -169,8 +174,26 @@ def _execute_pipeline(
         except Exception as png_error:
             logger.warning("pipeline.png 생성 건너뜀: %s", str(png_error))
 
-        # ── 3. Executor 생성 + 실행 ──
-        executor = _DbAwareDagExecutor(storage=storage, sync_db_session=db)
+        # ── 3. 태스크 진행 콜백 정의 ──
+        # executor가 태스크 시작/완료 시 호출하면 메모리에 진행 상태를 누적한다.
+        # DB commit은 최종 성공/실패 시점에 한번만 수행한다.
+        # (중간 commit 시 SQLAlchemy expire_on_commit으로 인해 외부 ORM 객체가
+        #  expire되어 최종 commit에서 task_progress가 누락되는 문제 방지)
+        task_progress_state: dict[str, dict] = {}
+
+        def _on_task_progress(task_name: str, status: str, detail: dict) -> None:
+            """DAG 태스크 진행 콜백 — 메모리에 진행 상태를 누적한다."""
+            if task_name not in task_progress_state:
+                task_progress_state[task_name] = {}
+            task_progress_state[task_name]["status"] = status
+            task_progress_state[task_name].update(detail)
+
+        # ── 4. Executor 생성 + 실행 ──
+        executor = _DbAwareDagExecutor(
+            storage=storage,
+            sync_db_session=db,
+            on_task_progress=_on_task_progress,
+        )
 
         # 서비스 레이어에서 사전 생성한 version 추출
         target_version = output_dataset.version
@@ -206,6 +229,7 @@ def _execute_pipeline(
         execution.current_stage = "completed"
         execution.total_count = result.image_count
         execution.processed_count = result.image_count
+        execution.task_progress = dict(task_progress_state) if task_progress_state else None
 
         # ── 6. DatasetLineage 엣지 생성 ──
         for source_dataset_id in result.source_dataset_ids:
@@ -247,6 +271,7 @@ def _execute_pipeline(
             execution.error_message = str(exc)[:2000]
             execution.finished_at = datetime.utcnow()
             execution.current_stage = "failed"
+            execution.task_progress = dict(task_progress_state) if task_progress_state else None
 
             output_dataset = db.query(Dataset).filter_by(
                 id=execution.output_dataset_id

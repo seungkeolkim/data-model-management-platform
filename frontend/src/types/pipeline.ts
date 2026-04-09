@@ -54,6 +54,20 @@ export interface PipelineSubmitResponse {
   message: string
 }
 
+/** DAG 태스크별 진행 상태 */
+export interface TaskProgressItem {
+  status: 'PENDING' | 'RUNNING' | 'DONE' | 'FAILED'
+  operator: string
+  started_at?: string
+  finished_at?: string
+  input_images?: number
+  output_images?: number
+  /** 이미지 실체화 단계 전용 필드 */
+  total_images?: number
+  materialized?: number
+  skipped?: number
+}
+
 export interface PipelineExecutionResponse {
   id: string
   output_dataset_id: string
@@ -64,6 +78,8 @@ export interface PipelineExecutionResponse {
   total_count: number
   error_message: string | null
   celery_task_id: string | null
+  task_progress: Record<string, TaskProgressItem> | null
+  pipeline_image_url: string | null
   started_at: string | null
   finished_at: string | null
   created_at: string

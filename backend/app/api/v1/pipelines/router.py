@@ -9,6 +9,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.storage import get_storage_client
+from app.models.all_models import PipelineExecution
 from app.schemas.pipeline import (
     PipelineConfig,
     PipelineExecutionResponse,
@@ -20,6 +22,41 @@ from app.schemas.pipeline import (
 from app.services.pipeline_service import PipelineService
 
 router = APIRouter()
+
+
+def _build_execution_response(execution: PipelineExecution) -> PipelineExecutionResponse:
+    """
+    PipelineExecution ORM → PipelineExecutionResponse 변환.
+
+    pipeline_image_url은 output_dataset의 storage_uri를 통해 생성한다.
+    output_dataset relationship이 로드된 상태여야 한다.
+    """
+    pipeline_image_url = None
+    output_dataset = execution.output_dataset
+    if output_dataset and output_dataset.storage_uri:
+        storage = get_storage_client()
+        png_path = storage.resolve_path(output_dataset.storage_uri) / "pipeline.png"
+        if png_path.exists():
+            pipeline_image_url = storage.get_image_serve_url(
+                f"{output_dataset.storage_uri}/pipeline.png"
+            )
+
+    return PipelineExecutionResponse(
+        id=execution.id,
+        output_dataset_id=execution.output_dataset_id,
+        config=execution.config,
+        status=execution.status,
+        current_stage=execution.current_stage,
+        processed_count=execution.processed_count,
+        total_count=execution.total_count,
+        error_message=execution.error_message,
+        celery_task_id=execution.celery_task_id,
+        task_progress=execution.task_progress,
+        pipeline_image_url=pipeline_image_url,
+        started_at=execution.started_at,
+        finished_at=execution.finished_at,
+        created_at=execution.created_at,
+    )
 
 
 @router.post("/validate", response_model=PipelineValidationResponse)
@@ -81,7 +118,7 @@ async def get_pipeline_status(
     execution = await service.get_execution_status(execution_id)
     if execution is None:
         raise HTTPException(status_code=404, detail="실행 이력을 찾을 수 없습니다.")
-    return execution
+    return _build_execution_response(execution)
 
 
 @router.get("", response_model=PipelineListResponse)
@@ -93,4 +130,7 @@ async def list_pipeline_executions(
     """파이프라인 실행 이력 목록을 조회한다."""
     service = PipelineService(db)
     items, total = await service.list_executions(page=page, page_size=page_size)
-    return PipelineListResponse(items=items, total=total)
+    return PipelineListResponse(
+        items=[_build_execution_response(item) for item in items],
+        total=total,
+    )
