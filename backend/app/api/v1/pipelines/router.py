@@ -41,10 +41,12 @@ def _build_execution_response(execution: PipelineExecution) -> PipelineExecution
                 f"{output_dataset.storage_uri}/pipeline.png"
             )
 
-    # 출력 데이터셋 버전
+    # 출력 데이터셋 버전 및 그룹 ID
     output_dataset_version = None
-    if output_dataset and output_dataset.version:
+    output_dataset_group_id = None
+    if output_dataset:
         output_dataset_version = output_dataset.version
+        output_dataset_group_id = output_dataset.group_id
 
     return PipelineExecutionResponse(
         id=execution.id,
@@ -59,6 +61,7 @@ def _build_execution_response(execution: PipelineExecution) -> PipelineExecution
         task_progress=execution.task_progress,
         pipeline_image_url=pipeline_image_url,
         output_dataset_version=output_dataset_version,
+        output_dataset_group_id=output_dataset_group_id,
         started_at=execution.started_at,
         finished_at=execution.finished_at,
         created_at=execution.created_at,

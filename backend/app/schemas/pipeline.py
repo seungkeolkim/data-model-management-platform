@@ -66,6 +66,7 @@ class PipelineExecutionResponse(BaseModel):
     task_progress: dict[str, Any] | None = None
     pipeline_image_url: str | None = None
     output_dataset_version: str | None = None
+    output_dataset_group_id: str | None = None
     started_at: datetime | None
     finished_at: datetime | None
     created_at: datetime

@@ -286,7 +286,7 @@ export default function PipelineHistoryPage() {
       <ExecutionDetailDrawer
         execution={selectedExecution}
         onClose={() => setSelectedExecution(null)}
-        onNavigateToDataset={(datasetId) => navigate(`/datasets?highlight=${datasetId}`)}
+        onNavigateToDataset={(groupId, datasetId) => navigate(`/datasets/${groupId}/${datasetId}`)}
       />
 
       {/* ── 태스크 타입 선택 모달 ── */}
@@ -432,7 +432,7 @@ function ExecutionDetailDrawer({
 }: {
   execution: PipelineExecutionResponse | null
   onClose: () => void
-  onNavigateToDataset: (datasetId: string) => void
+  onNavigateToDataset: (groupId: string, datasetId: string) => void
 }) {
   const [isConfigModalOpen, setIsConfigModalOpen] = useState(false)
 
@@ -642,15 +642,21 @@ function ExecutionDetailDrawer({
               {execution.output_dataset_version ?? '-'}
             </Descriptions.Item>
             <Descriptions.Item label="출력 데이터셋">
-              <Button
-                type="link"
-                size="small"
-                icon={<LinkOutlined />}
-                style={{ padding: 0 }}
-                onClick={() => onNavigateToDataset(execution.output_dataset_id)}
-              >
-                데이터셋 보기
-              </Button>
+              {execution.output_dataset_group_id ? (
+                <Button
+                  type="link"
+                  size="small"
+                  icon={<LinkOutlined />}
+                  style={{ padding: 0 }}
+                  onClick={() => onNavigateToDataset(execution.output_dataset_group_id!, execution.output_dataset_id)}
+                >
+                  데이터셋 보기
+                </Button>
+              ) : (
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {execution.output_dataset_id.slice(0, 8)}...
+                </Text>
+              )}
             </Descriptions.Item>
           </Descriptions>
         </>

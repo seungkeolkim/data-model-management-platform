@@ -81,6 +81,7 @@ export interface PipelineExecutionResponse {
   task_progress: Record<string, TaskProgressItem> | null
   pipeline_image_url: string | null
   output_dataset_version: string | null
+  output_dataset_group_id: string | null
   started_at: string | null
   finished_at: string | null
   created_at: string
