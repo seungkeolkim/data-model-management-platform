@@ -638,6 +638,9 @@ function ExecutionDetailDrawer({
             <Descriptions.Item label="Split">
               {outputConfig.split ?? 'NONE'}
             </Descriptions.Item>
+            <Descriptions.Item label="버전">
+              {execution.output_dataset_version ?? '-'}
+            </Descriptions.Item>
             <Descriptions.Item label="출력 데이터셋">
               <Button
                 type="link"

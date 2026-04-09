@@ -80,6 +80,7 @@ export interface PipelineExecutionResponse {
   celery_task_id: string | null
   task_progress: Record<string, TaskProgressItem> | null
   pipeline_image_url: string | null
+  output_dataset_version: string | null
   started_at: string | null
   finished_at: string | null
   created_at: string

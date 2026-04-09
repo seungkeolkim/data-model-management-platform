@@ -65,6 +65,7 @@ class PipelineExecutionResponse(BaseModel):
     celery_task_id: str | None
     task_progress: dict[str, Any] | None = None
     pipeline_image_url: str | None = None
+    output_dataset_version: str | None = None
     started_at: datetime | None
     finished_at: datetime | None
     created_at: datetime

@@ -41,6 +41,11 @@ def _build_execution_response(execution: PipelineExecution) -> PipelineExecution
                 f"{output_dataset.storage_uri}/pipeline.png"
             )
 
+    # 출력 데이터셋 버전
+    output_dataset_version = None
+    if output_dataset and output_dataset.version:
+        output_dataset_version = output_dataset.version
+
     return PipelineExecutionResponse(
         id=execution.id,
         output_dataset_id=execution.output_dataset_id,
@@ -53,6 +58,7 @@ def _build_execution_response(execution: PipelineExecution) -> PipelineExecution
         celery_task_id=execution.celery_task_id,
         task_progress=execution.task_progress,
         pipeline_image_url=pipeline_image_url,
+        output_dataset_version=output_dataset_version,
         started_at=execution.started_at,
         finished_at=execution.finished_at,
         created_at=execution.created_at,
