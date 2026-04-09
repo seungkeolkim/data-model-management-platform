@@ -9,7 +9,7 @@
  * 새로운 카테고리(UDM 등)가 추가되면 자동으로 팔레트에 나타난다.
  */
 
-import { Typography, Collapse, Button, Spin, Badge, Tooltip } from 'antd'
+import { Typography, Collapse, Button, Spin, Badge, Tooltip, Modal } from 'antd'
 import { useQuery } from '@tanstack/react-query'
 import { manipulatorsApi } from '@/api/pipeline'
 import type { Manipulator } from '@/types/dataset'
@@ -116,24 +116,57 @@ export default function NodePalette({ onAddNode, taskType }: NodePaletteProps) {
             const buttonLabel = parenMatch ? parenMatch[1] : desc
             const tooltipText = parenMatch ? parenMatch[2] : null
 
+            // FORMAT_CONVERT 카테고리는 비활성화 — 통일포맷에서 자동 처리됨
+            const isFormatConvert = category === 'FORMAT_CONVERT'
+
+            const handleClick = isFormatConvert
+              ? () => {
+                  Modal.info({
+                    title: '포맷 변환은 자동으로 처리됩니다',
+                    content: (
+                      <div>
+                        <p>통일포맷 도입으로 포맷 변환이 파이프라인 저장 시 자동으로 수행됩니다.</p>
+                        <p>Save 노드의 <b>출력 포맷</b>(COCO / YOLO) 설정만으로 원하는 포맷의 데이터셋이 생성되므로, 사용자가 명시적으로 포맷 변환 노드를 추가할 필요가 없습니다.</p>
+                      </div>
+                    ),
+                    okText: '확인',
+                  })
+                }
+              : () => onAddNode(createOperatorNodeData(m))
+
             const button = (
               <Button
                 key={m.name}
                 size="small"
                 block
-                style={{ textAlign: 'left', fontSize: 12, borderColor: meta.color, color: meta.color }}
-                onClick={() => onAddNode(createOperatorNodeData(m))}
+                style={{
+                  textAlign: 'left',
+                  fontSize: 12,
+                  borderColor: isFormatConvert ? '#d9d9d9' : meta.color,
+                  color: isFormatConvert ? '#bfbfbf' : meta.color,
+                  pointerEvents: isFormatConvert ? 'none' : undefined,
+                }}
+                onClick={isFormatConvert ? undefined : handleClick}
               >
                 {getManipulatorEmoji(m.name, category)} {buttonLabel}
               </Button>
             )
 
-            return tooltipText ? (
-              <Tooltip key={m.name} title={tooltipText} placement="right" mouseEnterDelay={0.3}>
+            // FORMAT_CONVERT: 버튼은 비활성 스타일이지만, 감싼 div에서 클릭을 받아 모달 표시
+            const wrappedButton = isFormatConvert ? (
+              <div key={m.name} onClick={handleClick} style={{ cursor: 'pointer' }}>
                 {button}
-              </Tooltip>
+              </div>
             ) : (
               <span key={m.name}>{button}</span>
+            )
+
+            return tooltipText ? (
+              <Tooltip key={m.name} title={tooltipText} placement="right" mouseEnterDelay={0.3}>
+                {wrappedButton}
+              </Tooltip>
+            ) : (
+              wrappedButton
             )
           })}
         </div>
@@ -211,7 +244,7 @@ export default function NodePalette({ onAddNode, taskType }: NodePaletteProps) {
               name: '',
               description: '',
               datasetType: 'PROCESSED',
-              annotationFormat: null,
+              annotationFormat: 'COCO',
               split: 'NONE',
             })
           }

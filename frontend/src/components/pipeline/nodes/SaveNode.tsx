@@ -32,7 +32,6 @@ const SPLIT_OPTIONS = [
 ]
 
 const FORMAT_OPTIONS = [
-  { value: '', label: '자동 (입력 포맷 유지)' },
   { value: 'COCO', label: 'COCO' },
   { value: 'YOLO', label: 'YOLO' },
 ]
@@ -133,10 +132,10 @@ function SaveNodeComponent({ id }: NodeProps) {
           <Text style={{ fontSize: 11, color: '#8c8c8c' }}>어노테이션 포맷</Text>
           <Select
             size="small"
-            value={nodeData.annotationFormat ?? ''}
+            value={nodeData.annotationFormat ?? 'COCO'}
             options={FORMAT_OPTIONS}
             style={{ width: '100%' }}
-            onChange={(val) => updateField('annotationFormat', val || null)}
+            onChange={(val) => updateField('annotationFormat', val)}
           />
         </div>
 
