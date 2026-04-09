@@ -205,13 +205,13 @@ MANIPULATOR_REGISTRY 4종째. 지정 class 이름의 annotation만 유지하고 
     → 실패: Dataset(ERROR) + PipelineExecution(FAILED)
 ```
 
-### 4-2. PipelineConfig 스키마 (변경 없음)
+### 4-2. PipelineConfig 스키마 (6차 업데이트)
 
 ```python
 class PipelineConfig(BaseModel):
     name: str                              # 출력 DatasetGroup 이름
     description: str | None
-    output: OutputConfig                   # dataset_type, annotation_format, split
+    output: OutputConfig                   # dataset_type, annotation_format, split (필수)
     tasks: dict[str, TaskConfig]           # DAG 태스크 정의
 
 class TaskConfig(BaseModel):
@@ -221,7 +221,7 @@ class TaskConfig(BaseModel):
 
 class OutputConfig(BaseModel):
     dataset_type: str = "SOURCE"           # SOURCE | PROCESSED | FUSION
-    annotation_format: str | None = None   # None이면 마지막 태스크 포맷 유지
+    annotation_format: str = Field(...)    # COCO | YOLO (필수, 통일포맷 전환으로 auto 불가)
     split: str = "NONE"
 ```
 
@@ -333,33 +333,52 @@ const nodeData = usePipelineEditorStore(
 
 ---
 
-## 6. MANIPULATOR_REGISTRY (현재 10종 구현)
+## 6. MANIPULATOR_REGISTRY (현재 12종 구현, 6차 업데이트)
+
+### 통일포맷 내부 모델
+
+통일포맷 전환으로 파이프라인 내부에서 annotation_format 구분이 사라짐:
+- `Annotation.category_name: str` (정수 ID 없음)
+- `DatasetMeta.categories: list[str]` (이름 목록)
+- 포맷별 ID는 저장 시점에만 부여 (COCO: 표준 80클래스 매핑, YOLO: 알파벳순 0-based)
 
 ### 코드 구현 완료
 
 ```python
 MANIPULATOR_REGISTRY = {
-    "format_convert_to_coco": FormatConvertToCoco,                                           # FORMAT_CONVERT
-    "format_convert_to_yolo": FormatConvertToYolo,                                           # FORMAT_CONVERT
-    "merge_datasets": MergeDatasets,                                                          # MERGE
-    "filter_remain_selected_class_names_only_in_annotation": FilterRemainSelectedClassNamesOnlyInAnnotation,  # ANNOTATION_FILTER
-    "filter_keep_images_containing_class_name": FilterKeepImagesContainingClassName,          # IMAGE_FILTER
-    "filter_remove_images_containing_class_name": FilterRemoveImagesContainingClassName,      # IMAGE_FILTER
-    "remap_class_name": RemapClassName,                                                       # REMAP
-    "rotate_image": RotateImage,                                                              # AUGMENT (이미지 변형)
-    "mask_region_by_class": MaskRegionByClass,                                                # AUGMENT (이미지 변형)
-    "sample_n_images": SampleNImages,                                                         # SAMPLE
+    # FORMAT_CONVERT (4종, 모두 no-op — 통일포맷에서 자동 처리)
+    "format_convert_to_coco": FormatConvertToCoco,
+    "format_convert_to_yolo": FormatConvertToYolo,
+    "format_convert_visdrone_to_coco": FormatConvertVisDroneToCoco,
+    "format_convert_visdrone_to_yolo": FormatConvertVisDroneToYolo,
+    # MERGE
+    "merge_datasets": MergeDatasets,                                    # name 기반 union, ID 리매핑 불필요
+    # ANNOTATION_FILTER
+    "filter_remain_selected_class_names_only_in_annotation": ...,       # category_name 기반 필터
+    # IMAGE_FILTER
+    "filter_keep_images_containing_class_name": ...,                    # category_name 기반 필터
+    "filter_remove_images_containing_class_name": ...,                  # category_name 기반 필터
+    # REMAP
+    "remap_class_name": RemapClassName,                                 # str list 조작
+    # AUGMENT (이미지 변형)
+    "rotate_image": RotateImage,
+    "mask_region_by_class": MaskRegionByClass,
+    # SAMPLE
+    "sample_n_images": SampleNImages,
 }
 ```
 
 ### DB Seed 등록 완료 (코드 미구현)
 
-| 이름 | 카테고리 | 상태 |
-|------|----------|------|
-| `change_compression` | AUGMENT | seed만, 코드 미구현 |
-| `format_convert_visdrone_to_coco` | FORMAT_CONVERT | seed만, 코드 미구현 |
-| `format_convert_visdrone_to_yolo` | FORMAT_CONVERT | seed만, 코드 미구현 |
-| `shuffle_image_ids` | SAMPLE | seed만, 코드 미구현 |
+| 이름 | 카테고리 | 상태 | GUI 표시 |
+|------|----------|------|----------|
+| `change_compression` | AUGMENT | seed만, 코드 미구현 | 클릭 시 "미구현" 모달 |
+| `shuffle_image_ids` | SAMPLE | seed만, 코드 미구현 | 클릭 시 "미구현" 모달 |
+
+### GUI 비활성화 상태
+
+- **FORMAT_CONVERT 전체**: 회색 비활성, 클릭 시 "자동 처리됨" 안내 모달
+- **미구현 2종**: 회색 비활성, 클릭 시 "미구현 상태" 경고 모달
 
 ---
 
@@ -395,12 +414,15 @@ source/output_name/train/v1.0.0/
 | 네이밍 점검 | `_write_data_yaml` 등 general한 함수명 리네이밍 | 별도 세션 |
 | YOLO yaml path | data.yaml에 이미지 경로 미포함 -> 학습 시 path 주입 필요 | Step 2 (학습 자동화) |
 | ~~ImageManipulationSpec 체인~~ | ~~spec 누적 로직 구현~~ | ✅ 완료 (record.extra에 누적, _build_image_plans에서 추출) |
+| ~~통일포맷 마이그레이션~~ | ~~category_name 기반, 포맷 무관~~ | ✅ 완료 (Stage 1~7, 183 tests, 크로스포맷 merge 검증) |
+| 미구현 manipulator | `change_compression`, `shuffle_image_ids` 구현 | 다음 세션 |
 | S3StorageClient | 3차 K8S 전환 시 구현 | Step 3 |
 | React Flow Lineage 시각화 | DatasetLineage 데이터는 이미 생성됨 | Phase 2-b |
 | EDA 자동화 | `app/tasks/eda_tasks.py` skeleton만 존재 | Phase 2-a |
 | 테스트 자동화 | Integration/Regression/E2E 테스트 추가 | Celery 안정화 후 |
 | 엣지 연결 규칙 검증 | 노드 타입 호환성 체크 | 다음 GUI 개선 세션 |
 | 검증 결과 노드별 하이라이트 | validate API 결과를 노드에 매핑 | 다음 GUI 개선 세션 |
+| 기존 데이터셋 뷰어 전수 검증 | 모든 READY 데이터셋 샘플뷰어/EDA 정상 동작 확인 | 다음 세션 |
 
 ---
 
@@ -411,7 +433,7 @@ source/output_name/train/v1.0.0/
 | 파일 | 역할 |
 |------|------|
 | `lib/pipeline/config.py` | PipelineConfig, TaskConfig, OutputConfig (Pydantic) |
-| `lib/pipeline/dag_executor.py` | PipelineDagExecutor — DAG 실행 + processing.log + COCO ID 보존 |
+| `lib/pipeline/dag_executor.py` | PipelineDagExecutor — DAG 실행 + processing.log (통일포맷, 포맷 검증 없음) |
 | `lib/pipeline/image_materializer.py` | ImageMaterializer — 이미지 복사 + 누락 스킵 (MaterializeResult) |
 | `lib/pipeline/pipeline_data_models.py` | DatasetMeta, ImageRecord, Annotation 등 |
 | `lib/pipeline/manipulator_base.py` | UnitManipulator ABC |
@@ -420,10 +442,16 @@ source/output_name/train/v1.0.0/
 | `lib/pipeline/io/coco_io.py` | COCO JSON 파서/라이터 |
 | `lib/pipeline/io/yolo_io.py` | YOLO 디렉토리 파서/라이터 (data.yaml 별도) |
 | `lib/pipeline/io/coco_yolo_class_mapping.py` | COCO 80클래스 표준 매핑 테이블 |
-| `lib/manipulators/__init__.py` | MANIPULATOR_REGISTRY (4종) |
-| `lib/manipulators/format_convert.py` | FormatConvertToCoco, FormatConvertToYolo |
-| `lib/manipulators/merge_datasets.py` | MergeDatasets — COCO ID 보존/YOLO 순차 분기 |
-| `lib/manipulators/filter_final_classes.py` | FilterFinalClasses — annotation 레벨 class 필터 |
+| `lib/manipulators/__init__.py` | MANIPULATOR_REGISTRY (12종) |
+| `lib/manipulators/format_convert.py` | FormatConvert 4종 (모두 no-op, 통일포맷) |
+| `lib/manipulators/merge_datasets.py` | MergeDatasets — name 기반 union (ID 리매핑 불필요) |
+| `lib/manipulators/filter_remain_selected_class_names_only_in_annotation.py` | annotation 레벨 class 필터 |
+| `lib/manipulators/filter_keep_images_containing_class_name.py` | 특정 class 포함 이미지 유지 |
+| `lib/manipulators/filter_remove_images_containing_class_name.py` | 특정 class 포함 이미지 제거 |
+| `lib/manipulators/remap_class_name.py` | category name 변경 |
+| `lib/manipulators/rotate_image.py` | 90°/180°/270° 이미지 회전 + bbox 변환 |
+| `lib/manipulators/mask_region_by_class.py` | 지정 class bbox 영역 마스킹 |
+| `lib/manipulators/sample_n_images.py` | N장 랜덤 샘플 추출 |
 
 ### app/ (FastAPI + DB + Celery)
 
@@ -469,4 +497,4 @@ source/output_name/train/v1.0.0/
 | coco128(YOLO) -> format_convert_to_coco -> Save | 126장 (2장 스킵), COCO 출력 |
 | coco128(YOLO) + coco4 -> 각각 COCO 변환 -> merge -> Save | 130장 (2장 스킵), COCO 출력 |
 | coco_val -> format_convert_to_yolo -> Save | YOLO 출력, data.yaml 루트 배치 확인 |
-| coco128(YOLO) -> format_convert_to_coco -> filter_final_classes -> Save | annotation 필터 검증 필요 |
+| **COCO(coco2017) + YOLO(coco128) → filter → sample → merge → Save(COCO)** | **✅ 136장, 크로스포맷 merge 성공 (통일포맷)** |
