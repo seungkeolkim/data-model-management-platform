@@ -19,7 +19,7 @@ from lib.pipeline.pipeline_validator import (
 def _make_config(
     name: str = "test_pipeline",
     dataset_type: str = "PROCESSED",
-    annotation_format: str | None = "COCO",
+    annotation_format: str = "COCO",
     split: str = "TRAIN",
     tasks: dict | None = None,
 ) -> PipelineConfig:
@@ -157,13 +157,6 @@ class TestValidateOutputAnnotationFormat:
     def test_valid_formats_pass(self, annotation_format: str):
         """허용된 포맷은 오류가 없어야 한다."""
         config = _make_config(annotation_format=annotation_format)
-        result = validate_pipeline_config_static(config)
-        error_codes = [issue.code for issue in result.issues]
-        assert "INVALID_ANNOTATION_FORMAT" not in error_codes
-
-    def test_none_format_is_allowed(self):
-        """None이면 마지막 태스크의 포맷을 따르므로 오류가 없어야 한다."""
-        config = _make_config(annotation_format=None)
         result = validate_pipeline_config_static(config)
         error_codes = [issue.code for issue in result.issues]
         assert "INVALID_ANNOTATION_FORMAT" not in error_codes

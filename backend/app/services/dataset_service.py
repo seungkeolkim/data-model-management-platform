@@ -831,6 +831,8 @@ class DatasetGroupService:
     # -------------------------------------------------------------------------
 
     SAMPLE_INDEX_FILENAME = "sample_index.json"
+    # 통일포맷 전환 후 캐시 구조 변경 (v1: category_id 기반 → v2: category_name 기반)
+    SAMPLE_INDEX_SCHEMA_VERSION = 2
 
     def _load_dataset_meta(self, dataset: Dataset) -> "DatasetMeta | None":
         """
@@ -872,9 +874,10 @@ class DatasetGroupService:
         sample_index.json 캐시를 반환한다.
         파일이 있으면 읽어서 반환, 없으면 annotation을 파싱하여 생성 후 반환.
 
-        캐시 구조:
+        캐시 구조 (schema_version=2, 통일포맷):
             {
-                "categories": [{"id": 1, "name": "person"}, ...],
+                "schema_version": 2,
+                "categories": ["person", "car", ...],
                 "images": [
                     {
                         "image_id": 1,
@@ -883,22 +886,31 @@ class DatasetGroupService:
                         "height": 480,
                         "annotation_count": 3,
                         "annotations": [
-                            {"category_id": 1, "category_name": "person", "bbox": [...], "area": 1234.5},
+                            {"category_name": "person", "bbox": [...], "area": 1234.5},
                             ...
                         ]
                     },
                     ...
-                ]
+                ],
+                "bbox_normalized": false
             }
 
         READY 데이터셋은 내용이 변하지 않으므로 캐시 무효화가 불필요하다.
         """
         index_path = self._get_sample_index_path(dataset)
 
-        # 캐시 파일이 이미 있으면 읽기만 하고 반환
+        # 캐시 파일이 이미 있으면 읽기만 하고 반환 (스키마 버전 일치 시)
         if index_path.exists():
             try:
-                return json.loads(index_path.read_text(encoding="utf-8"))
+                cached = json.loads(index_path.read_text(encoding="utf-8"))
+                if cached.get("schema_version") == self.SAMPLE_INDEX_SCHEMA_VERSION:
+                    return cached
+                logger.info(
+                    "sample_index.json 스키마 버전 불일치 — 재생성",
+                    dataset_id=dataset.id,
+                    cached_version=cached.get("schema_version"),
+                    expected_version=self.SAMPLE_INDEX_SCHEMA_VERSION,
+                )
             except Exception as read_error:
                 logger.warning(
                     "sample_index.json 읽기 실패 — 재생성",
@@ -911,8 +923,6 @@ class DatasetGroupService:
         if meta is None:
             return None
 
-        category_id_to_name = {cat["id"]: cat["name"] for cat in meta.categories}
-
         images = []
         for record in meta.image_records:
             annotation_items = []
@@ -921,10 +931,7 @@ class DatasetGroupService:
                 if ann.bbox and len(ann.bbox) == 4:
                     area = round(ann.bbox[2] * ann.bbox[3], 1)
                 annotation_items.append({
-                    "category_id": ann.category_id,
-                    "category_name": category_id_to_name.get(
-                        ann.category_id, str(ann.category_id)
-                    ),
+                    "category_name": ann.category_name,
                     "bbox": ann.bbox,
                     "area": area,
                 })
@@ -942,6 +949,7 @@ class DatasetGroupService:
         has_image_sizes = any(record.width is not None for record in meta.image_records)
 
         sample_index = {
+            "schema_version": self.SAMPLE_INDEX_SCHEMA_VERSION,
             "categories": meta.categories,
             "images": images,
             "bbox_normalized": not has_image_sizes,
@@ -1036,11 +1044,10 @@ class DatasetGroupService:
 
         all_images = sample_index["images"]
         categories = sample_index["categories"]
-        category_id_to_name = {cat["id"]: cat["name"] for cat in categories}
 
-        # 클래스별 통계
-        class_annotation_count: dict[int, int] = {}
-        class_image_set: dict[int, set] = {}
+        # 클래스별 통계 (통일포맷: category_name 기반)
+        class_annotation_count: dict[str, int] = {}
+        class_image_set: dict[str, set] = {}
         total_annotations = 0
         images_without_annotations = 0
 
@@ -1061,37 +1068,34 @@ class DatasetGroupService:
             if not annotations:
                 images_without_annotations += 1
 
-            seen_categories_in_image: set[int] = set()
+            seen_categories_in_image: set[str] = set()
             for ann in annotations:
                 total_annotations += 1
-                category_id = ann["category_id"]
-                class_annotation_count[category_id] = (
-                    class_annotation_count.get(category_id, 0) + 1
+                category_name = ann["category_name"]
+                class_annotation_count[category_name] = (
+                    class_annotation_count.get(category_name, 0) + 1
                 )
-                seen_categories_in_image.add(category_id)
+                seen_categories_in_image.add(category_name)
 
                 if ann.get("bbox") and len(ann["bbox"]) == 4:
                     bbox_areas.append(ann["bbox"][2] * ann["bbox"][3])
 
-            for category_id in seen_categories_in_image:
-                if category_id not in class_image_set:
-                    class_image_set[category_id] = set()
-                class_image_set[category_id].add(image_entry["image_id"])
+            for category_name in seen_categories_in_image:
+                if category_name not in class_image_set:
+                    class_image_set[category_name] = set()
+                class_image_set[category_name].add(image_entry["image_id"])
 
         # 클래스 분포 (annotation 수 내림차순)
         class_distribution = []
-        for category_id, annotation_count in sorted(
+        for category_name, annotation_count in sorted(
             class_annotation_count.items(),
             key=lambda item: item[1],
             reverse=True,
         ):
             class_distribution.append({
-                "category_id": category_id,
-                "category_name": category_id_to_name.get(
-                    category_id, str(category_id)
-                ),
+                "category_name": category_name,
                 "annotation_count": annotation_count,
-                "image_count": len(class_image_set.get(category_id, set())),
+                "image_count": len(class_image_set.get(category_name, set())),
             })
 
         # bbox 면적 분포 (구간별)

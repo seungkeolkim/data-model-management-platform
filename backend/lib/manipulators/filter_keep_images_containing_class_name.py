@@ -14,9 +14,8 @@ params:
 
 처리 흐름:
     1. class_names 파싱 → 유지 기준 class 이름 set 구성
-    2. categories에서 이름이 매칭되는 category_id set 구성
-    3. 각 image_record의 annotations 중 하나라도 해당 category_id를 포함하면 유지, 아니면 제거
-    4. categories는 변경하지 않음 (카테고리 목록은 유지)
+    2. 각 image_record의 annotations 중 하나라도 해당 category_name을 포함하면 유지, 아니면 제거
+    3. categories는 변경하지 않음 (카테고리 목록은 유지)
 """
 from __future__ import annotations
 
@@ -89,18 +88,10 @@ class FilterKeepImagesContainingClassName(UnitManipulator):
 
         filtered_meta = copy.deepcopy(input_meta)
 
-        # 유지 기준 category_id 집합 구성
-        keep_category_ids = set()
-        for category in filtered_meta.categories:
-            if category["name"] in keep_names:
-                keep_category_ids.add(category["id"])
-
         # 매칭되지 않는 이름이 있으면 경고
-        matched_names = {
-            cat["name"] for cat in filtered_meta.categories
-            if cat["name"] in keep_names
-        }
-        unmatched_names = keep_names - matched_names
+        existing_names = set(filtered_meta.categories)
+        matched_names = keep_names & existing_names
+        unmatched_names = keep_names - existing_names
         if unmatched_names:
             logger.warning(
                 "categories에 존재하지 않는 class 이름: %s (무시됨)",
@@ -113,7 +104,7 @@ class FilterKeepImagesContainingClassName(UnitManipulator):
             image_record
             for image_record in filtered_meta.image_records
             if any(
-                ann.category_id in keep_category_ids
+                ann.category_name in keep_names
                 for ann in image_record.annotations
             )
         ]
@@ -122,7 +113,7 @@ class FilterKeepImagesContainingClassName(UnitManipulator):
         logger.info(
             "filter_keep_images_containing_class_name 완료: 유지 기준 class %d개 (%s), "
             "제거된 이미지 %d장, 남은 이미지 %d장",
-            len(keep_category_ids),
+            len(matched_names),
             ", ".join(sorted(matched_names)),
             removed_image_count,
             len(filtered_meta.image_records),

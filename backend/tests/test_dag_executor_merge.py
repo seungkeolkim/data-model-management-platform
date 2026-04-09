@@ -1,19 +1,21 @@
 """
 DAG Executor + merge_datasets 통합 테스트.
 
+통일포맷 전환 후:
+  - annotation_format 검증 삭제 (_validate_input_formats 삭제됨)
+  - categories는 list[str], annotation은 category_name 기반
+  - cross-format merge가 자연스럽게 지원됨
+
 테스트 영역:
   1. executor가 merge_datasets operator일 때 _merge_metas()를 건너뛰고 list 전달
-  2. 비-merge multi-input은 기존대로 _merge_metas() 호출 (하위 호환)
-  3. _build_image_plans: extra에 source 정보 있을 때 올바른 경로 생성
-  4. 포맷 검증: 다른 포맷 소스 merge 시도 → ValueError
-  5. _is_multi_input_manipulator 동작 확인
+  2. _build_image_plans: extra에 source 정보 있을 때 올바른 경로 생성
+  3. _is_multi_input_manipulator 동작 확인
 """
 from __future__ import annotations
 
 import hashlib
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -37,7 +39,7 @@ class MockStorage:
 
     def __init__(self, base_path: Path | None = None) -> None:
         self.base_path = base_path or Path("/tmp/test_storage")
-        self.exists_calls: list[str] = []  # exists() 호출 추적용
+        self.exists_calls: list[str] = []
 
     def resolve_path(self, relative_path: str) -> Path:
         return self.base_path / relative_path
@@ -87,26 +89,25 @@ class _TestableExecutor(PipelineDagExecutor):
 # ─────────────────────────────────────────────────────────────────
 
 
-def _make_annotation(category_id: int) -> Annotation:
+def _make_annotation(category_name: str) -> Annotation:
     return Annotation(
         annotation_type="BBOX",
-        category_id=category_id,
+        category_name=category_name,
         bbox=[10.0, 20.0, 30.0, 40.0],
     )
 
 
 def _make_source_meta(
     dataset_id: str,
-    categories: list[dict],
+    categories: list[str],
     file_names: list[str],
-    annotation_format: str = "COCO",
     dataset_name: str | None = None,
 ) -> DatasetMeta:
     """간편한 소스 DatasetMeta 생성."""
     records = []
     for idx, file_name in enumerate(file_names, start=1):
         # 각 이미지에 첫 번째 카테고리의 annotation 1개씩
-        anns = [_make_annotation(categories[0]["id"])] if categories else []
+        anns = [_make_annotation(categories[0])] if categories else []
         records.append(
             ImageRecord(
                 image_id=idx,
@@ -122,7 +123,6 @@ def _make_source_meta(
     return DatasetMeta(
         dataset_id=dataset_id,
         storage_uri=f"source/{dataset_id}/train/v1.0.0",
-        annotation_format=annotation_format,
         categories=categories,
         image_records=records,
         extra=extra,
@@ -151,38 +151,12 @@ class TestIsMultiInputManipulator:
 
 
 # ─────────────────────────────────────────────────────────────────
-# 2. 포맷 검증 테스트
-# ─────────────────────────────────────────────────────────────────
-
-
-class TestValidateInputFormats:
-    """_validate_input_formats() 테스트."""
-
-    def test_same_format_passes(self):
-        executor = PipelineDagExecutor(MockStorage())
-        metas = [
-            _make_source_meta("a", [], [], annotation_format="COCO"),
-            _make_source_meta("b", [], [], annotation_format="COCO"),
-        ]
-        executor._validate_input_formats(metas, "merge_datasets")  # 예외 없으면 성공
-
-    def test_different_format_raises(self):
-        executor = PipelineDagExecutor(MockStorage())
-        metas = [
-            _make_source_meta("a", [], [], annotation_format="COCO"),
-            _make_source_meta("b", [], [], annotation_format="YOLO"),
-        ]
-        with pytest.raises(ValueError, match="포맷 불일치"):
-            executor._validate_input_formats(metas, "merge_datasets")
-
-
-# ─────────────────────────────────────────────────────────────────
-# 3. _build_image_plans 테스트
+# 2. _build_image_plans 테스트
 # ─────────────────────────────────────────────────────────────────
 
 
 class TestBuildImagePlans:
-    """_build_image_plans() 리팩터 테스트."""
+    """_build_image_plans() 테스트."""
 
     def test_merge_path_uses_extra_source_info(self):
         """extra에 source 정보가 있으면 원본 파일명으로 src_uri 구성."""
@@ -193,12 +167,11 @@ class TestBuildImagePlans:
         output_meta = DatasetMeta(
             dataset_id="",
             storage_uri="",
-            annotation_format="COCO",
             categories=[],
             image_records=[
                 ImageRecord(
                     image_id=1,
-                    file_name=f"coco8_{hash_a}_000001.jpg",  # prefix된 이름
+                    file_name=f"coco8_{hash_a}_000001.jpg",
                     width=640,
                     height=480,
                     extra={
@@ -216,9 +189,7 @@ class TestBuildImagePlans:
         )
 
         assert len(plans) == 1
-        # src_uri는 원본 파일명 사용
         assert plans[0].src_uri == "source/coco8/train/v1.0.0/images/000001.jpg"
-        # dst_uri는 prefix된 파일명 사용
         assert plans[0].dst_uri == f"fusion/merged/train/v1.0.0/images/coco8_{hash_a}_000001.jpg"
 
     def test_non_merge_path_uses_first_source_uri(self):
@@ -229,7 +200,6 @@ class TestBuildImagePlans:
         output_meta = DatasetMeta(
             dataset_id="",
             storage_uri="",
-            annotation_format="COCO",
             categories=[],
             image_records=[
                 ImageRecord(image_id=1, file_name="test.jpg", width=640, height=480),
@@ -254,7 +224,6 @@ class TestBuildImagePlans:
         output_meta = DatasetMeta(
             dataset_id="",
             storage_uri="",
-            annotation_format="COCO",
             categories=[],
             image_records=[
                 ImageRecord(
@@ -287,7 +256,6 @@ class TestBuildImagePlans:
         output_meta = DatasetMeta(
             dataset_id="",
             storage_uri="",
-            annotation_format="COCO",
             categories=[],
             image_records=[
                 ImageRecord(image_id=1, file_name="orphan.jpg", width=640, height=480),
@@ -304,7 +272,7 @@ class TestBuildImagePlans:
 
 
 # ─────────────────────────────────────────────────────────────────
-# 4. DAG 실행 통합 테스트 (merge_datasets bypass)
+# 3. DAG 실행 통합 테스트 (merge_datasets bypass)
 # ─────────────────────────────────────────────────────────────────
 
 
@@ -317,18 +285,17 @@ class TestDagExecutorMergeBypass:
         _merge_metas()를 건너뛰고 list[DatasetMeta]가 manipulator에 전달된다.
 
         검증: 결과의 file_name_mapping이 존재 → MergeDatasets가 list를 받아 처리했다는 증거.
-        (_merge_metas()를 거쳤으면 file_name_mapping이 없음)
         """
         source_a = _make_source_meta(
             "ds-a",
-            [{"id": 0, "name": "person"}],
+            ["person"],
             ["000001.jpg"],
             dataset_name="alpha",
         )
         source_b = _make_source_meta(
             "ds-b",
-            [{"id": 0, "name": "person"}],
-            ["000001.jpg"],  # 충돌 파일명
+            ["person"],
+            ["000001.jpg"],
             dataset_name="beta",
         )
 
@@ -361,9 +328,6 @@ class TestDagExecutorMergeBypass:
                 else:
                     input_metas.append(task_results[ref])
 
-            if len(input_metas) > 1:
-                executor._validate_input_formats(input_metas, task_config.operator)
-
             if executor._is_multi_input_manipulator(task_config.operator):
                 result = executor._apply_manipulator(
                     input_metas, task_config.operator, task_config.params,
@@ -386,33 +350,28 @@ class TestDagExecutorMergeBypass:
         # MergeDatasets가 처리한 증거: file_name_mapping 존재 + 충돌 파일 rename
         assert "file_name_mapping" in merged_result.extra
         assert merged_result.image_count == 2
-        # 충돌된 000001.jpg가 각각 prefix 적용됨
         file_names = [r.file_name for r in merged_result.image_records]
-        assert len(set(file_names)) == 2  # 모두 고유
+        assert len(set(file_names)) == 2
         assert all("000001.jpg" in fn for fn in file_names)
 
     def test_merge_then_downstream_task_preserves_extra(self):
         """merge → 후속 태스크 시 ImageRecord.extra가 보존되는지 확인."""
         source_a = _make_source_meta(
             "ds-a",
-            [{"id": 0, "name": "person"}],
+            ["person"],
             ["a.jpg"],
-            annotation_format="COCO",
             dataset_name="alpha",
         )
         source_b = _make_source_meta(
             "ds-b",
-            [{"id": 0, "name": "person"}],
+            ["person"],
             ["b.jpg"],
-            annotation_format="COCO",
             dataset_name="beta",
         )
 
         storage = MockStorage()
         executor = _TestableExecutor(storage, {"ds-a": source_a, "ds-b": source_b})
 
-        # merge → format_convert_to_coco (COCO→COCO는 무의미하지만 구조 테스트용)
-        # format_convert_to_coco는 YOLO→COCO 전용이므로 대신 merge만 테스트
         config = PipelineConfig(
             name="test_chain",
             output={"dataset_type": "FUSION", "annotation_format": "COCO", "split": "TRAIN"},
@@ -456,21 +415,7 @@ class TestDagExecutorMergeBypass:
 
         merged = task_results["merge"]
 
-        # 모든 레코드에 출처 정보 존재
         for record in merged.image_records:
             assert "source_dataset_id" in record.extra
             assert "source_storage_uri" in record.extra
             assert "original_file_name" in record.extra
-
-    def test_format_mismatch_in_merge_raises_early(self):
-        """포맷이 다른 소스를 merge하면 실행 전에 ValueError 발생."""
-        source_a = _make_source_meta("ds-a", [{"id": 0, "name": "x"}], ["a.jpg"], annotation_format="COCO")
-        source_b = _make_source_meta("ds-b", [{"id": 0, "name": "x"}], ["b.jpg"], annotation_format="YOLO")
-
-        storage = MockStorage()
-        executor = _TestableExecutor(storage, {"ds-a": source_a, "ds-b": source_b})
-
-        input_metas = [source_a, source_b]
-
-        with pytest.raises(ValueError, match="포맷 불일치"):
-            executor._validate_input_formats(input_metas, "merge_datasets")

@@ -46,7 +46,7 @@ class TestParseCoco:
     def test_parse_category_names(self, sample_coco_file: Path):
         """category name이 정확히 파싱되는지 확인."""
         meta = parse_coco_json(sample_coco_file)
-        assert meta.category_names == ["person", "car"]
+        assert meta.categories == ["person", "car"]
 
     def test_parse_bbox_values(self, sample_coco_file: Path):
         """bbox 좌표값이 원본 COCO absolute 그대로인지 확인."""
@@ -70,16 +70,12 @@ class TestParseCoco:
         assert first_annotation.extra["area"] == PERSON_BBOX[2] * PERSON_BBOX[3]
         assert first_annotation.extra["iscrowd"] == 0
 
-    def test_parse_supercategory_preserved(self, sample_coco_file: Path):
-        """categories의 supercategory 필드가 보존되는지 확인."""
+    def test_parse_categories_are_name_strings(self, sample_coco_file: Path):
+        """통일포맷: categories가 이름 문자열 리스트인지 확인."""
         meta = parse_coco_json(sample_coco_file)
-        assert meta.categories[0]["supercategory"] == "human"
-        assert meta.categories[1]["supercategory"] == "vehicle"
-
-    def test_parse_annotation_format_is_coco(self, sample_coco_file: Path):
-        """annotation_format이 'COCO'로 설정되는지 확인."""
-        meta = parse_coco_json(sample_coco_file)
-        assert meta.annotation_format == "COCO"
+        assert all(isinstance(name, str) for name in meta.categories)
+        assert "person" in meta.categories
+        assert "car" in meta.categories
 
     def test_parse_dataset_id_and_storage_uri(self, sample_coco_file: Path):
         """dataset_id와 storage_uri가 인자값 그대로 설정되는지 확인."""
@@ -246,7 +242,7 @@ class TestCocoRoundTrip:
             )
 
         # 검증: category names
-        assert reparsed_meta.category_names == original_meta.category_names
+        assert reparsed_meta.categories == original_meta.categories
 
         # 검증: bbox 값 동일
         for img_idx in range(original_meta.image_count):

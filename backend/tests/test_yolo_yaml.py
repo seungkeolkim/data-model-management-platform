@@ -157,7 +157,7 @@ class TestParseYoloDirWithYaml:
 
         # class_names=None, classes.txt도 없음 → yaml에서 로드
         meta = parse_yolo_dir(label_dir, image_sizes=image_sizes)
-        assert meta.category_names == expected_names
+        assert meta.categories == expected_names
 
     def test_yaml_priority_over_classes_txt(self, tmp_path: Path):
         """yaml이 classes.txt보다 우선하는지 확인."""
@@ -173,7 +173,7 @@ class TestParseYoloDirWithYaml:
 
         image_sizes = {"img": (640, 480)}
         meta = parse_yolo_dir(label_dir, image_sizes=image_sizes)
-        assert meta.category_names == ["correct_a", "correct_b"]
+        assert meta.categories == ["correct_a", "correct_b"]
 
     def test_explicit_class_names_override_yaml(self, tmp_path: Path):
         """class_names 파라미터가 yaml보다 우선하는지 확인."""
@@ -187,7 +187,7 @@ class TestParseYoloDirWithYaml:
             label_dir, image_sizes=image_sizes,
             class_names=["from_param"],
         )
-        assert meta.category_names == ["from_param"]
+        assert meta.categories == ["from_param"]
 
     def test_parent_dir_yaml_found(self, tmp_path: Path):
         """label_dir에 없으면 상위 디렉토리에서 yaml을 탐색하는지 확인."""
@@ -201,4 +201,4 @@ class TestParseYoloDirWithYaml:
 
         image_sizes = {"img": (640, 480)}
         meta = parse_yolo_dir(label_dir, image_sizes=image_sizes)
-        assert meta.category_names == ["person", "car"]
+        assert meta.categories == ["person", "car"]

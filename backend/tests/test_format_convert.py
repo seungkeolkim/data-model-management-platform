@@ -1,8 +1,9 @@
 """
 포맷 변환 Manipulator 테스트.
 
-FormatConvertToYolo, FormatConvertToCoco의 transform_annotation() 검증.
-표준 COCO↔YOLO class ID 리매핑과 IO 모듈 결합 round-trip 통합 테스트 포함.
+통일포맷 전환 이후 format_convert_to_yolo/coco는 no-op이다.
+입력을 deep copy하여 그대로 반환하는지만 검증한다.
+IO round-trip 통합 테스트는 별도로 유지.
 """
 from __future__ import annotations
 
@@ -29,26 +30,28 @@ _COORD_TOLERANCE = 1e-3
 
 
 # =============================================================================
-# FormatConvertToYolo 테스트
+# FormatConvertToYolo 테스트 (no-op)
 # =============================================================================
 
 
 class TestFormatConvertToYolo:
-    """COCO → YOLO 변환 Manipulator 테스트."""
+    """COCO → YOLO 변환 Manipulator 테스트 (통일포맷: no-op)."""
 
     def test_name_matches_db_seed(self):
         """name 속성이 DB seed의 manipulator name과 일치하는지 확인."""
         converter = FormatConvertToYolo()
         assert converter.name == "format_convert_to_yolo"
 
-    def test_changes_format_to_yolo(self, sample_dataset_meta_coco: DatasetMeta):
-        """변환 후 annotation_format이 'YOLO'인지 확인."""
+    def test_noop_returns_identical_data(self, sample_dataset_meta_coco: DatasetMeta):
+        """통일포맷에서 no-op: 입력과 동일한 데이터를 반환."""
         converter = FormatConvertToYolo()
         result = converter.transform_annotation(sample_dataset_meta_coco, params={})
-        assert result.annotation_format == "YOLO"
+
+        assert result.categories == sample_dataset_meta_coco.categories
+        assert result.image_count == sample_dataset_meta_coco.image_count
 
     def test_preserves_bbox_values(self, sample_dataset_meta_coco: DatasetMeta):
-        """변환 후에도 bbox 값이 동일한지 확인 (내부 좌표 불변)."""
+        """변환 후에도 bbox 값이 동일한지 확인."""
         converter = FormatConvertToYolo()
         result = converter.transform_annotation(sample_dataset_meta_coco, params={})
 
@@ -56,38 +59,22 @@ class TestFormatConvertToYolo:
         assert result.image_records[0].annotations[1].bbox == CAR_BBOX
         assert result.image_records[1].annotations[0].bbox == PERSON_BBOX_2
 
-    def test_remaps_category_ids(self, sample_dataset_meta_coco: DatasetMeta):
-        """COCO 비순차 ID가 YOLO 0-based 순차 ID로 리매핑되는지 확인."""
-        converter = FormatConvertToYolo()
-        result = converter.transform_annotation(sample_dataset_meta_coco, params={})
-
-        # person: coco 1 → yolo 0 (표준 순서 0번째)
-        assert result.image_records[0].annotations[0].category_id == 0
-        # car: coco 3 → yolo 1 (표준 순서 1번째, 2개 클래스만 있으므로)
-        assert result.image_records[0].annotations[1].category_id == 1
-
     def test_preserves_category_names(self, sample_dataset_meta_coco: DatasetMeta):
-        """리매핑 후에도 클래스 이름이 보존되는지 확인."""
+        """category_name이 그대로 보존되는지 확인."""
         converter = FormatConvertToYolo()
         result = converter.transform_annotation(sample_dataset_meta_coco, params={})
-        name_by_id = {cat["id"]: cat["name"] for cat in result.categories}
-        assert name_by_id[0] == "person"
-        assert name_by_id[1] == "car"
 
-    def test_preserves_image_count(self, sample_dataset_meta_coco: DatasetMeta):
-        """변환 후 이미지 수가 동일한지 확인."""
-        converter = FormatConvertToYolo()
-        result = converter.transform_annotation(sample_dataset_meta_coco, params={})
-        assert result.image_count == sample_dataset_meta_coco.image_count
+        assert result.image_records[0].annotations[0].category_name == "person"
+        assert result.image_records[0].annotations[1].category_name == "car"
 
     def test_does_not_mutate_input(self, sample_dataset_meta_coco: DatasetMeta):
-        """원본 DatasetMeta가 변경되지 않는지 확인."""
+        """원본 DatasetMeta가 변경되지 않는지 확인 (deep copy)."""
         converter = FormatConvertToYolo()
-        original_format = sample_dataset_meta_coco.annotation_format
-        original_cat_id = sample_dataset_meta_coco.image_records[0].annotations[0].category_id
+        original_categories = sample_dataset_meta_coco.categories[:]
+        original_category_name = sample_dataset_meta_coco.image_records[0].annotations[0].category_name
         converter.transform_annotation(sample_dataset_meta_coco, params={})
-        assert sample_dataset_meta_coco.annotation_format == original_format
-        assert sample_dataset_meta_coco.image_records[0].annotations[0].category_id == original_cat_id
+        assert sample_dataset_meta_coco.categories == original_categories
+        assert sample_dataset_meta_coco.image_records[0].annotations[0].category_name == original_category_name
 
     def test_no_image_manipulation(self, sample_dataset_meta_coco: DatasetMeta):
         """build_image_manipulation()이 빈 리스트를 반환하는지 확인."""
@@ -105,62 +92,39 @@ class TestFormatConvertToYolo:
 
 
 # =============================================================================
-# FormatConvertToCoco 테스트
+# FormatConvertToCoco 테스트 (no-op)
 # =============================================================================
 
 
 class TestFormatConvertToCoco:
-    """YOLO → COCO 변환 Manipulator 테스트."""
+    """YOLO → COCO 변환 Manipulator 테스트 (통일포맷: no-op)."""
 
     def test_name_matches_db_seed(self):
         """name 속성이 DB seed의 manipulator name과 일치하는지 확인."""
         converter = FormatConvertToCoco()
         assert converter.name == "format_convert_to_coco"
 
-    def test_changes_format_to_coco(self, sample_dataset_meta_yolo: DatasetMeta):
-        """변환 후 annotation_format이 'COCO'인지 확인."""
-        converter = FormatConvertToCoco()
-        result = converter.transform_annotation(sample_dataset_meta_yolo, params={})
-        assert result.annotation_format == "COCO"
-
-    def test_remaps_yolo_to_coco_ids(self, sample_dataset_meta_yolo: DatasetMeta):
-        """YOLO 순차 ID가 COCO 표준 ID로 리매핑되는지 확인 (이름 기반)."""
+    def test_noop_returns_identical_data(self, sample_dataset_meta_yolo: DatasetMeta):
+        """통일포맷에서 no-op: 입력과 동일한 데이터를 반환."""
         converter = FormatConvertToCoco()
         result = converter.transform_annotation(sample_dataset_meta_yolo, params={})
 
-        # person: yolo 0, name="person" → NAME_TO_COCO_ID["person"] = 1
-        assert result.image_records[0].annotations[0].category_id == 1
-        # car: yolo 1, name="car" → NAME_TO_COCO_ID["car"] = 3
-        assert result.image_records[0].annotations[1].category_id == 3
+        assert result.categories == sample_dataset_meta_yolo.categories
+        assert result.image_count == sample_dataset_meta_yolo.image_count
 
-    def test_sets_category_names_via_params(self, sample_dataset_meta_yolo: DatasetMeta):
-        """params['category_names']로 이름이 업데이트되는지 확인."""
-        converter = FormatConvertToCoco()
-        result = converter.transform_annotation(
-            sample_dataset_meta_yolo,
-            params={"category_names": ["pedestrian", "vehicle"]},
-        )
-        name_by_id = {cat["id"]: cat["name"] for cat in result.categories}
-        # "pedestrian", "vehicle"은 표준 COCO 클래스가 아니므로 91, 92 할당
-        assert name_by_id[91] == "pedestrian"  # yolo 0, name="pedestrian" → 미지 → 91
-        assert name_by_id[92] == "vehicle"     # yolo 1, name="vehicle" → 미지 → 92
-
-    def test_preserves_bbox_values(self, sample_dataset_meta_yolo: DatasetMeta):
-        """변환 후에도 bbox 값이 동일한지 확인."""
+    def test_preserves_category_names(self, sample_dataset_meta_yolo: DatasetMeta):
+        """category_name이 그대로 보존되는지 확인."""
         converter = FormatConvertToCoco()
         result = converter.transform_annotation(sample_dataset_meta_yolo, params={})
-        assert result.image_records[0].annotations[0].bbox == PERSON_BBOX
+
+        assert result.image_records[0].annotations[0].category_name == "person"
 
     def test_does_not_mutate_input(self, sample_dataset_meta_yolo: DatasetMeta):
         """원본 DatasetMeta가 변경되지 않는지 확인."""
         converter = FormatConvertToCoco()
-        original_format = sample_dataset_meta_yolo.annotation_format
-        original_cat_names = sample_dataset_meta_yolo.category_names[:]
-        converter.transform_annotation(
-            sample_dataset_meta_yolo, params={"category_names": ["a", "b"]},
-        )
-        assert sample_dataset_meta_yolo.annotation_format == original_format
-        assert sample_dataset_meta_yolo.category_names == original_cat_names
+        original_categories = sample_dataset_meta_yolo.categories[:]
+        converter.transform_annotation(sample_dataset_meta_yolo, params={})
+        assert sample_dataset_meta_yolo.categories == original_categories
 
     def test_no_image_manipulation(self, sample_dataset_meta_yolo: DatasetMeta):
         """build_image_manipulation()이 빈 리스트를 반환하는지 확인."""
@@ -178,92 +142,24 @@ class TestFormatConvertToCoco:
 
 
 # =============================================================================
-# Full Round-Trip 통합 테스트
+# IO Round-Trip 통합 테스트
 # =============================================================================
 
 
-class TestFullRoundTrip:
+class TestIOWriteRoundTrip:
     """
-    IO + Manipulator 결합 통합 테스트.
-    COCO file → parse → convert → write → 포맷 검증 (양방향).
+    IO 모듈 write 통합 테스트.
+    통일포맷 DatasetMeta → write → 파일 포맷 검증.
+    format_convert는 no-op이므로 IO 직접 호출로 검증한다.
     """
 
-    def test_coco_to_yolo_full_roundtrip(
-        self, sample_coco_file: Path, tmp_path: Path,
+    def test_write_coco_json_from_unified(
+        self, sample_dataset_meta_coco: DatasetMeta, tmp_path: Path,
     ):
-        """COCO JSON → parse → convert to YOLO → write YOLO files → 포맷 검증."""
-        # 1. COCO JSON 파싱
-        coco_meta = parse_coco_json(sample_coco_file)
-        assert coco_meta.annotation_format == "COCO"
-
-        # 2. Manipulator로 YOLO 변환 (ID 리매핑 포함)
-        converter = FormatConvertToYolo()
-        yolo_meta = converter.transform_annotation(coco_meta, params={})
-        assert yolo_meta.annotation_format == "YOLO"
-
-        # 3. YOLO 파일 쓰기
-        yolo_output_dir = tmp_path / "yolo_output"
-        write_yolo_dir(yolo_meta, yolo_output_dir)
-
-        # 4. 출력 파일 포맷 검증
-        txt_files = [f for f in yolo_output_dir.glob("*.txt") if f.name != "classes.txt"]
-        assert len(txt_files) == 2
-
-        for txt_file in txt_files:
-            content = txt_file.read_text().strip()
-            if not content:
-                continue
-            for line in content.split("\n"):
-                parts = line.split()
-                # 5개 필드: class_id cx cy w h
-                assert len(parts) == 5, f"필드 수 오류: {line}"
-                # class_id는 정수
-                int(parts[0])
-                # 좌표는 [0, 1] 범위
-                for coord_str in parts[1:]:
-                    coord_value = float(coord_str)
-                    assert 0.0 <= coord_value <= 1.0, (
-                        f"좌표 범위 초과: {coord_value}"
-                    )
-
-        # 5. data.yaml 검증 — 상위 디렉토리에 별도 생성
-        from lib.pipeline.io.yolo_io import _write_yolo_data_yaml
-        sorted_cats = sorted(yolo_meta.categories, key=lambda c: c["id"])
-        _write_yolo_data_yaml(sorted_cats, yolo_output_dir.parent)
-        yaml_path = yolo_output_dir.parent / "data.yaml"
-        assert yaml_path.exists()
-        yaml_content = yaml_path.read_text()
-        assert "person" in yaml_content
-        assert "car" in yaml_content
-
-    def test_yolo_to_coco_full_roundtrip(
-        self, sample_yolo_dir: tuple[Path, list[str]], tmp_path: Path,
-    ):
-        """YOLO files → parse → convert to COCO → write COCO JSON → 포맷 검증."""
-        label_dir, class_names = sample_yolo_dir
-        image_sizes = {
-            "image_001": (IMAGE_1_WIDTH, IMAGE_1_HEIGHT),
-            "image_002": (IMAGE_2_WIDTH, IMAGE_2_HEIGHT),
-        }
-
-        # 1. YOLO 파싱
-        yolo_meta = parse_yolo_dir(
-            label_dir, image_sizes=image_sizes, class_names=class_names,
-        )
-        assert yolo_meta.annotation_format == "YOLO"
-
-        # 2. Manipulator로 COCO 변환 (ID 리매핑 포함)
-        converter = FormatConvertToCoco()
-        coco_meta = converter.transform_annotation(
-            yolo_meta, params={"category_names": class_names},
-        )
-        assert coco_meta.annotation_format == "COCO"
-
-        # 3. COCO JSON 쓰기
+        """통일포맷 DatasetMeta → COCO JSON write → 포맷 검증."""
         coco_output_path = tmp_path / "coco_output" / "annotations.json"
-        write_coco_json(coco_meta, coco_output_path)
+        write_coco_json(sample_dataset_meta_coco, coco_output_path)
 
-        # 4. 출력 파일 포맷 검증
         with open(coco_output_path, "r", encoding="utf-8") as file_handle:
             coco_data = json.load(file_handle)
 
@@ -273,7 +169,12 @@ class TestFullRoundTrip:
         assert len(coco_data["images"]) == 2
         assert len(coco_data["annotations"]) == 3
 
-        # bbox가 absolute 좌표인지 확인
+        # category name 보존
+        category_names = {c["name"] for c in coco_data["categories"]}
+        assert "person" in category_names
+        assert "car" in category_names
+
+        # bbox가 absolute 좌표 (COCO 표준)
         for annotation in coco_data["annotations"]:
             bbox = annotation["bbox"]
             assert len(bbox) == 4
@@ -281,70 +182,66 @@ class TestFullRoundTrip:
                 f"bbox가 normalized 좌표로 보입니다: {bbox}"
             )
 
-        # area 필드 존재 및 양수
-        for annotation in coco_data["annotations"]:
-            assert "area" in annotation
-            assert annotation["area"] > 0
+    def test_write_yolo_from_unified(
+        self, sample_dataset_meta_coco: DatasetMeta, tmp_path: Path,
+    ):
+        """통일포맷 DatasetMeta → YOLO write → 포맷 검증."""
+        yolo_output_dir = tmp_path / "yolo_output"
+        write_yolo_dir(sample_dataset_meta_coco, yolo_output_dir)
 
-    def test_coco_yolo_coco_preserves_data(
+        txt_files = [f for f in yolo_output_dir.glob("*.txt") if f.name != "classes.txt"]
+        assert len(txt_files) == 2
+
+        for txt_file in txt_files:
+            content = txt_file.read_text().strip()
+            if not content:
+                continue
+            for line in content.split("\n"):
+                parts = line.split()
+                assert len(parts) == 5, f"필드 수 오류: {line}"
+                int(parts[0])  # class_id는 정수
+                for coord_str in parts[1:]:
+                    coord_value = float(coord_str)
+                    assert 0.0 <= coord_value <= 1.0, (
+                        f"좌표 범위 초과: {coord_value}"
+                    )
+
+    def test_coco_parse_write_roundtrip_preserves_data(
         self, sample_coco_file: Path, tmp_path: Path,
     ):
-        """COCO → YOLO → COCO 왕복 후 데이터가 보존되는지 확인."""
-        # 원본 COCO 파싱
-        original_coco = parse_coco_json(sample_coco_file)
+        """COCO file → parse → write → re-parse → 데이터 보존 확인."""
+        # 1. COCO JSON 파싱 (통일포맷으로 로드)
+        original_meta = parse_coco_json(sample_coco_file)
 
-        # COCO → YOLO 변환 (ID 리매핑)
-        to_yolo = FormatConvertToYolo()
-        yolo_meta = to_yolo.transform_annotation(original_coco, params={})
-
-        # YOLO 파일 쓰기
-        yolo_dir = tmp_path / "yolo"
-        write_yolo_dir(yolo_meta, yolo_dir)
-
-        # YOLO 파일 재파싱 (data.yaml을 상위 디렉토리에 생성하여 클래스명 유지)
-        from lib.pipeline.io.yolo_io import _write_yolo_data_yaml
-        sorted_cats = sorted(yolo_meta.categories, key=lambda c: c["id"])
-        _write_yolo_data_yaml(sorted_cats, yolo_dir.parent)
-
-        image_sizes = {
-            "image_001": (IMAGE_1_WIDTH, IMAGE_1_HEIGHT),
-            "image_002": (IMAGE_2_WIDTH, IMAGE_2_HEIGHT),
-        }
-        reparsed_yolo = parse_yolo_dir(yolo_dir, image_sizes=image_sizes)
-
-        # YOLO → COCO 변환 (ID 복원)
-        to_coco = FormatConvertToCoco()
-        final_coco = to_coco.transform_annotation(reparsed_yolo, params={})
-
-        # COCO JSON 쓰기
+        # 2. COCO JSON 쓰기
         coco_output = tmp_path / "coco_output.json"
-        write_coco_json(final_coco, coco_output)
+        write_coco_json(original_meta, coco_output)
 
-        # 재파싱하여 검증
-        final_meta = parse_coco_json(coco_output)
+        # 3. 재파싱
+        reparsed_meta = parse_coco_json(coco_output)
 
         # 이미지 수 보존
-        assert final_meta.image_count == original_coco.image_count
+        assert reparsed_meta.image_count == original_meta.image_count
 
         # annotation 수 보존
-        for img_idx in range(original_coco.image_count):
-            assert len(final_meta.image_records[img_idx].annotations) == len(
-                original_coco.image_records[img_idx].annotations
+        for img_idx in range(original_meta.image_count):
+            assert len(reparsed_meta.image_records[img_idx].annotations) == len(
+                original_meta.image_records[img_idx].annotations
             )
 
-        # bbox 좌표 보존 (float 변환 오차 허용)
-        for img_idx in range(original_coco.image_count):
-            for ann_idx in range(len(original_coco.image_records[img_idx].annotations)):
-                original_bbox = original_coco.image_records[img_idx].annotations[ann_idx].bbox
-                final_bbox = final_meta.image_records[img_idx].annotations[ann_idx].bbox
-                for coord_idx in range(4):
-                    assert abs(original_bbox[coord_idx] - final_bbox[coord_idx]) < _COORD_TOLERANCE
+        # category_name 보존
+        original_cat_names = sorted(
+            {ann.category_name for rec in original_meta.image_records for ann in rec.annotations}
+        )
+        reparsed_cat_names = sorted(
+            {ann.category_name for rec in reparsed_meta.image_records for ann in rec.annotations}
+        )
+        assert reparsed_cat_names == original_cat_names
 
-        # category_id 왕복 보존: 원래 COCO ID로 복원되었는지
-        original_cat_ids = sorted(
-            {ann.category_id for rec in original_coco.image_records for ann in rec.annotations}
-        )
-        final_cat_ids = sorted(
-            {ann.category_id for rec in final_meta.image_records for ann in rec.annotations}
-        )
-        assert final_cat_ids == original_cat_ids
+        # bbox 좌표 보존 (float 변환 오차 허용)
+        for img_idx in range(original_meta.image_count):
+            for ann_idx in range(len(original_meta.image_records[img_idx].annotations)):
+                original_bbox = original_meta.image_records[img_idx].annotations[ann_idx].bbox
+                reparsed_bbox = reparsed_meta.image_records[img_idx].annotations[ann_idx].bbox
+                for coord_idx in range(4):
+                    assert abs(original_bbox[coord_idx] - reparsed_bbox[coord_idx]) < _COORD_TOLERANCE

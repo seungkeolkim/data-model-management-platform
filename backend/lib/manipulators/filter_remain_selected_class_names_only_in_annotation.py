@@ -11,9 +11,8 @@ params:
 
 처리 흐름:
     1. keep_class_names 파싱 → 유지할 class 이름 set 구성
-    2. categories에서 이름이 매칭되는 category_id set 구성
-    3. 모든 image_record의 annotations에서 해당 category_id만 유지
-    4. categories도 유지 대상만 남김
+    2. 모든 image_record의 annotations에서 category_name이 유지 대상인 것만 유지
+    3. categories도 유지 대상만 남김
 """
 from __future__ import annotations
 
@@ -86,18 +85,10 @@ class FilterRemainSelectedClassNamesOnlyInAnnotation(UnitManipulator):
 
         filtered_meta = copy.deepcopy(input_meta)
 
-        # 유지할 category_id 집합 구성
-        keep_category_ids = set()
-        for category in filtered_meta.categories:
-            if category["name"] in keep_names:
-                keep_category_ids.add(category["id"])
-
         # 매칭되지 않는 이름이 있으면 경고
-        matched_names = {
-            cat["name"] for cat in filtered_meta.categories
-            if cat["name"] in keep_names
-        }
-        unmatched_names = keep_names - matched_names
+        existing_names = set(filtered_meta.categories)
+        matched_names = keep_names & existing_names
+        unmatched_names = keep_names - existing_names
         if unmatched_names:
             logger.warning(
                 "categories에 존재하지 않는 class 이름: %s (무시됨)",
@@ -110,20 +101,20 @@ class FilterRemainSelectedClassNamesOnlyInAnnotation(UnitManipulator):
             original_count = len(image_record.annotations)
             image_record.annotations = [
                 ann for ann in image_record.annotations
-                if ann.category_id in keep_category_ids
+                if ann.category_name in keep_names
             ]
             total_removed += original_count - len(image_record.annotations)
 
         # categories도 유지 대상만 남김
         filtered_meta.categories = [
-            cat for cat in filtered_meta.categories
-            if cat["id"] in keep_category_ids
+            name for name in filtered_meta.categories
+            if name in keep_names
         ]
 
         logger.info(
             "filter_remain_selected_class_names_only_in_annotation 완료: 유지 class %d개, 제거된 annotation %d개, "
             "이미지 수 변동 없음 (%d장)",
-            len(keep_category_ids), total_removed, len(filtered_meta.image_records),
+            len(matched_names), total_removed, len(filtered_meta.image_records),
         )
 
         return filtered_meta

@@ -25,6 +25,9 @@ from lib.pipeline.config import (
     load_pipeline_config_from_yaml,
 )
 
+# output이 테스트 관심사가 아닌 경우에 사용하는 기본 OutputConfig
+_DEFAULT_OUTPUT = {"annotation_format": "COCO"}
+
 
 # =============================================================================
 # PipelineConfig 기본 생성
@@ -37,7 +40,7 @@ class TestPipelineConfigBasic:
         """단일 태스크 파이프라인 생성."""
         config = PipelineConfig(
             name="simple_convert",
-            output=OutputConfig(dataset_type="SOURCE", split="TRAIN"),
+            output=OutputConfig(dataset_type="SOURCE", annotation_format="COCO", split="TRAIN"),
             tasks={
                 "convert": TaskConfig(
                     operator="format_convert_to_coco",
@@ -55,6 +58,7 @@ class TestPipelineConfigBasic:
         """다중 태스크 파이프라인 (체인)."""
         config = PipelineConfig(
             name="chain_pipeline",
+            output={"annotation_format": "COCO"},
             tasks={
                 "step_1": TaskConfig(
                     operator="format_convert_to_coco",
@@ -70,16 +74,27 @@ class TestPipelineConfigBasic:
         assert len(config.tasks) == 2
 
     def test_output_defaults(self):
-        """OutputConfig 기본값 확인."""
+        """OutputConfig 기본값 확인 (annotation_format은 필수)."""
         config = PipelineConfig(
             name="default_output",
+            output={"annotation_format": "COCO"},
             tasks={
                 "t1": TaskConfig(operator="op", inputs=["source:x"]),
             },
         )
         assert config.output.dataset_type == "SOURCE"
-        assert config.output.annotation_format is None
+        assert config.output.annotation_format == "COCO"
         assert config.output.split == "NONE"
+
+    def test_output_without_annotation_format_rejected(self):
+        """annotation_format 없이 OutputConfig 생성 → ValidationError."""
+        with pytest.raises(Exception):
+            PipelineConfig(
+                name="no_format",
+                tasks={
+                    "t1": TaskConfig(operator="op", inputs=["source:x"]),
+                },
+            )
 
     def test_empty_tasks_rejected(self):
         """tasks가 비어있으면 ValidationError."""
@@ -109,6 +124,7 @@ class TestDagValidation:
         with pytest.raises(ValueError, match="정의된 태스크 목록에 없습니다"):
             PipelineConfig(
                 name="bad_ref",
+                output=_DEFAULT_OUTPUT,
                 tasks={
                     "t1": TaskConfig(operator="op", inputs=["source:x"]),
                     "t2": TaskConfig(operator="op", inputs=["nonexistent"]),
@@ -120,6 +136,7 @@ class TestDagValidation:
         with pytest.raises(ValueError, match="자기 자신을 input으로 참조"):
             PipelineConfig(
                 name="self_ref",
+                output=_DEFAULT_OUTPUT,
                 tasks={
                     "t1": TaskConfig(operator="op", inputs=["t1"]),
                 },
@@ -130,6 +147,7 @@ class TestDagValidation:
         with pytest.raises(ValueError, match="순환 참조"):
             PipelineConfig(
                 name="cycle",
+                output=_DEFAULT_OUTPUT,
                 tasks={
                     "a": TaskConfig(operator="op", inputs=["source:x", "c"]),
                     "b": TaskConfig(operator="op", inputs=["a"]),
@@ -141,6 +159,7 @@ class TestDagValidation:
         """다이아몬드 DAG (A→B, A→C, B→D, C→D)는 유효."""
         config = PipelineConfig(
             name="diamond",
+            output=_DEFAULT_OUTPUT,
             tasks={
                 "a": TaskConfig(operator="op", inputs=["source:x"]),
                 "b": TaskConfig(operator="op", inputs=["a"]),
@@ -154,6 +173,7 @@ class TestDagValidation:
         """'source:' 접두사는 태스크 이름이 아니므로 검증에서 무시."""
         config = PipelineConfig(
             name="source_only",
+            output=_DEFAULT_OUTPUT,
             tasks={
                 "t1": TaskConfig(operator="op", inputs=["source:dataset-1", "source:dataset-2"]),
             },
@@ -171,6 +191,7 @@ class TestTopologicalOrder:
     def test_single_task(self):
         config = PipelineConfig(
             name="single",
+            output=_DEFAULT_OUTPUT,
             tasks={
                 "only": TaskConfig(operator="op", inputs=["source:x"]),
             },
@@ -181,6 +202,7 @@ class TestTopologicalOrder:
         """A → B → C 선형 체인."""
         config = PipelineConfig(
             name="chain",
+            output=_DEFAULT_OUTPUT,
             tasks={
                 "c": TaskConfig(operator="op", inputs=["b"]),
                 "a": TaskConfig(operator="op", inputs=["source:x"]),
@@ -194,6 +216,7 @@ class TestTopologicalOrder:
         """다이아몬드 DAG에서 d는 반드시 마지막."""
         config = PipelineConfig(
             name="diamond",
+            output=_DEFAULT_OUTPUT,
             tasks={
                 "a": TaskConfig(operator="op", inputs=["source:x"]),
                 "b": TaskConfig(operator="op", inputs=["a"]),
@@ -211,6 +234,7 @@ class TestTopologicalOrder:
         """독립적인 2개 소스 → merge."""
         config = PipelineConfig(
             name="two_sources",
+            output=_DEFAULT_OUTPUT,
             tasks={
                 "src_a": TaskConfig(operator="op", inputs=["source:a"]),
                 "src_b": TaskConfig(operator="op", inputs=["source:b"]),
@@ -233,6 +257,7 @@ class TestTerminalTask:
     def test_single_task_is_terminal(self):
         config = PipelineConfig(
             name="single",
+            output=_DEFAULT_OUTPUT,
             tasks={
                 "only": TaskConfig(operator="op", inputs=["source:x"]),
             },
@@ -242,6 +267,7 @@ class TestTerminalTask:
     def test_chain_terminal(self):
         config = PipelineConfig(
             name="chain",
+            output=_DEFAULT_OUTPUT,
             tasks={
                 "a": TaskConfig(operator="op", inputs=["source:x"]),
                 "b": TaskConfig(operator="op", inputs=["a"]),
@@ -255,6 +281,7 @@ class TestTerminalTask:
         with pytest.raises(ValueError, match="최종 출력 태스크가 2개 이상"):
             config = PipelineConfig(
                 name="multi_terminal",
+                output=_DEFAULT_OUTPUT,
                 tasks={
                     "a": TaskConfig(operator="op", inputs=["source:x"]),
                     "b": TaskConfig(operator="op", inputs=["source:y"]),
@@ -273,6 +300,7 @@ class TestSourceDatasetIds:
     def test_single_source(self):
         config = PipelineConfig(
             name="single_src",
+            output=_DEFAULT_OUTPUT,
             tasks={
                 "t1": TaskConfig(operator="op", inputs=["source:abc-123"]),
             },
@@ -283,6 +311,7 @@ class TestSourceDatasetIds:
         """동일 source가 여러 태스크에서 참조되면 중복 제거."""
         config = PipelineConfig(
             name="dedup",
+            output=_DEFAULT_OUTPUT,
             tasks={
                 "t1": TaskConfig(operator="op", inputs=["source:aaa"]),
                 "t2": TaskConfig(operator="op", inputs=["source:aaa", "source:bbb"]),
@@ -298,6 +327,7 @@ class TestSourceDatasetIds:
         # 최소 1개는 source가 있어야 DAG가 성립
         config = PipelineConfig(
             name="only_source",
+            output=_DEFAULT_OUTPUT,
             tasks={
                 "t1": TaskConfig(operator="op", inputs=["source:x"]),
             },
@@ -384,6 +414,7 @@ class TestYamlParsing:
               name: "multi_step"
               output:
                 dataset_type: FUSION
+                annotation_format: COCO
                 split: TRAIN
               tasks:
                 prep_a:

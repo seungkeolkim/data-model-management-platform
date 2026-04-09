@@ -185,7 +185,7 @@ class PipelineService:
             PipelineSubmitResponse (execution_id, celery_task_id, message)
         """
         dataset_type = config.output.dataset_type.upper()
-        annotation_format = config.output.annotation_format or "NONE"
+        annotation_format = config.output.annotation_format.upper()
         split = config.output.split.upper()
 
         # ── DatasetGroup 조회 또는 생성 ──

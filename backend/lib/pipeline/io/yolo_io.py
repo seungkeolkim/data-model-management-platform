@@ -9,15 +9,17 @@ YOLO 포맷 규격:
   - 각 행: class_id center_x center_y width height (공백 구분)
   - 좌표는 이미지 크기 대비 normalized [0, 1]
 
+통일포맷:
+  - 파싱 시: class_id(정수) → class_name(문자열)로 변환
+  - bbox는 COCO absolute [x, y, w, h]로 변환 (이미지 크기 있을 때)
+  - 저장 시: category_name → 0-based 순차 index로 변환
+
 클래스 이름 소스 우선순위:
   1. class_names 파라미터 (직접 전달)
   2. .yaml 파일의 names: 필드 (data.yaml 등)
   3. classes.txt 파일
-  4. 관측된 class_id로 숫자 이름 생성
-
-내부 표현과의 좌표 변환:
-  - 파싱 시: YOLO normalized center → COCO absolute [x, y, w, h]
-  - 쓰기 시: COCO absolute [x, y, w, h] → YOLO normalized center
+  4. COCO 표준 80클래스 매핑 (yolo_id → name) + 경고
+  5. 관측된 class_id로 숫자 이름 생성 + 경고
 """
 from __future__ import annotations
 
@@ -25,6 +27,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from lib.pipeline.io.coco_yolo_class_mapping import YOLO_ID_TO_NAME
 from lib.pipeline.pipeline_data_models import Annotation, DatasetMeta, ImageRecord
 
 logger = logging.getLogger(__name__)
@@ -223,6 +226,34 @@ def _convert_absolute_bbox_to_yolo(
     return (center_x_norm, center_y_norm, width_norm, height_norm)
 
 
+def _resolve_class_name(
+    class_id: int,
+    class_names: list[str] | None,
+    used_fallback: set[int],
+) -> str:
+    """
+    YOLO class_id를 클래스 이름으로 변환한다.
+
+    우선순위:
+      1. class_names 리스트에서 인덱스로 조회
+      2. COCO 표준 80클래스 매핑 (YOLO_ID_TO_NAME)
+      3. 숫자 문자열 폴백
+
+    폴백 사용 시 used_fallback에 class_id를 추가하여 경고 로그용으로 추적한다.
+    """
+    if class_names is not None and 0 <= class_id < len(class_names):
+        return class_names[class_id]
+
+    # 표준 80클래스 매핑 시도
+    if class_id in YOLO_ID_TO_NAME:
+        used_fallback.add(class_id)
+        return YOLO_ID_TO_NAME[class_id]
+
+    # 최종 폴백: 숫자 이름
+    used_fallback.add(class_id)
+    return str(class_id)
+
+
 def parse_yolo_dir(
     label_dir: Path,
     image_dir: Path | None = None,
@@ -233,24 +264,22 @@ def parse_yolo_dir(
     storage_uri: str = "",
 ) -> DatasetMeta:
     """
-    YOLO 라벨 디렉토리를 읽어 DatasetMeta로 변환한다.
+    YOLO 라벨 디렉토리를 읽어 통일포맷 DatasetMeta로 변환한다.
 
     좌표 변환: YOLO normalized center → COCO absolute [x, y, w, h].
-    이미지 크기 정보가 없으면 bbox를 None으로 설정한다 (좌표 변환 불가).
+    이미지 크기 정보가 없으면 normalized [x,y,w,h] (top-left 변환)로 저장.
 
     Args:
         label_dir: YOLO .txt 라벨 파일이 있는 디렉토리
         image_dir: 이미지 파일 디렉토리 (파일명 매칭용, 선택)
         image_sizes: {basename_without_ext: (width, height)} 딕셔너리 (선택)
-                     image_dir보다 우선한다.
         class_names: 클래스 이름 목록 (id 순서대로). None이면 자동 탐지.
-        yaml_path: YOLO data.yaml 파일 경로 (명시적 지정). class_names보다 우선순위 낮음.
-                   None이면 label_dir 및 상위 디렉토리에서 자동 탐색.
+        yaml_path: YOLO data.yaml 파일 경로 (명시적 지정).
         dataset_id: DatasetMeta.dataset_id
         storage_uri: DatasetMeta.storage_uri
 
     Returns:
-        파싱된 DatasetMeta (annotation_format="YOLO")
+        파싱된 DatasetMeta (통일포맷, annotation_format 없음)
     """
     label_files = sorted(label_dir.glob("*.txt"))
     # classes.txt는 라벨 파일이 아니므로 제외
@@ -260,7 +289,6 @@ def parse_yolo_dir(
     ]
 
     # 클래스 이름 자동 탐지 (class_names 파라미터가 없을 때)
-    # 우선순위: class_names 파라미터 > yaml_path 파라미터 > yaml 자동 탐색 > classes.txt > 숫자 이름
     if class_names is None:
         # 1순위: 명시적으로 지정된 yaml_path 사용
         resolved_yaml_path = yaml_path
@@ -286,8 +314,12 @@ def parse_yolo_dir(
                     line.strip() for line in file_handle if line.strip()
                 ]
 
-    # 관측된 class_id 수집 (categories 구성용)
-    observed_class_ids: set[int] = set()
+    # 폴백 매핑 사용 추적 (경고 로그용)
+    fallback_used_class_ids: set[int] = set()
+
+    # 관측된 category_name 수집 (categories 구성용)
+    observed_category_names: list[str] = []
+    observed_name_set: set[str] = set()
     image_records: list[ImageRecord] = []
 
     for image_index, label_path in enumerate(label_files):
@@ -323,7 +355,16 @@ def parse_yolo_dir(
                     continue
 
                 class_id = int(parts[0])
-                observed_class_ids.add(class_id)
+
+                # class_id → category_name 변환
+                category_name = _resolve_class_name(
+                    class_id, class_names, fallback_used_class_ids,
+                )
+
+                # 관측된 name 수집 (등장 순서 보존)
+                if category_name not in observed_name_set:
+                    observed_category_names.append(category_name)
+                    observed_name_set.add(category_name)
 
                 # 좌표 변환: 이미지 크기가 있으면 absolute, 없으면 normalized [x,y,w,h] 그대로 저장
                 center_x = float(parts[1])
@@ -348,7 +389,7 @@ def parse_yolo_dir(
 
                 annotations.append(Annotation(
                     annotation_type="BBOX",
-                    category_id=class_id,
+                    category_name=category_name,
                     bbox=bbox,
                 ))
 
@@ -361,20 +402,24 @@ def parse_yolo_dir(
         )
         image_records.append(image_record)
 
-    # categories 구성
-    categories: list[dict[str, Any]] = []
-    if class_names:
-        for class_index, class_name in enumerate(class_names):
-            categories.append({"id": class_index, "name": class_name})
+    # 폴백 매핑 사용 시 경고 로그 (data.yaml/classes.txt 없이 로드됨)
+    if fallback_used_class_ids:
+        logger.warning(
+            "YOLO 클래스 매핑 파일 없이 로드됨: class_id %s에 대해 "
+            "COCO 표준 80클래스 매핑 또는 숫자 이름을 사용했습니다. "
+            "정확한 이름이 필요하면 data.yaml 또는 classes.txt를 제공하세요.",
+            sorted(fallback_used_class_ids),
+        )
+
+    # categories 구성: class_names가 있으면 사용, 없으면 관측 기반
+    if class_names is not None:
+        categories = list(class_names)
     else:
-        # class_names가 없으면 관측된 class_id로 숫자 이름 생성
-        for class_id in sorted(observed_class_ids):
-            categories.append({"id": class_id, "name": str(class_id)})
+        categories = observed_category_names
 
     return DatasetMeta(
         dataset_id=dataset_id,
         storage_uri=storage_uri,
-        annotation_format="YOLO",
         categories=categories,
         image_records=image_records,
     )
@@ -385,14 +430,15 @@ def write_yolo_dir(
     output_dir: Path,
 ) -> Path:
     """
-    DatasetMeta를 YOLO txt 라벨 파일들로 출력한다.
+    DatasetMeta(통일포맷)를 YOLO txt 라벨 파일들로 출력한다.
 
+    저장 시 ID 부여:
+      - categories(list[str])를 정렬하여 0-based 순차 index 매핑
+      - annotation.category_name → index로 변환
     좌표 변환: COCO absolute [x, y, w, h] → YOLO normalized center.
-    이미지별 .txt 파일만 생성한다.
-    data.yaml은 상위 디렉토리(데이터셋 루트)에 별도로 생성해야 한다.
 
     Args:
-        meta: 출력할 DatasetMeta
+        meta: 출력할 DatasetMeta (통일포맷)
         output_dir: 출력 디렉토리 경로 (annotations/)
 
     Returns:
@@ -403,12 +449,10 @@ def write_yolo_dir(
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # YOLO format 제약: class_id는 classes.txt 행 인덱스(0-based sequential)와 일치해야 함.
-    # categories의 id가 비순차(예: 0,2,5)일 수 있으므로 0-based sequential로 정규화한다.
-    sorted_categories = sorted(meta.categories, key=lambda cat: cat["id"])
-    category_id_to_yolo_index: dict[int, int] = {
-        cat["id"]: sequential_index
-        for sequential_index, cat in enumerate(sorted_categories)
+    # category_name → 0-based sequential index 매핑
+    sorted_category_names = sorted(meta.categories)
+    name_to_yolo_index: dict[str, int] = {
+        name: index for index, name in enumerate(sorted_category_names)
     }
 
     for image_record in meta.image_records:
@@ -429,9 +473,9 @@ def write_yolo_dir(
             if annotation.bbox is None:
                 continue
 
-            # category_id → 0-based sequential index로 변환
-            yolo_class_id = category_id_to_yolo_index.get(
-                annotation.category_id, annotation.category_id,
+            # category_name → 0-based index
+            yolo_class_id = name_to_yolo_index.get(
+                annotation.category_name, 0,
             )
 
             center_x, center_y, width_norm, height_norm = _convert_absolute_bbox_to_yolo(
@@ -454,7 +498,7 @@ def write_yolo_dir(
 
 
 def _write_yolo_data_yaml(
-    sorted_categories: list[dict[str, Any]],
+    category_names: list[str],
     output_dir: Path,
 ) -> Path:
     """
@@ -467,7 +511,7 @@ def _write_yolo_data_yaml(
         ...
 
     Args:
-        sorted_categories: id 순으로 정렬된 categories 리스트
+        category_names: 정렬된 클래스 이름 리스트
         output_dir: yaml 파일을 생성할 디렉토리
 
     Returns:
@@ -476,19 +520,18 @@ def _write_yolo_data_yaml(
     yaml_path = output_dir / "data.yaml"
     lines = [
         f"# Auto-generated YOLO data.yaml",
-        f"# {len(sorted_categories)} classes",
+        f"# {len(category_names)} classes",
         f"",
-        f"nc: {len(sorted_categories)}",
+        f"nc: {len(category_names)}",
         f"",
         f"names:",
     ]
-    for sequential_index, category in enumerate(sorted_categories):
-        class_name = category["name"]
+    for sequential_index, class_name in enumerate(category_names):
         lines.append(f"  {sequential_index}: {class_name}")
 
     with open(yaml_path, "w", encoding="utf-8") as file_handle:
         file_handle.write("\n".join(lines))
         file_handle.write("\n")
 
-    logger.info("data.yaml 생성 완료: %d개 클래스", len(sorted_categories))
+    logger.info("data.yaml 생성 완료: %d개 클래스", len(category_names))
     return yaml_path

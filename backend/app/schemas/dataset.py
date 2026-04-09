@@ -312,7 +312,6 @@ class ErrorResponse(BaseModel):
 
 class SampleAnnotationItem(BaseModel):
     """개별 annotation 정보 (bbox 1개)."""
-    category_id: int
     category_name: str
     bbox: list[float] | None = None
     area: float | None = None
@@ -335,7 +334,7 @@ class SampleListResponse(BaseModel):
     total: int
     page: int
     page_size: int
-    categories: list[dict[str, Any]] = []
+    categories: list[str] = []
     bbox_normalized: bool = False
     """bbox가 정규화 좌표(0~1)인 경우 True (YOLO 포맷, 이미지 크기 미로드 시)"""
 
@@ -346,7 +345,6 @@ class SampleListResponse(BaseModel):
 
 class ClassDistributionItem(BaseModel):
     """클래스별 annotation 수 + 이미지 수."""
-    category_id: int
     category_name: str
     annotation_count: int
     image_count: int

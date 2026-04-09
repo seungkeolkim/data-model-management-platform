@@ -243,92 +243,32 @@ class TestBuildYoloToCocoRemap:
 # =============================================================================
 
 
-class TestFormatConvertWithClassMapping:
-    """포맷 변환 Manipulator의 class ID 리매핑 동작 검증."""
+class TestFormatConvertNoOpWithMapping:
+    """
+    통일포맷 전환 후 format_convert는 no-op.
+    IO 라이터가 저장 시점에 올바른 ID를 부여하는지 검증한다.
+    """
 
-    def test_coco_to_yolo_remaps_standard_ids(
+    def test_format_convert_noop_preserves_category_names(
         self, sample_dataset_meta_coco_standard_ids: DatasetMeta,
     ):
-        """COCO 표준 비순차 ID가 YOLO 순차 ID로 리매핑되는지 확인."""
+        """format_convert_to_yolo는 no-op: category_name이 그대로 보존."""
         converter = FormatConvertToYolo()
         result = converter.transform_annotation(
             sample_dataset_meta_coco_standard_ids, params={},
         )
 
-        # person: coco 1 → yolo 0 (순차 0번째)
-        assert result.image_records[0].annotations[0].category_id == 0
-        # car: coco 3 → yolo 1 (순차 1번째)
-        assert result.image_records[0].annotations[1].category_id == 1
-        # bus: coco 6 → yolo 2 (순차 2번째)
-        assert result.image_records[1].annotations[0].category_id == 2
+        assert result.categories == ["person", "car", "bus"]
+        assert result.image_records[0].annotations[0].category_name == "person"
+        assert result.image_records[0].annotations[1].category_name == "car"
+        assert result.image_records[1].annotations[0].category_name == "bus"
 
-    def test_coco_to_yolo_categories_updated(
+    def test_format_convert_noop_does_not_mutate_input(
         self, sample_dataset_meta_coco_standard_ids: DatasetMeta,
     ):
-        """변환 후 categories의 ID가 YOLO 순차 ID로 변경되는지 확인."""
-        converter = FormatConvertToYolo()
-        result = converter.transform_annotation(
-            sample_dataset_meta_coco_standard_ids, params={},
-        )
-
-        cat_ids = [cat["id"] for cat in result.categories]
-        assert 0 in cat_ids   # person
-        assert 1 in cat_ids   # car
-        assert 2 in cat_ids   # bus
-
-    def test_coco_to_yolo_preserves_names(
-        self, sample_dataset_meta_coco_standard_ids: DatasetMeta,
-    ):
-        """리매핑 후 클래스 이름이 보존되는지 확인."""
-        converter = FormatConvertToYolo()
-        result = converter.transform_annotation(
-            sample_dataset_meta_coco_standard_ids, params={},
-        )
-
-        name_by_id = {cat["id"]: cat["name"] for cat in result.categories}
-        assert name_by_id[0] == "person"
-        assert name_by_id[1] == "car"
-        assert name_by_id[2] == "bus"
-
-    def test_coco_to_yolo_custom_mapping(
-        self, sample_dataset_meta_coco_standard_ids: DatasetMeta,
-    ):
-        """custom class_id_mapping이 표준 매핑을 override하는지 확인."""
-        converter = FormatConvertToYolo()
-        result = converter.transform_annotation(
-            sample_dataset_meta_coco_standard_ids,
-            params={"class_id_mapping": {1: 10, 3: 20, 6: 30}},
-        )
-
-        assert result.image_records[0].annotations[0].category_id == 10  # person
-        assert result.image_records[0].annotations[1].category_id == 20  # car
-        assert result.image_records[1].annotations[0].category_id == 30  # bus
-
-    def test_yolo_to_coco_remaps_standard_ids(
-        self, sample_dataset_meta_coco_standard_ids: DatasetMeta,
-    ):
-        """YOLO→COCO 변환이 표준 COCO ID로 복원되는지 확인."""
-        # 먼저 COCO→YOLO 변환
-        to_yolo = FormatConvertToYolo()
-        yolo_meta = to_yolo.transform_annotation(
-            sample_dataset_meta_coco_standard_ids, params={},
-        )
-
-        # YOLO→COCO 역변환
-        to_coco = FormatConvertToCoco()
-        coco_meta = to_coco.transform_annotation(yolo_meta, params={})
-
-        # 원래 COCO ID로 복원 확인
-        assert coco_meta.image_records[0].annotations[0].category_id == 1  # person
-        assert coco_meta.image_records[0].annotations[1].category_id == 3  # car
-        assert coco_meta.image_records[1].annotations[0].category_id == 6  # bus
-
-    def test_does_not_mutate_input(
-        self, sample_dataset_meta_coco_standard_ids: DatasetMeta,
-    ):
-        """변환 후 원본 DatasetMeta의 category_id가 변경되지 않는지 확인."""
-        original_ids = [
-            ann.category_id
+        """변환 후 원본 DatasetMeta가 변경되지 않는지 확인 (deep copy)."""
+        original_names = [
+            ann.category_name
             for rec in sample_dataset_meta_coco_standard_ids.image_records
             for ann in rec.annotations
         ]
@@ -336,32 +276,38 @@ class TestFormatConvertWithClassMapping:
         converter = FormatConvertToYolo()
         converter.transform_annotation(sample_dataset_meta_coco_standard_ids, params={})
 
-        after_ids = [
-            ann.category_id
+        after_names = [
+            ann.category_name
             for rec in sample_dataset_meta_coco_standard_ids.image_records
             for ann in rec.annotations
         ]
-        assert after_ids == original_ids
+        assert after_names == original_names
 
-    def test_full_roundtrip_with_standard_ids(
-        self, sample_coco_file_standard_ids: Path, tmp_path: Path,
+    def test_write_coco_assigns_standard_ids(
+        self, sample_dataset_meta_coco_standard_ids: DatasetMeta, tmp_path: Path,
     ):
-        """
-        COCO(비순차 ID) → parse → YOLO 변환 → write files → re-parse → COCO 변환
-        전체 왕복 후 category_id가 원래 COCO ID로 복원되는지 확인.
-        """
-        # 1. COCO 파싱
-        original_coco = parse_coco_json(sample_coco_file_standard_ids)
+        """write_coco_json이 표준 COCO ID를 올바르게 부여하는지 확인."""
+        import json
+        output_path = tmp_path / "coco_output.json"
+        write_coco_json(sample_dataset_meta_coco_standard_ids, output_path)
 
-        # 2. COCO → YOLO 변환 (ID 리매핑)
-        to_yolo = FormatConvertToYolo()
-        yolo_meta = to_yolo.transform_annotation(original_coco, params={})
+        with open(output_path, "r", encoding="utf-8") as file_handle:
+            coco_data = json.load(file_handle)
 
-        # 3. YOLO 파일 쓰기
+        # 표준 COCO ID 확인: person=1, car=3, bus=6
+        cat_id_by_name = {c["name"]: c["id"] for c in coco_data["categories"]}
+        assert cat_id_by_name["person"] == 1
+        assert cat_id_by_name["car"] == 3
+        assert cat_id_by_name["bus"] == 6
+
+    def test_write_yolo_assigns_sequential_ids(
+        self, sample_dataset_meta_coco_standard_ids: DatasetMeta, tmp_path: Path,
+    ):
+        """write_yolo_dir이 알파벳 정렬 기반 0-based ID를 올바르게 부여하는지 확인."""
         yolo_dir = tmp_path / "yolo_output"
-        write_yolo_dir(yolo_meta, yolo_dir)
+        write_yolo_dir(sample_dataset_meta_coco_standard_ids, yolo_dir)
 
-        # YOLO 파일 검증: class_id가 0-based sequential인지 확인
+        # YOLO 파일 검증: class_id가 0-based sequential
         for txt_file in yolo_dir.glob("*.txt"):
             for line in txt_file.read_text().strip().split("\n"):
                 if not line.strip():
@@ -369,29 +315,24 @@ class TestFormatConvertWithClassMapping:
                 class_id = int(line.split()[0])
                 assert class_id in {0, 1, 2}, f"비표준 YOLO class_id 발견: {class_id}"
 
-        # 4. YOLO 재파싱 (data.yaml을 상위 디렉토리에 생성하여 클래스명 유지)
-        from lib.pipeline.io.yolo_io import _write_yolo_data_yaml
-        sorted_cats = sorted(yolo_meta.categories, key=lambda c: c["id"])
-        _write_yolo_data_yaml(sorted_cats, yolo_dir.parent)
+    def test_coco_write_parse_roundtrip_preserves_names(
+        self, sample_coco_file_standard_ids: Path, tmp_path: Path,
+    ):
+        """
+        COCO file → parse (통일포맷) → write COCO → re-parse
+        category_name이 보존되는지 확인.
+        """
+        original_meta = parse_coco_json(sample_coco_file_standard_ids)
 
-        from app.pipeline.io.yolo_io import parse_yolo_dir
-        image_sizes = {
-            "img_001": (IMAGE_1_WIDTH, IMAGE_1_HEIGHT),
-            "img_002": (IMAGE_2_WIDTH, IMAGE_2_HEIGHT),
-        }
-        reparsed_yolo = parse_yolo_dir(yolo_dir, image_sizes=image_sizes)
-
-        # 5. YOLO → COCO 변환 (ID 복원)
-        to_coco = FormatConvertToCoco()
-        final_coco = to_coco.transform_annotation(reparsed_yolo, params={})
-
-        # 6. COCO JSON 쓰기 → 재파싱
         coco_output = tmp_path / "coco_roundtrip.json"
-        write_coco_json(final_coco, coco_output)
-        final_meta = parse_coco_json(coco_output)
+        write_coco_json(original_meta, coco_output)
+        reparsed_meta = parse_coco_json(coco_output)
 
-        # 검증: category_id가 원래 COCO 비순차 ID로 복원되었는지
-        final_cat_ids = sorted(
-            {ann.category_id for rec in final_meta.image_records for ann in rec.annotations}
+        # category_name 보존
+        original_names = sorted(
+            {ann.category_name for rec in original_meta.image_records for ann in rec.annotations}
         )
-        assert final_cat_ids == [1, 3, 6], f"복원된 COCO ID: {final_cat_ids}"
+        reparsed_names = sorted(
+            {ann.category_name for rec in reparsed_meta.image_records for ann in rec.annotations}
+        )
+        assert reparsed_names == original_names

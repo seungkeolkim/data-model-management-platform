@@ -63,9 +63,9 @@ class OutputConfig(BaseModel):
         default="SOURCE",
         description="SOURCE | PROCESSED | FUSION",
     )
-    annotation_format: str | None = Field(
-        default=None,
-        description="출력 annotation 포맷. None이면 마지막 태스크의 포맷 유지",
+    annotation_format: str = Field(
+        ...,
+        description="출력 annotation 포맷 (COCO | YOLO). 통일포맷이므로 반드시 지정 필요.",
     )
     split: str = Field(
         default="NONE",
@@ -83,7 +83,7 @@ class PipelineConfig(BaseModel):
     """
     name: str = Field(..., description="출력 DatasetGroup 이름")
     description: str | None = None
-    output: OutputConfig = Field(default_factory=OutputConfig)
+    output: OutputConfig
     tasks: dict[str, TaskConfig] = Field(..., min_length=1)
 
     @model_validator(mode="after")

@@ -134,7 +134,7 @@ def run_yolo_to_coco_pipeline() -> None:
     print(f"{'='*60}")
     print(f"  출력 경로: {result.output_storage_uri}")
     print(f"  출력 타입: {result.output_dataset_type}")
-    print(f"  출력 포맷: {result.output_meta.annotation_format}")
+    print(f"  출력 포맷: {result.output_format}")
     print(f"  이미지 수: {result.image_count}")
     print(f"  annotation 파일: {result.annotation_filenames}")
     print(f"  meta 파일: {result.annotation_meta_filename}")
@@ -216,7 +216,7 @@ def run_coco_to_yolo_pipeline() -> None:
     result = executor.run(pipeline_config)
 
     print(f"\n  출력 경로: {result.output_storage_uri}")
-    print(f"  출력 포맷: {result.output_meta.annotation_format}")
+    print(f"  출력 포맷: {result.output_format}")
     print(f"  이미지 수: {result.image_count}")
     print(f"  meta 파일: {result.annotation_meta_filename}")
     print(f"  categories: {len(result.output_meta.categories)}개")

@@ -184,13 +184,14 @@ def _execute_pipeline(
         output_dataset.annotation_files = result.annotation_filenames
         output_dataset.annotation_meta_file = result.annotation_meta_filename
 
-        # annotation_format 확정 (변환된 경우 업데이트)
-        output_dataset.annotation_format = result.output_meta.annotation_format
+        # annotation_format 확정 (OutputConfig에서 지정한 포맷)
+        output_dataset.annotation_format = result.output_format
 
         # metadata 채우기: 클래스 매핑 정보 (파이프라인이 생성한 데이터는 시스템이 전부 알고 있음)
+        # 통일포맷: categories는 list[str]이므로 index를 key로 사용
         class_mapping = {
-            str(cat["id"]): cat["name"]
-            for cat in result.output_meta.categories
+            str(idx): name
+            for idx, name in enumerate(result.output_meta.categories)
         }
         output_dataset.metadata_ = {
             "class_info": {

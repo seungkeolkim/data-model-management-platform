@@ -3,6 +3,9 @@
 
 장난감 데이터: 2장 이미지, 3개 annotation, 2개 category (person, car).
 COCO와 YOLO 양쪽으로 동일한 데이터를 표현한다.
+
+통일포맷: 내부 모델은 category_name(문자열)으로 클래스를 식별.
+annotation_format, category_id 필드 없음.
 """
 from __future__ import annotations
 
@@ -208,16 +211,11 @@ def sample_coco_file_standard_ids(tmp_path: Path, sample_coco_dict_standard_ids:
 
 @pytest.fixture
 def sample_dataset_meta_coco_standard_ids() -> DatasetMeta:
-    """COCO 표준 비순차 ID를 사용하는 DatasetMeta (person=1, car=3, bus=6)."""
+    """COCO 표준 비순차 ID로 파싱된 통일포맷 DatasetMeta (person, car, bus)."""
     return DatasetMeta(
         dataset_id="test-coco-std",
         storage_uri="raw/test/train/v1.0.0",
-        annotation_format="COCO",
-        categories=[
-            {"id": 1, "name": "person", "supercategory": "human"},
-            {"id": 3, "name": "car", "supercategory": "vehicle"},
-            {"id": 6, "name": "bus", "supercategory": "vehicle"},
-        ],
+        categories=["person", "car", "bus"],
         image_records=[
             ImageRecord(
                 image_id=1,
@@ -225,8 +223,8 @@ def sample_dataset_meta_coco_standard_ids() -> DatasetMeta:
                 width=IMAGE_1_WIDTH,
                 height=IMAGE_1_HEIGHT,
                 annotations=[
-                    Annotation(annotation_type="BBOX", category_id=1, bbox=PERSON_BBOX.copy()),
-                    Annotation(annotation_type="BBOX", category_id=3, bbox=CAR_BBOX.copy()),
+                    Annotation(annotation_type="BBOX", category_name="person", bbox=PERSON_BBOX.copy()),
+                    Annotation(annotation_type="BBOX", category_name="car", bbox=CAR_BBOX.copy()),
                 ],
             ),
             ImageRecord(
@@ -235,7 +233,7 @@ def sample_dataset_meta_coco_standard_ids() -> DatasetMeta:
                 width=IMAGE_2_WIDTH,
                 height=IMAGE_2_HEIGHT,
                 annotations=[
-                    Annotation(annotation_type="BBOX", category_id=6, bbox=PERSON_BBOX_2.copy()),
+                    Annotation(annotation_type="BBOX", category_name="bus", bbox=PERSON_BBOX_2.copy()),
                 ],
             ),
         ],
@@ -243,20 +241,16 @@ def sample_dataset_meta_coco_standard_ids() -> DatasetMeta:
 
 
 # =============================================================================
-# DatasetMeta fixtures
+# DatasetMeta fixtures (통일포맷)
 # =============================================================================
 
 @pytest.fixture
 def sample_dataset_meta_coco() -> DatasetMeta:
-    """COCO format의 DatasetMeta 인스턴스. 표준 비순차 ID: person=1, car=3."""
+    """COCO에서 파싱된 통일포맷 DatasetMeta 인스턴스. person, car."""
     return DatasetMeta(
         dataset_id="test-coco-001",
         storage_uri="raw/test/train/v1.0.0",
-        annotation_format="COCO",
-        categories=[
-            {"id": 1, "name": "person", "supercategory": "human"},
-            {"id": 3, "name": "car", "supercategory": "vehicle"},
-        ],
+        categories=["person", "car"],
         image_records=[
             ImageRecord(
                 image_id=1,
@@ -264,8 +258,8 @@ def sample_dataset_meta_coco() -> DatasetMeta:
                 width=IMAGE_1_WIDTH,
                 height=IMAGE_1_HEIGHT,
                 annotations=[
-                    Annotation(annotation_type="BBOX", category_id=1, bbox=PERSON_BBOX.copy()),
-                    Annotation(annotation_type="BBOX", category_id=3, bbox=CAR_BBOX.copy()),
+                    Annotation(annotation_type="BBOX", category_name="person", bbox=PERSON_BBOX.copy()),
+                    Annotation(annotation_type="BBOX", category_name="car", bbox=CAR_BBOX.copy()),
                 ],
             ),
             ImageRecord(
@@ -274,7 +268,7 @@ def sample_dataset_meta_coco() -> DatasetMeta:
                 width=IMAGE_2_WIDTH,
                 height=IMAGE_2_HEIGHT,
                 annotations=[
-                    Annotation(annotation_type="BBOX", category_id=1, bbox=PERSON_BBOX_2.copy()),
+                    Annotation(annotation_type="BBOX", category_name="person", bbox=PERSON_BBOX_2.copy()),
                 ],
             ),
         ],
@@ -283,15 +277,11 @@ def sample_dataset_meta_coco() -> DatasetMeta:
 
 @pytest.fixture
 def sample_dataset_meta_yolo() -> DatasetMeta:
-    """YOLO format의 DatasetMeta 인스턴스 (동일 데이터, annotation_format만 다름)."""
+    """YOLO에서 파싱된 통일포맷 DatasetMeta 인스턴스 (동일 데이터)."""
     return DatasetMeta(
         dataset_id="test-yolo-001",
         storage_uri="raw/test/train/v1.0.0",
-        annotation_format="YOLO",
-        categories=[
-            {"id": 0, "name": "person"},
-            {"id": 1, "name": "car"},
-        ],
+        categories=["person", "car"],
         image_records=[
             ImageRecord(
                 image_id=1,
@@ -299,8 +289,8 @@ def sample_dataset_meta_yolo() -> DatasetMeta:
                 width=IMAGE_1_WIDTH,
                 height=IMAGE_1_HEIGHT,
                 annotations=[
-                    Annotation(annotation_type="BBOX", category_id=0, bbox=PERSON_BBOX.copy()),
-                    Annotation(annotation_type="BBOX", category_id=1, bbox=CAR_BBOX.copy()),
+                    Annotation(annotation_type="BBOX", category_name="person", bbox=PERSON_BBOX.copy()),
+                    Annotation(annotation_type="BBOX", category_name="car", bbox=CAR_BBOX.copy()),
                 ],
             ),
             ImageRecord(
@@ -309,7 +299,7 @@ def sample_dataset_meta_yolo() -> DatasetMeta:
                 width=IMAGE_2_WIDTH,
                 height=IMAGE_2_HEIGHT,
                 annotations=[
-                    Annotation(annotation_type="BBOX", category_id=0, bbox=PERSON_BBOX_2.copy()),
+                    Annotation(annotation_type="BBOX", category_name="person", bbox=PERSON_BBOX_2.copy()),
                 ],
             ),
         ],

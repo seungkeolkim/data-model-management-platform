@@ -145,7 +145,7 @@ export default function EdaTab({ datasetId }: Props) {
             <div>
               {data.class_distribution.map(item => (
                 <ClassDistributionBar
-                  key={item.category_id}
+                  key={item.category_name}
                   item={item}
                   maxCount={maxAnnotationCount}
                 />

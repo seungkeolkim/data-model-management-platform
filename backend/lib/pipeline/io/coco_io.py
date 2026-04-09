@@ -3,6 +3,10 @@ COCO JSON 포맷 파서 및 라이터.
 
 COCO JSON ↔ DatasetMeta 변환을 담당하는 순수 함수 모듈.
 파일 I/O만 수행하며, DB나 서비스 레이어에 의존하지 않는다.
+
+통일포맷:
+  - 파싱 시: COCO category_id(정수) → category_name(문자열)로 변환
+  - 저장 시: category_name → COCO 표준 80클래스 매핑 ID 부여, 미매칭은 91~
 """
 from __future__ import annotations
 
@@ -11,6 +15,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+from lib.pipeline.io.coco_yolo_class_mapping import NAME_TO_COCO_ID
 from lib.pipeline.pipeline_data_models import Annotation, DatasetMeta, ImageRecord
 
 
@@ -20,12 +25,12 @@ def parse_coco_json(
     storage_uri: str = "",
 ) -> DatasetMeta:
     """
-    COCO JSON 파일을 읽어 DatasetMeta로 변환한다.
+    COCO JSON 파일을 읽어 통일포맷 DatasetMeta로 변환한다.
 
     변환 규칙:
-      - images 배열 → ImageRecord (image_id, file_name, width, height)
-      - annotations 배열 → Annotation (BBOX 타입, category_id, bbox [x,y,w,h] absolute)
-      - categories 배열 → DatasetMeta.categories
+      - categories 배열에서 id→name 매핑 구축
+      - annotations의 category_id → category_name으로 변환
+      - bbox는 COCO absolute [x,y,w,h] 그대로 유지
       - area, iscrowd 등 추가 필드는 Annotation.extra에 보존
 
     Args:
@@ -34,7 +39,7 @@ def parse_coco_json(
         storage_uri: DatasetMeta.storage_uri (빈 문자열 허용)
 
     Returns:
-        파싱된 DatasetMeta (annotation_format="COCO")
+        파싱된 DatasetMeta (통일포맷, annotation_format 없음)
 
     Raises:
         FileNotFoundError: json_path가 존재하지 않을 때
@@ -51,16 +56,12 @@ def parse_coco_json(
             f"COCO JSON에 필수 키가 없습니다: {sorted(missing_keys)}"
         )
 
-    # categories 변환: [{id, name, supercategory?}]
-    categories = []
+    # category id→name 매핑 구축
+    coco_id_to_name: dict[int, str] = {}
+    category_names: list[str] = []
     for category in coco_data["categories"]:
-        category_entry: dict[str, Any] = {
-            "id": category["id"],
-            "name": category["name"],
-        }
-        if "supercategory" in category:
-            category_entry["supercategory"] = category["supercategory"]
-        categories.append(category_entry)
+        coco_id_to_name[category["id"]] = category["name"]
+        category_names.append(category["name"])
 
     # images → ImageRecord dict (image_id → ImageRecord)
     image_record_by_id: dict[int, ImageRecord] = {}
@@ -83,6 +84,10 @@ def parse_coco_json(
             # image에 없는 annotation은 무시 (데이터 불일치 허용)
             continue
 
+        # category_id → category_name 변환
+        raw_category_id = annotation_entry["category_id"]
+        category_name = coco_id_to_name.get(raw_category_id, str(raw_category_id))
+
         # extra: 핵심 키 외의 모든 필드 보존 (area, iscrowd 등)
         extra_fields = {
             key: value
@@ -98,7 +103,7 @@ def parse_coco_json(
 
         annotation = Annotation(
             annotation_type="BBOX",
-            category_id=annotation_entry["category_id"],
+            category_name=category_name,
             bbox=annotation_entry.get("bbox"),
             segmentation=segmentation,
             extra=extra_fields,
@@ -113,8 +118,7 @@ def parse_coco_json(
     return DatasetMeta(
         dataset_id=dataset_id,
         storage_uri=storage_uri,
-        annotation_format="COCO",
-        categories=categories,
+        categories=category_names,
         image_records=sorted_image_records,
     )
 
@@ -124,22 +128,49 @@ def write_coco_json(
     output_path: Path,
 ) -> Path:
     """
-    DatasetMeta를 COCO JSON 파일로 출력한다.
+    DatasetMeta(통일포맷)를 COCO JSON 파일로 출력한다.
 
-    변환 규칙:
-      - ImageRecord → images 배열
-      - Annotation → annotations 배열 (annotation id 자동 순차 생성)
-      - categories → categories 배열
+    저장 시 ID 부여 규칙:
+      - category_name이 COCO 표준 80클래스에 있으면 해당 표준 ID 사용
+      - 표준에 없는 클래스는 91번부터 순차 할당
+      - annotation id는 자동 순차 생성
       - area: Annotation.extra에 있으면 사용, 없으면 bbox w*h로 계산
       - iscrowd: Annotation.extra에 있으면 사용, 없으면 0
 
     Args:
-        meta: 출력할 DatasetMeta
+        meta: 출력할 DatasetMeta (통일포맷)
         output_path: 출력 JSON 파일 경로
 
     Returns:
         output_path (동일 경로 반환)
     """
+    # category_name → COCO ID 매핑 생성
+    name_to_assigned_id: dict[str, int] = {}
+    used_ids: set[int] = set()
+
+    # 1단계: 표준 80클래스 매핑 적용
+    for category_name in meta.categories:
+        if category_name in NAME_TO_COCO_ID:
+            assigned_id = NAME_TO_COCO_ID[category_name]
+            name_to_assigned_id[category_name] = assigned_id
+            used_ids.add(assigned_id)
+
+    # 2단계: 표준에 없는 클래스는 91번부터 할당
+    next_custom_id = 91
+    for category_name in meta.categories:
+        if category_name not in name_to_assigned_id:
+            while next_custom_id in used_ids:
+                next_custom_id += 1
+            name_to_assigned_id[category_name] = next_custom_id
+            used_ids.add(next_custom_id)
+            next_custom_id += 1
+
+    # categories 배열 구성 (ID 오름차순)
+    coco_categories = sorted(
+        [{"id": cid, "name": name} for name, cid in name_to_assigned_id.items()],
+        key=lambda c: c["id"],
+    )
+
     # images 배열 구성
     coco_images = []
     for image_record in meta.image_records:
@@ -159,10 +190,14 @@ def write_coco_json(
 
     for image_record in meta.image_records:
         for annotation in image_record.annotations:
+            assigned_category_id = name_to_assigned_id.get(
+                annotation.category_name, 0
+            )
+
             annotation_entry: dict[str, Any] = {
                 "id": annotation_id_counter,
                 "image_id": image_record.image_id,
-                "category_id": annotation.category_id,
+                "category_id": assigned_category_id,
             }
 
             if annotation.bbox is not None:
@@ -189,17 +224,6 @@ def write_coco_json(
 
             coco_annotations.append(annotation_entry)
             annotation_id_counter += 1
-
-    # categories 배열 구성
-    coco_categories = []
-    for category in meta.categories:
-        category_entry: dict[str, Any] = {
-            "id": category["id"],
-            "name": category["name"],
-        }
-        if "supercategory" in category:
-            category_entry["supercategory"] = category["supercategory"]
-        coco_categories.append(category_entry)
 
     coco_output = {
         "images": coco_images,

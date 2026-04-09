@@ -3,6 +3,11 @@
 
 파이프라인을 흐르는 데이터 구조를 정의.
 이미지 파일에는 접근하지 않음 (annotation만 처리).
+
+통일포맷:
+  - 내부에서는 포맷(COCO/YOLO) 구분 없이 category_name(문자열)으로 식별.
+  - category_id(정수)는 존재하지 않으며, 디스크 저장 시에만 포맷별 ID를 부여한다.
+  - bbox는 항상 COCO absolute [x, y, w, h] 형식. (파이프라인 실행 시 Pillow로 이미지 크기를 읽어 보장)
 """
 from __future__ import annotations
 
@@ -14,11 +19,12 @@ from typing import Any
 class Annotation:
     """
     포맷 독립적 내부 Annotation 표현.
-    COCO/YOLO/ATTR_JSON 등 모든 포맷을 이 구조로 변환하여 처리.
+    COCO/YOLO 등 모든 포맷을 이 구조로 변환하여 처리.
+    category_name으로 클래스를 식별하며, 정수 ID는 저장 시점에만 부여된다.
     """
     annotation_type: str  # BBOX | SEGMENTATION | LABEL | ATTRIBUTE
-    category_id: int
-    bbox: list[float] | None = None          # [x, y, w, h] COCO 형식
+    category_name: str    # 클래스 이름 (예: "person", "car")
+    bbox: list[float] | None = None          # [x, y, w, h] COCO absolute 형식
     segmentation: list[list[float]] | None = None
     label: str | None = None
     attributes: dict[str, Any] | None = None
@@ -41,21 +47,20 @@ class DatasetMeta:
     """
     하나의 데이터셋(split+version)에 대한 메타데이터.
     annotation 처리 단계에서 이 구조를 변환하여 최종 결과를 만듦.
+
+    통일포맷:
+      - categories는 클래스 이름 목록 (list[str]). 정수 ID 없음.
+      - annotation_format 필드 없음. 포맷은 로드/저장 시점에서만 의미를 가짐.
     """
     dataset_id: str                  # Dataset.id (DB)
     storage_uri: str                 # NAS 상대경로
-    annotation_format: str           # COCO | YOLO | ...
-    categories: list[dict] = field(default_factory=list)  # [{id, name, supercategory}]
+    categories: list[str] = field(default_factory=list)  # ["person", "car", ...]
     image_records: list[ImageRecord] = field(default_factory=list)
     extra: dict[str, Any] = field(default_factory=dict)
 
     @property
     def image_count(self) -> int:
         return len(self.image_records)
-
-    @property
-    def category_names(self) -> list[str]:
-        return [c["name"] for c in self.categories]
 
 
 @dataclass
@@ -64,7 +69,7 @@ class ImageManipulationSpec:
     이미지 1장에 적용할 변환 명세.
     Annotation 처리 단계에서 결정되며, 실제 이미지 I/O는 ImageMaterializer가 수행.
     """
-    operation: str           # "rotate_180" | "change_compression" | "mask_region" 등
+    operation: str           # "rotate_image" | "mask_region" 등
     params: dict[str, Any] = field(default_factory=dict)
 
 

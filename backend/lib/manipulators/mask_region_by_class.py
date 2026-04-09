@@ -97,18 +97,10 @@ class MaskRegionByClass(UnitManipulator):
 
         masked_meta = copy.deepcopy(input_meta)
 
-        # 마스킹 대상 category_id 집합 구성
-        target_category_ids = set()
-        for category in masked_meta.categories:
-            if category["name"] in target_names:
-                target_category_ids.add(category["id"])
-
         # 매칭되지 않는 이름 경고
-        matched_names = {
-            cat["name"] for cat in masked_meta.categories
-            if cat["name"] in target_names
-        }
-        unmatched_names = target_names - matched_names
+        existing_names = set(masked_meta.categories)
+        matched_names = target_names & existing_names
+        unmatched_names = target_names - existing_names
         if unmatched_names:
             logger.warning(
                 "mask_region_by_class: categories에 존재하지 않는 class 이름: %s (무시됨)",
@@ -120,7 +112,7 @@ class MaskRegionByClass(UnitManipulator):
         for record in masked_meta.image_records:
             mask_bboxes = []
             for annotation in record.annotations:
-                if annotation.category_id in target_category_ids and annotation.bbox:
+                if annotation.category_name in target_names and annotation.bbox:
                     mask_bboxes.append(annotation.bbox)
 
             if not mask_bboxes:
@@ -142,7 +134,7 @@ class MaskRegionByClass(UnitManipulator):
 
         logger.info(
             "mask_region_by_class 완료: 대상 class %d개, 마스킹 bbox %d개, 이미지 %d장",
-            len(target_category_ids), total_mask_count, len(masked_meta.image_records),
+            len(matched_names), total_mask_count, len(masked_meta.image_records),
         )
 
         return masked_meta

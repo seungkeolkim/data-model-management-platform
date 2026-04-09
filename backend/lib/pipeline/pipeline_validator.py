@@ -214,10 +214,6 @@ def _validate_output_annotation_format(
 ) -> None:
     """output.annotation_format이 유효한 값인지 검증한다."""
     annotation_format = config.output.annotation_format
-    if annotation_format is None:
-        # None이면 마지막 태스크의 포맷을 따르므로 허용
-        return
-
     format_upper = annotation_format.upper()
     if format_upper not in VALID_ANNOTATION_FORMATS:
         result.add_error(

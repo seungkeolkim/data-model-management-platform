@@ -34,8 +34,13 @@ const CATEGORY_COLORS = [
   '#13c2c2', '#eb2f96', '#2f54eb', '#a0d911', '#fa8c16',
 ]
 
-function getCategoryColor(categoryId: number): string {
-  return CATEGORY_COLORS[categoryId % CATEGORY_COLORS.length]
+function getCategoryColor(categoryName: string): string {
+  // 문자열 해싱으로 일관된 색상 할당
+  let hash = 0
+  for (let i = 0; i < categoryName.length; i++) {
+    hash = ((hash << 5) - hash + categoryName.charCodeAt(i)) | 0
+  }
+  return CATEGORY_COLORS[Math.abs(hash) % CATEGORY_COLORS.length]
 }
 
 interface Props {
@@ -75,12 +80,12 @@ export default function SampleViewerTab({ datasetId }: Props) {
   const categories = data?.categories ?? []
 
   // 클래스 필터 상태 — 카테고리 데이터 로드 시 전부 활성화로 초기화
-  const [enabledCategoryIds, setEnabledCategoryIds] = useState<Set<number>>(new Set())
+  const [enabledCategoryNames, setEnabledCategoryNames] = useState<Set<string>>(new Set())
   const [categoryInitialized, setCategoryInitialized] = useState(false)
 
   useEffect(() => {
     if (categories.length > 0 && !categoryInitialized) {
-      setEnabledCategoryIds(new Set(categories.map(cat => cat.id)))
+      setEnabledCategoryNames(new Set(categories))
       setCategoryInitialized(true)
     }
   }, [categories, categoryInitialized])
@@ -96,28 +101,28 @@ export default function SampleViewerTab({ datasetId }: Props) {
   const filteredAnnotations = useMemo(() => {
     if (!selectedImage) return []
     return selectedImage.annotations.filter(
-      ann => enabledCategoryIds.has(ann.category_id)
+      ann => enabledCategoryNames.has(ann.category_name)
     )
-  }, [selectedImage, enabledCategoryIds])
+  }, [selectedImage, enabledCategoryNames])
 
-  const handleToggleCategory = (categoryId: number, checked: boolean) => {
-    setEnabledCategoryIds(prev => {
+  const handleToggleCategory = (categoryName: string, checked: boolean) => {
+    setEnabledCategoryNames(prev => {
       const next = new Set(prev)
       if (checked) {
-        next.add(categoryId)
+        next.add(categoryName)
       } else {
-        next.delete(categoryId)
+        next.delete(categoryName)
       }
       return next
     })
   }
 
   const handleSelectAllCategories = () => {
-    setEnabledCategoryIds(new Set(categories.map(cat => cat.id)))
+    setEnabledCategoryNames(new Set(categories))
   }
 
   const handleDeselectAllCategories = () => {
-    setEnabledCategoryIds(new Set())
+    setEnabledCategoryNames(new Set())
   }
 
   if (isLoading) {
@@ -206,10 +211,10 @@ export default function SampleViewerTab({ datasetId }: Props) {
             </div>
             <div style={{ maxHeight: 160, overflowY: 'auto' }}>
               {categories.map(cat => (
-                <div key={cat.id} style={{ marginBottom: 2 }}>
+                <div key={cat} style={{ marginBottom: 2 }}>
                   <Checkbox
-                    checked={enabledCategoryIds.has(cat.id)}
-                    onChange={e => handleToggleCategory(cat.id, e.target.checked)}
+                    checked={enabledCategoryNames.has(cat)}
+                    onChange={e => handleToggleCategory(cat, e.target.checked)}
                     style={{ fontSize: 11 }}
                   >
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11 }}>
@@ -218,9 +223,9 @@ export default function SampleViewerTab({ datasetId }: Props) {
                         width: 8,
                         height: 8,
                         borderRadius: 2,
-                        background: getCategoryColor(cat.id),
+                        background: getCategoryColor(cat),
                       }} />
-                      {cat.name}
+                      {cat}
                     </span>
                   </Checkbox>
                 </div>
@@ -326,7 +331,7 @@ function ImageWithBboxOverlay({
       const drawW = bboxW * scale
       const drawH = bboxH * scale
 
-      const color = getCategoryColor(ann.category_id)
+      const color = getCategoryColor(ann.category_name)
 
       // bbox 사각형
       ctx.strokeStyle = color
@@ -461,7 +466,7 @@ function AnnotationTable({
       key: 'category_name',
       width: 120,
       render: (name: string, record: SampleAnnotationItem) => (
-        <Tag color={getCategoryColor(record.category_id)}>{name}</Tag>
+        <Tag color={getCategoryColor(record.category_name)}>{name}</Tag>
       ),
     },
     {

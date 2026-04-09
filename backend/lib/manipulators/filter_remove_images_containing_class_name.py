@@ -10,9 +10,8 @@ params:
 
 처리 흐름:
     1. class_names 파싱 → 제거 대상 class 이름 set 구성
-    2. categories에서 이름이 매칭되는 category_id set 구성
-    3. 각 image_record의 annotations 중 하나라도 해당 category_id를 포함하면 이미지 제거
-    4. categories는 변경하지 않음 (이미지만 제거, 카테고리 목록은 유지)
+    2. 각 image_record의 annotations 중 하나라도 해당 category_name을 포함하면 이미지 제거
+    3. categories는 변경하지 않음 (이미지만 제거, 카테고리 목록은 유지)
 """
 from __future__ import annotations
 
@@ -83,18 +82,10 @@ class FilterRemoveImagesContainingClassName(UnitManipulator):
 
         filtered_meta = copy.deepcopy(input_meta)
 
-        # 제거 대상 category_id 집합 구성
-        remove_category_ids = set()
-        for category in filtered_meta.categories:
-            if category["name"] in remove_names:
-                remove_category_ids.add(category["id"])
-
         # 매칭되지 않는 이름이 있으면 경고
-        matched_names = {
-            cat["name"] for cat in filtered_meta.categories
-            if cat["name"] in remove_names
-        }
-        unmatched_names = remove_names - matched_names
+        existing_names = set(filtered_meta.categories)
+        matched_names = remove_names & existing_names
+        unmatched_names = remove_names - existing_names
         if unmatched_names:
             logger.warning(
                 "categories에 존재하지 않는 class 이름: %s (무시됨)",
@@ -107,7 +98,7 @@ class FilterRemoveImagesContainingClassName(UnitManipulator):
             image_record
             for image_record in filtered_meta.image_records
             if not any(
-                ann.category_id in remove_category_ids
+                ann.category_name in remove_names
                 for ann in image_record.annotations
             )
         ]
@@ -116,7 +107,7 @@ class FilterRemoveImagesContainingClassName(UnitManipulator):
         logger.info(
             "filter_remove_images_containing_class_name 완료: 제거 대상 class %d개 (%s), "
             "제거된 이미지 %d장, 남은 이미지 %d장",
-            len(remove_category_ids),
+            len(matched_names),
             ", ".join(sorted(matched_names)),
             removed_image_count,
             len(filtered_meta.image_records),

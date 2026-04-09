@@ -92,7 +92,7 @@ class TestParseYolo:
             "image_002": (IMAGE_2_WIDTH, IMAGE_2_HEIGHT),
         }
         meta = parse_yolo_dir(label_dir, image_sizes=image_sizes, class_names=class_names)
-        assert meta.category_names == ["person", "car"]
+        assert meta.categories == ["person", "car"]
 
     def test_parse_categories_from_classes_txt(self, sample_yolo_dir: tuple[Path, list[str]]):
         """class_names=None이면 classes.txt에서 자동 로드하는지 확인."""
@@ -102,24 +102,24 @@ class TestParseYolo:
             "image_002": (IMAGE_2_WIDTH, IMAGE_2_HEIGHT),
         }
         meta = parse_yolo_dir(label_dir, image_sizes=image_sizes, class_names=None)
-        assert meta.category_names == ["person", "car"]
+        assert meta.categories == ["person", "car"]
 
-    def test_parse_categories_fallback_numeric(self, tmp_path: Path):
-        """class_names도 classes.txt도 없으면 숫자 이름으로 생성되는지 확인."""
+    def test_parse_categories_fallback_standard_mapping(self, tmp_path: Path):
+        """class_names도 classes.txt도 없으면 COCO 표준 80클래스 매핑으로 이름 해석."""
         label_dir = tmp_path / "labels"
         label_dir.mkdir()
         (label_dir / "img.txt").write_text("0 0.5 0.5 0.2 0.3\n2 0.3 0.3 0.1 0.1\n")
 
         image_sizes = {"img": (640, 480)}
         meta = parse_yolo_dir(label_dir, image_sizes=image_sizes, class_names=None)
-        # 숫자 이름, class_id 순서
-        assert meta.category_names == ["0", "2"]
+        # COCO 표준 80클래스 fallback: class_id 0 → "person", class_id 2 → "car"
+        assert meta.categories == ["person", "car"]
 
-    def test_parse_annotation_format_is_yolo(self, sample_yolo_dir: tuple[Path, list[str]]):
-        """annotation_format이 'YOLO'로 설정되는지 확인."""
+    def test_parse_categories_are_name_strings(self, sample_yolo_dir: tuple[Path, list[str]]):
+        """통일포맷: categories가 이름 문자열 리스트인지 확인."""
         label_dir, class_names = sample_yolo_dir
         meta = parse_yolo_dir(label_dir, class_names=class_names)
-        assert meta.annotation_format == "YOLO"
+        assert all(isinstance(name, str) for name in meta.categories)
 
     def test_parse_empty_txt_file(self, tmp_path: Path):
         """빈 .txt 파일이 annotation 없는 ImageRecord로 처리되는지 확인."""
@@ -132,14 +132,18 @@ class TestParseYolo:
         assert meta.image_count == 1
         assert len(meta.image_records[0].annotations) == 0
 
-    def test_parse_no_image_sizes_bbox_is_none(self, tmp_path: Path):
-        """image_sizes가 없으면 bbox가 None인지 확인."""
+    def test_parse_no_image_sizes_bbox_is_normalized(self, tmp_path: Path):
+        """image_sizes가 없으면 bbox가 YOLO normalized 좌표 그대로 저장되는지 확인."""
         label_dir = tmp_path / "labels"
         label_dir.mkdir()
         (label_dir / "test.txt").write_text("0 0.5 0.5 0.2 0.3\n")
 
         meta = parse_yolo_dir(label_dir)
-        assert meta.image_records[0].annotations[0].bbox is None
+        # image_sizes 없으면 YOLO cx,cy,w,h → absolute 변환 불가
+        # 통일포맷에서는 normalized 좌표가 그대로 저장됨
+        bbox = meta.image_records[0].annotations[0].bbox
+        assert bbox is not None
+        assert len(bbox) == 4
 
     def test_parse_image_dimensions_stored(self, sample_yolo_dir: tuple[Path, list[str]]):
         """image_sizes가 ImageRecord의 width/height에 저장되는지 확인."""
@@ -183,9 +187,11 @@ class TestWriteYolo:
         label_1_content = (output_dir / "image_001.txt").read_text().strip().split("\n")
         assert len(label_1_content) == 2
 
-        # 첫 번째 행: person
+        # YOLO 라이터는 sorted(categories) 기반으로 0-based index 할당
+        # categories=["person", "car"] → sorted: ["car"=0, "person"=1]
+        # 첫 번째 행: person → class_id=1
         parts = label_1_content[0].split()
-        assert int(parts[0]) == 0  # class_id
+        assert int(parts[0]) == 1  # person의 YOLO index (알파벳순)
         assert abs(float(parts[1]) - PERSON_YOLO[0]) < _COORD_TOLERANCE
         assert abs(float(parts[2]) - PERSON_YOLO[1]) < _COORD_TOLERANCE
         assert abs(float(parts[3]) - PERSON_YOLO[2]) < _COORD_TOLERANCE
@@ -238,25 +244,11 @@ class TestWriteYolo:
 
     def test_write_missing_dimensions_raises(self, tmp_path: Path):
         """width/height가 없으면 ValueError를 발생시키는지 확인."""
-        meta = DatasetMeta(
-            dataset_id="test",
-            storage_uri="",
-            annotation_format="COCO",
-            image_records=[
-                # width/height 없는 ImageRecord
-                type("ImageRecord", (), {
-                    "image_id": 1, "file_name": "no_size.jpg",
-                    "width": None, "height": None,
-                    "annotations": [], "extra": {},
-                })(),
-            ],
-        )
-        # DatasetMeta의 image_records는 list이므로 실제 ImageRecord 사용
         from app.pipeline.pipeline_data_models import Annotation, ImageRecord
         meta_proper = DatasetMeta(
             dataset_id="test",
             storage_uri="",
-            annotation_format="COCO",
+            categories=["person"],
             image_records=[
                 ImageRecord(
                     image_id=1,
@@ -264,7 +256,7 @@ class TestWriteYolo:
                     width=None,
                     height=None,
                     annotations=[
-                        Annotation(annotation_type="BBOX", category_id=0, bbox=[10, 20, 30, 40]),
+                        Annotation(annotation_type="BBOX", category_name="person", bbox=[10, 20, 30, 40]),
                     ],
                 ),
             ],
@@ -337,9 +329,8 @@ class TestYoloRoundTrip:
 
         # data.yaml을 상위 디렉토리(데이터셋 루트)에 생성하여 재파싱 시 클래스명 유지
         from lib.pipeline.io.yolo_io import _write_yolo_data_yaml
-        sorted_categories = sorted(original_meta.categories, key=lambda c: c["id"])
-        _write_yolo_data_yaml(sorted_categories, output_dir.parent)
+        _write_yolo_data_yaml(original_meta.categories, output_dir.parent)
 
         # 상위 디렉토리 yaml 자동 탐색으로 클래스명 로드
         reparsed_meta = parse_yolo_dir(output_dir, image_sizes=image_sizes)
-        assert reparsed_meta.category_names == original_meta.category_names
+        assert reparsed_meta.categories == original_meta.categories

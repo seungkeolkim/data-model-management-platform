@@ -203,7 +203,6 @@ export interface PipelineExecution {
 // =============================================================================
 
 export interface SampleAnnotationItem {
-  category_id: number
   category_name: string
   bbox: number[] | null
   area: number | null
@@ -224,7 +223,7 @@ export interface SampleListResponse {
   total: number
   page: number
   page_size: number
-  categories: Array<{ id: number; name: string }>
+  categories: string[]
   /** bbox가 정규화 좌표(0~1)인 경우 true (YOLO + 이미지 크기 미로드 시) */
   bbox_normalized: boolean
 }
@@ -234,7 +233,6 @@ export interface SampleListResponse {
 // =============================================================================
 
 export interface ClassDistributionItem {
-  category_id: number
   category_name: string
   annotation_count: number
   image_count: number

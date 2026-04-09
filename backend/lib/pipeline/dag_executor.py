@@ -5,6 +5,10 @@ PipelineConfig의 tasks를 topological sort하여 순서대로 실행한다.
 각 태스크는 입력(source 데이터셋 또는 이전 태스크 출력)을 받아
 manipulator를 적용하고 DatasetMeta를 출력한다.
 
+통일포맷:
+  - 내부에서 annotation_format 구분 없이 category_name(문자열)으로 처리.
+  - 디스크 포맷(COCO/YOLO)은 로드 시 파라미터로 전달, 저장 시 config.output.annotation_format으로 결정.
+
 실행 흐름:
     1. topological sort로 실행 순서 결정
     2. 태스크별 실행:
@@ -71,13 +75,10 @@ class PipelineDagExecutor:
             PipelineResult: 실행 결과
         """
         # ── 파일 로그 수집기 설정 ──
-        # 파이프라인 실행 전 과정을 버퍼에 기록한 뒤,
-        # 완료 후 출력 디렉토리에 processing.log로 저장한다.
         log_buffer_handler = _ProcessingLogBufferHandler()
         log_buffer_handler.setFormatter(
             logging.Formatter("%(asctime)s [%(levelname)s] %(name)s — %(message)s")
         )
-        # lib 네임스페이스 전체를 캡처 (dag_executor, image_materializer, manipulators 등)
         pipeline_root_logger = logging.getLogger("lib")
         pipeline_root_logger.addHandler(log_buffer_handler)
 
@@ -86,7 +87,6 @@ class PipelineDagExecutor:
                 config, target_version, log_buffer_handler, pipeline_root_logger,
             )
         finally:
-            # 예외 발생 시에도 반드시 핸들러 정리
             pipeline_root_logger.removeHandler(log_buffer_handler)
 
     def _run_pipeline(
@@ -130,9 +130,9 @@ class PipelineDagExecutor:
                     source_meta = self._load_source_meta(dataset_id)
                     all_source_storage_uris.append(source_meta.storage_uri)
                     logger.info(
-                        "소스 로드 완료: dataset_id=%s, images=%d, format=%s",
+                        "소스 로드 완료: dataset_id=%s, images=%d, categories=%d",
                         dataset_id, source_meta.image_count,
-                        source_meta.annotation_format,
+                        len(source_meta.categories),
                     )
                     input_metas.append(source_meta)
                 else:
@@ -143,10 +143,6 @@ class PipelineDagExecutor:
                             f"아직 실행되지 않았습니다."
                         )
                     input_metas.append(task_results[ref])
-
-            # 다중 입력 포맷 일치 검증
-            if len(input_metas) > 1:
-                self._validate_input_formats(input_metas, task_config.operator)
 
             # multi-input manipulator(예: merge_datasets)는 list를 직접 받고,
             # 그 외 multi-input은 기존 _merge_metas()로 단건 병합 후 전달
@@ -173,12 +169,11 @@ class PipelineDagExecutor:
         # 최종 태스크의 출력이 파이프라인의 최종 결과
         output_meta = task_results[terminal_task_name]
 
-        # 출력 포맷 결정
-        output_format = config.output.annotation_format or output_meta.annotation_format
-        output_meta.annotation_format = output_format
+        # 출력 포맷은 config에서 결정 (통일포맷이므로 내부 모델에 포맷 정보 없음)
+        output_format = config.output.annotation_format.upper()
 
         logger.info(
-            "Phase A 완료 (annotation 처리): images=%d, categories=%d, format=%s",
+            "Phase A 완료 (annotation 처리): images=%d, categories=%d, output_format=%s",
             output_meta.image_count, len(output_meta.categories), output_format,
         )
 
@@ -214,7 +209,6 @@ class PipelineDagExecutor:
         materialize_result = image_materializer.materialize(dataset_plan)
 
         # 스킵된 이미지가 있으면 output_meta에서 해당 레코드 제거
-        # (annotation에 존재하지만 실제 파일이 없는 이미지 → 최종 결과물에서 제외)
         if materialize_result.skipped_count > 0:
             skipped_file_set = set(materialize_result.skipped_files)
             original_count = len(output_meta.image_records)
@@ -229,16 +223,17 @@ class PipelineDagExecutor:
             )
 
         # annotation 파일 작성 (스킵된 이미지가 제거된 output_meta 기반)
-        annotation_filenames = self._write_annotations(output_meta, output_storage_uri)
+        annotation_filenames = self._write_annotations(
+            output_meta, output_storage_uri, output_format,
+        )
 
         # data.yaml 생성 — YOLO 출력인 경우, 데이터셋 루트에 배치
-        # (annotations/ 안에 넣으면 ls | wc 등으로 라벨 파일 수를 셀 때 오차 발생)
         annotation_meta_filename: str | None = None
-        if output_format.upper() == "YOLO":
+        if output_format == "YOLO":
             output_root_dir = self.storage.resolve_path(output_storage_uri)
             from lib.pipeline.io.yolo_io import _write_yolo_data_yaml
-            sorted_categories = sorted(output_meta.categories, key=lambda c: c["id"])
-            _write_yolo_data_yaml(sorted_categories, output_root_dir)
+            sorted_category_names = sorted(output_meta.categories)
+            _write_yolo_data_yaml(sorted_category_names, output_root_dir)
             annotation_meta_filename = "data.yaml"
             logger.info("YOLO data.yaml 생성 완료 (데이터셋 루트)")
 
@@ -262,6 +257,7 @@ class PipelineDagExecutor:
             output_storage_uri=output_storage_uri,
             output_dataset_type=output_dataset_type,
             output_split=output_split,
+            output_format=output_format,
             annotation_filenames=annotation_filenames,
             annotation_meta_filename=annotation_meta_filename,
             image_count=materialize_result.materialized_count,
@@ -303,7 +299,7 @@ class PipelineDagExecutor:
         manipulator_instance = manipulator_class()
         result_meta = manipulator_instance.transform_annotation(meta, params)
 
-        # 로깅: list 입력일 경우 총 이미지 수 합산
+        # 로깅
         if isinstance(meta, list):
             input_image_count = sum(m.image_count for m in meta)
         else:
@@ -317,107 +313,46 @@ class PipelineDagExecutor:
     def _is_multi_input_manipulator(self, operator_name: str) -> bool:
         """
         해당 operator가 list[DatasetMeta]를 직접 받는 multi-input manipulator인지 확인한다.
-        클래스에 accepts_multi_input = True 속성이 있으면 True.
         """
         manipulator_class = MANIPULATOR_REGISTRY.get(operator_name)
         if manipulator_class is None:
             return False
         return getattr(manipulator_class, "accepts_multi_input", False)
 
-    def _validate_input_formats(
-        self,
-        input_metas: list[DatasetMeta],
-        operator_name: str,
-    ) -> None:
-        """
-        multi-input 태스크의 모든 입력이 동일 annotation_format인지 검증한다.
-
-        annotation_format이 불일치하면 DAG 실행 전에 빠르게 실패시킨다.
-        (DB 관점의 SQL parser처럼 실행 전 type mismatch를 감지)
-        """
-        formats = {meta.annotation_format.upper() for meta in input_metas}
-        if len(formats) > 1:
-            detail = [
-                (meta.dataset_id, meta.annotation_format) for meta in input_metas
-            ]
-            raise ValueError(
-                f"포맷 불일치: operator='{operator_name}'의 입력들이 "
-                f"서로 다른 annotation_format을 가지고 있습니다: {detail}"
-            )
-
     def _merge_metas(self, metas: list[DatasetMeta]) -> DatasetMeta:
         """
-        다중 소스 DatasetMeta를 단순 병합한다.
-        image_id 충돌 방지를 위해 재번호 매김.
-        categories는 union (동일 name이면 동일 id 유지).
+        다중 소스 DatasetMeta를 단순 병합한다 (통일포맷).
 
-        annotation_format에 무관하게 원본 category_id를 최대한 보존한다.
-        동일 이름은 첫 등장 ID로 통일, ID 충돌 시 91번부터 새 ID 할당.
-        YOLO 저장 시 0-based 순차 재매핑은 write_yolo_dir()가 담당한다.
+        categories는 name 기반 union (등장 순서 보존).
+        annotation의 category_name은 그대로 유지 — 리매핑 불필요.
+        image_id만 순차 재번호.
         """
         if not metas:
             raise ValueError("병합할 DatasetMeta가 없습니다.")
 
-        # 카테고리 통합: 이름 → ID 매핑 (원본 ID 보존, 충돌 시 91+)
-        merged_categories: list[dict[str, Any]] = []
-        category_name_to_id: dict[str, int] = {}
-        used_ids: set[int] = set()
-
-        for meta in metas:
-            for category in meta.categories:
-                if category["name"] not in category_name_to_id:
-                    original_id = category["id"]
-                    if original_id not in used_ids:
-                        assigned_id = original_id
-                    else:
-                        # ID 충돌 → 91번부터 새 ID 할당
-                        assigned_id = 91
-                        while assigned_id in used_ids:
-                            assigned_id += 1
-                    category_name_to_id[category["name"]] = assigned_id
-                    merged_categories.append({
-                        "id": assigned_id,
-                        "name": category["name"],
-                    })
-                    used_ids.add(assigned_id)
-        merged_categories.sort(key=lambda cat: cat["id"])
+        # 카테고리 통합: name union (등장 순서 보존)
+        merged_categories: list[str] = list(
+            dict.fromkeys(name for meta in metas for name in meta.categories)
+        )
 
         merged_records: list[ImageRecord] = []
         image_id_counter = 1
         for meta in metas:
-            old_to_new_cat: dict[int, int] = {}
-            for category in meta.categories:
-                old_to_new_cat[category["id"]] = category_name_to_id[category["name"]]
-
             for record in meta.image_records:
                 new_record = ImageRecord(
                     image_id=image_id_counter,
                     file_name=record.file_name,
                     width=record.width,
                     height=record.height,
-                    annotations=[],
+                    annotations=list(record.annotations),
                     extra=record.extra,
                 )
-                for annotation in record.annotations:
-                    new_annotation = Annotation(
-                        annotation_type=annotation.annotation_type,
-                        category_id=old_to_new_cat.get(
-                            annotation.category_id, annotation.category_id
-                        ),
-                        bbox=annotation.bbox,
-                        segmentation=annotation.segmentation,
-                        label=annotation.label,
-                        attributes=annotation.attributes,
-                        extra=annotation.extra,
-                    )
-                    new_record.annotations.append(new_annotation)
                 merged_records.append(new_record)
                 image_id_counter += 1
 
         return DatasetMeta(
             dataset_id="",
             storage_uri="",
-            annotation_format=metas[0].annotation_format,
             categories=merged_categories,
             image_records=merged_records,
         )
@@ -436,9 +371,6 @@ class PipelineDagExecutor:
              → 원본 파일명으로 소스 경로를 직접 구성
           2. 없으면 (단일 소스 경로)
              → source_storage_uris의 첫 번째 URI를 사용
-
-        storage.exists() 호출 없음 — 등록된 데이터는 존재한다고 가정.
-        파일이 실제로 없으면 ImageMaterializer에서 복사 시점에 에러 발생.
         """
         plans: list[ImagePlan] = []
 
@@ -447,10 +379,8 @@ class PipelineDagExecutor:
             original_file_name = record.extra.get("original_file_name")
 
             if source_uri and original_file_name:
-                # merge 경로: 원본 파일명으로 소스를 찾고, 현재 file_name(prefix 적용된)으로 출력
                 src_uri = f"{source_uri}/{self.images_dirname}/{original_file_name}"
             elif source_storage_uris:
-                # 비-merge 경로: 첫 번째 소스 URI 사용 (단일 소스 전제)
                 src_uri = (
                     f"{source_storage_uris[0]}/{self.images_dirname}/{record.file_name}"
                 )
@@ -475,17 +405,24 @@ class PipelineDagExecutor:
         return plans
 
     def _write_annotations(
-        self, output_meta: DatasetMeta, output_storage_uri: str
+        self,
+        output_meta: DatasetMeta,
+        output_storage_uri: str,
+        output_format: str,
     ) -> list[str]:
         """
         output_meta를 포맷에 맞는 annotation 파일로 작성한다.
+
+        Args:
+            output_meta: 통일포맷 DatasetMeta
+            output_storage_uri: 출력 경로
+            output_format: 출력 포맷 ("COCO" | "YOLO")
 
         Returns:
             작성된 annotation 파일명 리스트
         """
         annotations_dir = self.storage.get_annotations_dir(output_storage_uri)
         annotations_dir.mkdir(parents=True, exist_ok=True)
-        output_format = output_meta.annotation_format.upper()
 
         if output_format == "COCO":
             output_path = annotations_dir / "instances.json"
@@ -514,9 +451,6 @@ class PipelineDagExecutor:
     ) -> None:
         """
         파이프라인 실행 과정을 output 디렉토리에 processing.log로 기록한다.
-
-        헤더(설정 요약 + 결과 요약) + 상세 실행 로그 형태로 구성된다.
-        이 파일은 이미지/annotation과 함께 영구 보관되어 추후 변환 이력 추적에 사용된다.
         """
         from lib.pipeline.image_materializer import MaterializeResult  # noqa: F811
 
@@ -536,7 +470,7 @@ class PipelineDagExecutor:
                 log_file.write(f"  출력 경로       : {output_storage_uri}\n")
                 log_file.write(f"  데이터셋 타입   : {config.output.dataset_type}\n")
                 log_file.write(f"  Split           : {config.output.split}\n")
-                log_file.write(f"  어노테이션 포맷 : {config.output.annotation_format or '자동 (입력 포맷 유지)'}\n")
+                log_file.write(f"  어노테이션 포맷 : {config.output.annotation_format}\n")
                 log_file.write("\n")
 
                 # DAG 태스크 목록
@@ -575,7 +509,6 @@ class PipelineDagExecutor:
             logger.info("processing.log 작성 완료: %s", log_path)
 
         except OSError as write_error:
-            # 로그 파일 작성 실패가 파이프라인 전체를 실패시키면 안 됨
             logger.warning(
                 "processing.log 작성 실패 (파이프라인 결과에는 영향 없음): %s",
                 write_error,
@@ -588,8 +521,7 @@ class PipelineResult:
     """
     파이프라인 실행 결과를 담는 컨테이너.
 
-    skipped_image_count/skipped_image_files는 annotation에 존재하지만
-    실제 소스 파일이 없어 건너뛴 이미지 정보를 담는다.
+    output_format: 출력 annotation 포맷 ("COCO" | "YOLO")
     """
 
     def __init__(
@@ -598,6 +530,7 @@ class PipelineResult:
         output_storage_uri: str,
         output_dataset_type: str,
         output_split: str,
+        output_format: str,
         annotation_filenames: list[str],
         annotation_meta_filename: str | None,
         image_count: int,
@@ -609,6 +542,7 @@ class PipelineResult:
         self.output_storage_uri = output_storage_uri
         self.output_dataset_type = output_dataset_type
         self.output_split = output_split
+        self.output_format = output_format
         self.annotation_filenames = annotation_filenames
         self.annotation_meta_filename = annotation_meta_filename
         self.image_count = image_count
@@ -627,19 +561,22 @@ def load_source_meta_from_storage(
     skip_image_sizes: bool = False,
 ) -> DatasetMeta:
     """
-    스토리지에 저장된 데이터셋의 annotation을 파싱하여 DatasetMeta로 반환.
+    스토리지에 저장된 데이터셋의 annotation을 파싱하여 통일포맷 DatasetMeta로 반환.
     DB 없이 파일 기반으로 로드한다 (CLI 테스트용 + 파이프라인 실행용).
+
+    annotation_format 파라미터는 디스크의 파일 포맷을 판별하기 위해 사용된다.
+    반환되는 DatasetMeta에는 annotation_format 필드가 없다 (통일포맷).
 
     Args:
         storage: StorageProtocol 구현체
         storage_uri: 데이터셋 상대경로 (예: "raw/coco8/train/v1.0.0")
-        annotation_format: COCO | YOLO
+        annotation_format: 디스크 포맷 (COCO | YOLO) — 파서 선택용
         annotation_files: 어노테이션 파일명 리스트
         annotation_meta_file: 메타 파일명 (예: data.yaml)
         dataset_id: DatasetMeta.dataset_id
 
     Returns:
-        파싱된 DatasetMeta
+        파싱된 DatasetMeta (통일포맷)
     """
     annotations_dir = storage.get_annotations_dir(storage_uri)
     images_dir = storage.get_images_dir(storage_uri)
@@ -659,7 +596,6 @@ def load_source_meta_from_storage(
                 yaml_path = None
 
         # YOLO txt에는 이미지 크기 정보가 없으므로 Pillow로 읽어야 한다.
-        # skip_image_sizes=True면 건너뛴다 (뷰어 등 크기 정보가 필수가 아닌 경우).
         image_sizes: dict[str, tuple[int, int]] = {}
         if not skip_image_sizes and images_dir.exists():
             try:
@@ -690,9 +626,6 @@ def load_source_meta_from_storage(
 class _ProcessingLogBufferHandler(logging.Handler):
     """
     파이프라인 실행 중 발생하는 로그를 메모리에 버퍼링하는 핸들러.
-
-    실행 완료 후 get_log_lines()로 수집된 로그를 꺼내
-    processing.log 파일에 기록한다.
     """
 
     def __init__(self) -> None:
