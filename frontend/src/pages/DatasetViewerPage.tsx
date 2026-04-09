@@ -20,6 +20,7 @@ import {
   Spin,
   Alert,
   Space,
+  message,
 } from 'antd'
 import {
   ArrowLeftOutlined,
@@ -30,9 +31,12 @@ import {
 import { useQuery } from '@tanstack/react-query'
 import dayjs from 'dayjs'
 import { datasetsApi, datasetGroupsApi } from '../api/dataset'
+import { pipelinesApi } from '../api/pipeline'
+import type { PipelineExecutionResponse } from '../types/pipeline'
 import SampleViewerTab from '../components/dataset-viewer/SampleViewerTab'
 import EdaTab from '../components/dataset-viewer/EdaTab'
 import LineageTab from '../components/dataset-viewer/LineageTab'
+import ExecutionDetailDrawer from '../components/pipeline/ExecutionDetailDrawer'
 
 const { Title, Text } = Typography
 
@@ -63,6 +67,10 @@ export default function DatasetViewerPage() {
 
   const activeTab = searchParams.get('tab') || 'viewer'
 
+  // 파이프라인 실행 상세 Drawer 상태
+  const [selectedPipelineExecution, setSelectedPipelineExecution] = useState<PipelineExecutionResponse | null>(null)
+  const [isPipelineDrawerLoading, setIsPipelineDrawerLoading] = useState(false)
+
   const { data: group, isLoading: groupLoading } = useQuery({
     queryKey: ['dataset-group', groupId],
     queryFn: () => datasetGroupsApi.get(groupId!).then(r => r.data),
@@ -77,6 +85,19 @@ export default function DatasetViewerPage() {
 
   const handleTabChange = (tab: string) => {
     setSearchParams({ tab })
+  }
+
+  /** 파이프라인 실행 ID 클릭 시 실행 상세 Drawer를 연다 */
+  const handleOpenPipelineDrawer = async (executionId: string) => {
+    setIsPipelineDrawerLoading(true)
+    try {
+      const response = await pipelinesApi.getStatus(executionId)
+      setSelectedPipelineExecution(response.data)
+    } catch {
+      message.error('파이프라인 실행 정보를 불러오지 못했습니다.')
+    } finally {
+      setIsPipelineDrawerLoading(false)
+    }
   }
 
   if (groupLoading || datasetLoading) {
@@ -142,9 +163,9 @@ export default function DatasetViewerPage() {
             <Text
               copyable={{ text: dataset.pipeline_execution_id! }}
               style={{ fontSize: 12, cursor: 'pointer', color: '#1677ff' }}
-              onClick={() => navigate('/pipelines')}
+              onClick={() => handleOpenPipelineDrawer(dataset.pipeline_execution_id!)}
             >
-              {dataset.pipeline_execution_id.slice(0, 8)}...
+              {isPipelineDrawerLoading ? '불러오는 중...' : `${dataset.pipeline_execution_id.slice(0, 8)}...`}
             </Text>
           </Descriptions.Item>
         )}
@@ -184,6 +205,12 @@ export default function DatasetViewerPage() {
             children: <LineageTab datasetId={datasetId!} />,
           },
         ]}
+      />
+
+      {/* 파이프라인 실행 상세 Drawer (생성 Pipeline 클릭 시) */}
+      <ExecutionDetailDrawer
+        execution={selectedPipelineExecution}
+        onClose={() => setSelectedPipelineExecution(null)}
       />
     </div>
   )
