@@ -118,6 +118,11 @@ export default function NodePalette({ onAddNode, taskType }: NodePaletteProps) {
 
             // FORMAT_CONVERT 카테고리는 비활성화 — 통일포맷에서 자동 처리됨
             const isFormatConvert = category === 'FORMAT_CONVERT'
+            // 미구현 manipulator — DB에 등록되었으나 백엔드 코드가 아직 없는 항목
+            const UNIMPLEMENTED_OPERATORS = ['change_compression', 'shuffle_image_ids']
+            const isUnimplemented = UNIMPLEMENTED_OPERATORS.includes(m.name)
+            // 비활성 대상: 포맷 변환 또는 미구현
+            const isDisabled = isFormatConvert || isUnimplemented
 
             const handleClick = isFormatConvert
               ? () => {
@@ -132,7 +137,15 @@ export default function NodePalette({ onAddNode, taskType }: NodePaletteProps) {
                     okText: '확인',
                   })
                 }
-              : () => onAddNode(createOperatorNodeData(m))
+              : isUnimplemented
+                ? () => {
+                    Modal.warning({
+                      title: '미구현 기능',
+                      content: `"${buttonLabel}"은(는) 현재 미구현 상태입니다. 추후 업데이트에서 제공될 예정입니다.`,
+                      okText: '확인',
+                    })
+                  }
+                : () => onAddNode(createOperatorNodeData(m))
 
             const button = (
               <Button
@@ -142,18 +155,18 @@ export default function NodePalette({ onAddNode, taskType }: NodePaletteProps) {
                 style={{
                   textAlign: 'left',
                   fontSize: 12,
-                  borderColor: isFormatConvert ? '#d9d9d9' : meta.color,
-                  color: isFormatConvert ? '#bfbfbf' : meta.color,
-                  pointerEvents: isFormatConvert ? 'none' : undefined,
+                  borderColor: isDisabled ? '#d9d9d9' : meta.color,
+                  color: isDisabled ? '#bfbfbf' : meta.color,
+                  pointerEvents: isDisabled ? 'none' : undefined,
                 }}
-                onClick={isFormatConvert ? undefined : handleClick}
+                onClick={isDisabled ? undefined : handleClick}
               >
                 {getManipulatorEmoji(m.name, category)} {buttonLabel}
               </Button>
             )
 
-            // FORMAT_CONVERT: 버튼은 비활성 스타일이지만, 감싼 div에서 클릭을 받아 모달 표시
-            const wrappedButton = isFormatConvert ? (
+            // 비활성 항목: 버튼은 비활성 스타일이지만, 감싼 div에서 클릭을 받아 모달 표시
+            const wrappedButton = isDisabled ? (
               <div key={m.name} onClick={handleClick} style={{ cursor: 'pointer' }}>
                 {button}
               </div>
