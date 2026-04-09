@@ -85,6 +85,7 @@ export interface DatasetSummary {
   storage_uri: string
   annotation_files: string[] | null
   metadata: DatasetMetadata | null
+  pipeline_execution_id: string | null
   created_at: string
 }
 

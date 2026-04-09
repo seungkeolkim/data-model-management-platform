@@ -137,6 +137,17 @@ export default function DatasetViewerPage() {
         <Descriptions.Item label="등록일">
           {dayjs(dataset.created_at).format('YYYY-MM-DD')}
         </Descriptions.Item>
+        {dataset.pipeline_execution_id && (
+          <Descriptions.Item label="생성 Pipeline">
+            <Text
+              copyable={{ text: dataset.pipeline_execution_id! }}
+              style={{ fontSize: 12, cursor: 'pointer', color: '#1677ff' }}
+              onClick={() => navigate('/pipelines')}
+            >
+              {dataset.pipeline_execution_id.slice(0, 8)}...
+            </Text>
+          </Descriptions.Item>
+        )}
         <Descriptions.Item label="경로">
           <Text copyable style={{ fontSize: 12 }}>{dataset.storage_uri}</Text>
         </Descriptions.Item>

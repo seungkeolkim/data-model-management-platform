@@ -88,6 +88,7 @@ class DatasetSummary(BaseModel):
     annotation_files: list[str] | None
     annotation_meta_file: str | None = None
     metadata: dict[str, Any] | None = Field(default=None, validation_alias="metadata_")
+    pipeline_execution_id: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -207,6 +208,7 @@ class DatasetResponse(DatasetBase):
     id: str
     group_id: str
     metadata: dict[str, Any] | None = Field(default=None, validation_alias="metadata_")
+    pipeline_execution_id: str | None = None
     created_at: datetime
     updated_at: datetime
 

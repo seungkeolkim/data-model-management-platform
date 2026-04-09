@@ -54,6 +54,7 @@ class DatasetGroupService:
             .where(DatasetGroup.deleted_at.is_(None))
             .options(
                 selectinload(DatasetGroup.datasets.and_(Dataset.deleted_at.is_(None)))
+                .selectinload(Dataset.pipeline_executions)
             )
         )
 
@@ -77,12 +78,13 @@ class DatasetGroupService:
     # -------------------------------------------------------------------------
 
     async def get_group(self, group_id: str) -> DatasetGroup | None:
-        """단건 DatasetGroup 조회 (datasets 포함). 소프트 삭제된 그룹은 제외."""
+        """단건 DatasetGroup 조회 (datasets + pipeline_executions 포함). 소프트 삭제된 그룹은 제외."""
         result = await self.db.execute(
             select(DatasetGroup)
             .where(DatasetGroup.id == group_id, DatasetGroup.deleted_at.is_(None))
             .options(
                 selectinload(DatasetGroup.datasets.and_(Dataset.deleted_at.is_(None)))
+                .selectinload(Dataset.pipeline_executions)
             )
         )
         return result.scalar_one_or_none()
@@ -634,11 +636,14 @@ class DatasetGroupService:
     # -------------------------------------------------------------------------
 
     async def get_dataset(self, dataset_id: str) -> Dataset | None:
-        """단건 Dataset 조회. 소프트 삭제된 데이터셋은 제외. group 관계도 함께 로드."""
+        """단건 Dataset 조회. 소프트 삭제된 데이터셋은 제외. group, pipeline_executions 관계도 함께 로드."""
         result = await self.db.execute(
             select(Dataset)
             .where(Dataset.id == dataset_id, Dataset.deleted_at.is_(None))
-            .options(selectinload(Dataset.group))
+            .options(
+                selectinload(Dataset.group),
+                selectinload(Dataset.pipeline_executions),
+            )
         )
         return result.scalar_one_or_none()
 

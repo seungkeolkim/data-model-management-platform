@@ -151,6 +151,13 @@ class Dataset(Base):
         "PipelineExecution", back_populates="output_dataset"
     )
 
+    @property
+    def pipeline_execution_id(self) -> str | None:
+        """이 데이터셋을 생성한 파이프라인 실행 ID (있으면 첫 번째)."""
+        if self.pipeline_executions:
+            return self.pipeline_executions[0].id
+        return None
+
 
 class DatasetLineage(Base):
     """datasets 단위 부모-자식 lineage 엣지."""
