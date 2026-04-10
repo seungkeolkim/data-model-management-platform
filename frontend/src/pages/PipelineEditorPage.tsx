@@ -91,11 +91,30 @@ function PipelineEditorContent() {
   } = usePipelineEditorStore()
 
   // ── 엣지 연결 핸들러 ──
+  // Merge 노드를 제외한 노드는 입력 엣지를 1개만 허용한다.
   const onConnect: OnConnect = useCallback(
     (connection) => {
+      const targetNodeId = connection.target
+      if (!targetNodeId) return
+
+      const targetData = nodeDataMap[targetNodeId]
+      const isMergeNode = targetData?.type === 'merge'
+
+      if (!isMergeNode) {
+        // 이미 입력 엣지가 있는지 확인
+        const existingInputEdge = edges.find((edge) => edge.target === targetNodeId)
+        if (existingInputEdge) {
+          Modal.warning({
+            title: '연결 불가',
+            content: 'Merge 노드를 제외한 노드는 입력을 하나만 받을 수 있습니다. 여러 입력을 합치려면 Merge 노드를 사용하세요.',
+          })
+          return
+        }
+      }
+
       setEdges((eds) => addEdge({ ...connection, animated: true }, eds))
     },
-    [setEdges],
+    [setEdges, edges, nodeDataMap],
   )
 
   // ── 노드 삭제 시 스토어 동기화 ──
