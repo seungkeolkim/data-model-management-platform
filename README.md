@@ -135,7 +135,7 @@ images_dirname = images
 ```
 
 데이터셋 등록 시 **`storage_uri`** 는 `LOCAL_STORAGE_BASE` 기준 상대경로로 입력합니다.  
-예) `LOCAL_STORAGE_BASE=./data/datasets` → storage_uri: `raw/my_coco/train/v1.0.0`
+예) `LOCAL_STORAGE_BASE=./data/datasets` → storage_uri: `raw/my_coco/train/1.0`
 
 ---
 
@@ -155,6 +155,13 @@ images_dirname = images
 | GET | `/api/v1/datasets/{id}` | Dataset 단건 조회 |
 | DELETE | `/api/v1/datasets/{id}` | Dataset 삭제 |
 | GET | `/api/v1/manipulators` | Manipulator 목록 |
+| POST | `/api/v1/pipelines/validate` | 파이프라인 설정 검증 |
+| POST | `/api/v1/pipelines/execute` | 파이프라인 실행 (202 비동기) |
+| GET | `/api/v1/pipelines` | 파이프라인 실행 이력 목록 |
+| GET | `/api/v1/pipelines/{id}/status` | 실행 상태 조회 |
+| GET | `/api/v1/datasets/{id}/samples` | 샘플 뷰어 (이미지 + bbox) |
+| GET | `/api/v1/datasets/{id}/eda` | EDA 통계 |
+| GET | `/api/v1/datasets/{id}/lineage` | Lineage 그래프 |
 
 ---
 
@@ -180,7 +187,7 @@ images_dirname = images
 | `id` | UUID | PK |
 | `group_id` | UUID | FK → DatasetGroup |
 | `split` | String | `TRAIN` \| `VAL` \| `TEST` \| `NONE` |
-| `version` | String | `v1.0.0` 형식, 자동 증분 |
+| `version` | String | `{major}.{minor}` 형식 (예: `1.0`, `2.0`), 자동 증분 |
 | `annotation_format` | String | 그룹 기본값 override 가능 |
 | `storage_uri` | String | NAS 상대경로 |
 | `status` | String | `PENDING` \| `PROCESSING` \| `READY` \| `ERROR` |
@@ -219,7 +226,7 @@ images_dirname = images
 
 - `DatasetGroup.dataset_type` = `"RAW"` 고정 (raw 등록 시). 이후 유형별 처리 분리 예정
 - annotation 정합성 체크 코드(`_validate_coco_annotation`)는 구현되어 있으나 등록 단계에서는 강제하지 않음 — Check Data Validation 버튼으로 수동 확인 가능
-- 버전은 `v1.0.0`부터 자동 증분 (`vX.Y.Z`, patch 단위)
+- 버전은 `1.0`부터 자동 증분 (`{major}.{minor}` 형식, major=수동 실행, minor=automation 예정)
 
 ---
 

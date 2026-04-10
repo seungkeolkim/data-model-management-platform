@@ -161,7 +161,7 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
   const [formatValidationResult, setFormatValidationResult] = useState<FormatValidateResponse | null>(null)
 
   // 버전 미리보기
-  const [nextVersion, setNextVersion] = useState<string>('v1.0.0')
+  const [nextVersion, setNextVersion] = useState<string>('1.0')
 
   // 기존 그룹 목록 (드롭다운용)
   const [existingGroupList, setExistingGroupList] = useState<DatasetGroup[]>([])
@@ -190,14 +190,14 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
   /** 그룹+split 조합이 바뀔 때 다음 버전 조회 */
   const fetchNextVersion = (groupId: string | null, split: string) => {
     if (!groupId) {
-      // 신규 그룹이면 항상 v1.0.0
-      setNextVersion('v1.0.0')
+      // 신규 그룹이면 항상 1.0
+      setNextVersion('1.0')
       return
     }
     datasetGroupsApi
       .nextVersion(groupId, split)
       .then(res => setNextVersion(res.data.version))
-      .catch(() => setNextVersion('v1.0.0'))
+      .catch(() => setNextVersion('1.0'))
   }
 
   // ── 등록 ─────────────────────────────────────────────────────────────────
@@ -232,7 +232,7 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
         ?? existingGroupList.find(g => g.id === resolvedGroupId)?.name
         ?? '?'
       const splitDir = (values.split as string).toLowerCase()
-      const destPath = `raw/${displayGroupName}/${splitDir}/`
+      const destPath = `raw/${displayGroupName}/${splitDir}/${nextVersion}`
 
       const payload = {
         group_id:                resolvedGroupId,
@@ -313,7 +313,7 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
     setAnnotationMetaFile(null)
     setSelectedGroupOption(NEW_GROUP_SENTINEL)
     setFormatValidationResult(null)
-    setNextVersion('v1.0.0')
+    setNextVersion('1.0')
     onClose()
   }
 
@@ -530,7 +530,7 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
                   } else if (selectedGroupOption !== NEW_GROUP_SENTINEL) {
                     fetchNextVersion(selectedGroupOption, currentSplit)
                   } else {
-                    setNextVersion('v1.0.0')
+                    setNextVersion('1.0')
                   }
                 }}
                 style={{ marginBottom: 4 }}

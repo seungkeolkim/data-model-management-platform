@@ -116,7 +116,7 @@ Docker Compose로 4개 서비스 운영: **postgres:16**, **backend** (Uvicorn),
 ### 핵심 도메인 개념
 
 - **DatasetGroup**: 데이터셋 split/version의 논리적 묶음. dataset_type (RAW/SOURCE/PROCESSED/FUSION), annotation_format, task_types (JSONB) 보유
-- **Dataset**: 그룹 하위의 개별 split (TRAIN/VAL/TEST/NONE) × version (semver). (group_id, split, version) 유니크 제약
+- **Dataset**: 그룹 하위의 개별 split (TRAIN/VAL/TEST/NONE) × version (`{major}.{minor}` 형식). (group_id, split, version) 유니크 제약
 - **Manipulator**: 사전 정의된 데이터 처리 함수. params_schema (JSONB)로 동적 UI 생성
 - **DatasetLineage**: 파이프라인을 통한 변환 이력을 추적하는 parent→child 엣지
 - **PipelineExecution**: 파이프라인 실행 이력 + Celery 태스크 추적

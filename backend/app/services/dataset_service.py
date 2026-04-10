@@ -613,7 +613,14 @@ class DatasetGroupService:
         return FormatValidateResponse(valid=is_valid, errors=errors, summary=summary)
 
     async def _next_version(self, group_id: str, split: str) -> str:
-        """해당 group+split 의 다음 버전 자동 계산."""
+        """
+        해당 group+split의 다음 버전 자동 계산.
+
+        버전 정책: {major}.{minor}
+        - major: 사용자가 명시적으로 파이프라인을 실행할 때 증가
+        - minor: 향후 automation이 파이프라인을 자동 실행할 때 증가 (미구현)
+        RAW 데이터셋 수동 등록 시에는 항상 major를 올린다.
+        """
         result = await self.db.execute(
             select(Dataset.version)
             .where(Dataset.group_id == group_id, Dataset.split == split.upper())
@@ -622,14 +629,14 @@ class DatasetGroupService:
         )
         last_version = result.scalar_one_or_none()
         if not last_version:
-            return "v1.0.0"
+            return "1.0"
 
         try:
             parts = last_version.lstrip("v").split(".")
-            patch = int(parts[2]) + 1
-            return f"v{parts[0]}.{parts[1]}.{patch}"
+            major = int(parts[0]) + 1
+            return f"{major}.0"
         except (IndexError, ValueError):
-            return "v1.0.0"
+            return "1.0"
 
     # -------------------------------------------------------------------------
     # Dataset 개별 조회 / 수정

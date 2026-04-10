@@ -118,7 +118,7 @@ class DatasetGroupListResponse(BaseModel):
 
 class DatasetBase(BaseModel):
     split: str = Field(default="NONE", description="TRAIN | VAL | TEST | NONE")
-    version: str = Field(..., description="v1.0.0 형식")
+    version: str = Field(..., description="{major}.{minor} 형식 (예: 1.0, 2.0)")
     annotation_format: str | None = Field(default=None)
     storage_uri: str = Field(..., description="NAS 상대경로")
     status: str = Field(default="PENDING")

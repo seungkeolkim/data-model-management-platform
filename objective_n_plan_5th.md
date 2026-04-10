@@ -1,7 +1,8 @@
 # 데이터 관리 & 학습 자동화 플랫폼 — 5차 설계서
 
-> **작업지시서 v5.0** | Phase 2 기준 (비동기 등록 + 필터 manipulator + UI 개선)
+> **작업지시서 v5.1** | Phase 2 기준 (비동기 등록 + 필터 manipulator + UI 개선 + 버전 정책 변경)
 > `objective_n_plan_4th.md`의 비동기 등록 전환 + filter_final_classes + UI 개선 반영
+> v5.1: 실행 상세 Drawer, 버전 정책 `{major}.{minor}`, 출력 그룹 task_types 자동 설정
 > 이전 설계서: `docs_history/objective_n_plan_4th.md`
 
 ---
@@ -112,6 +113,12 @@ MANIPULATOR_REGISTRY 4종째. 지정 class 이름의 annotation만 유지하고 
 | **OperatorNode 실시간 params** | store 직접 구독, textarea 축약 표시 |
 | 노드 삭제 | 캔버스에서 노드 삭제 동작 확인됨 |
 | pytest 전체 통과 | 테스트 전부 통과 |
+| **실행 상세 Drawer** | 파이프라인 이력 행 클릭 → Drawer 표시 (태스크별 진행, Config JSON 확인/복사) |
+| **JSON 기반 DAG 복원** | Config JSON → 에디터 "JSON 불러오기" → 원래 DAG 구조 복원 |
+| **ExecutionDetailDrawer 공유** | 파이프라인 이력 + 데이터셋 상세에서 동일 Drawer 재사용 |
+| **버전 정책 변경** | `v{major}.{minor}.{patch}` → `{major}.{minor}` (major=수동, minor=automation) |
+| **출력 그룹 task_types 자동 설정** | 소스 그룹들의 task_types 교집합으로 자동 부여 |
+| **데이터셋↔파이프라인 상호 참조** | 데이터셋 상세에서 생성 Pipeline ID 표시 + Drawer 직접 오픈 |
 
 ### 미완료 (Phase 2 남은 작업)
 
@@ -382,11 +389,36 @@ MANIPULATOR_REGISTRY = {
 
 ---
 
-## 7. 출력 디렉토리 구조 (변경 없음)
+## 7. 버전 정책 (v5.1 신규)
+
+### 7-1. 형식
+
+`{major}.{minor}` — 예: `1.0`, `2.0`, `1.1`
+
+| 구분 | 증가 조건 | 예시 |
+|------|-----------|------|
+| **major** | 사용자가 명시적으로 파이프라인 실행 또는 데이터셋 수동 등록 | `1.0` → `2.0` |
+| **minor** | automation이 파이프라인을 자동 실행 (미구현) | `1.0` → `1.1` |
+
+### 7-2. Automation 시나리오 (TODO)
+
+원천 데이터(SOURCE)의 버전이 올라가면(1.0→2.0), 해당 SOURCE를 입력으로 사용하는 downstream 파이프라인이 사전 세팅된 config에 따라 자동 재실행. 이때 출력 데이터셋의 minor 버전이 증가(1.0→1.1).
+
+사용자는 최신 데이터로 학습 시 별도 파이프라인 실행 없이 자동 최신화된 데이터를 사용할 수 있다.
+
+### 7-3. 구현 위치
+
+- `dataset_service.py._next_version()` — RAW 수동 등록 시 major 증가
+- `pipeline_service.py._next_version()` — 파이프라인 실행 시 major 증가
+- 향후 `is_automation` 파라미터 추가 → True이면 minor 증가
+
+---
+
+## 8. 출력 디렉토리 구조
 
 ### COCO 포맷 출력
 ```
-source/output_name/train/v1.0.0/
+source/output_name/train/1.0/
 ├── processing.log          ← 파이프라인 실행 로그
 ├── images/
 │   └── *.jpg
@@ -396,7 +428,7 @@ source/output_name/train/v1.0.0/
 
 ### YOLO 포맷 출력
 ```
-source/output_name/train/v1.0.0/
+source/output_name/train/1.0/
 ├── data.yaml               ← 클래스 정의 (데이터셋 루트)
 ├── processing.log          ← 파이프라인 실행 로그
 ├── images/
@@ -407,26 +439,27 @@ source/output_name/train/v1.0.0/
 
 ---
 
-## 8. 장기 TODO
+## 9. 장기 TODO
 
 | 항목 | 설명 | 시점 |
 |---|---|---|
+| **DAG 정합성 검증 강화** | DB 의존 vs logical plan 검증, 중간 노드 output 타입 추론, 엣지 연결 규칙 | **다음 세션** |
+| **파이프라인 자동 실행 (Automation)** | 원천 데이터 버전 업 → downstream 자동 재실행 → minor 버전 증가 | 미정 |
 | 네이밍 점검 | `_write_data_yaml` 등 general한 함수명 리네이밍 | 별도 세션 |
-| YOLO yaml path | data.yaml에 이미지 경로 미포함 -> 학습 시 path 주입 필요 | Step 2 (학습 자동화) |
-| ~~ImageManipulationSpec 체인~~ | ~~spec 누적 로직 구현~~ | ✅ 완료 (record.extra에 누적, _build_image_plans에서 추출) |
-| ~~통일포맷 마이그레이션~~ | ~~category_name 기반, 포맷 무관~~ | ✅ 완료 (Stage 1~7, 183 tests, 크로스포맷 merge 검증) |
-| 미구현 manipulator | `change_compression`, `shuffle_image_ids` 구현 | 다음 세션 |
+| YOLO yaml path | data.yaml에 이미지 경로 미포함 → 학습 시 path 주입 필요 | Step 2 (학습 자동화) |
+| ~~ImageManipulationSpec 체인~~ | ~~spec 누적 로직 구현~~ | ✅ 완료 |
+| ~~통일포맷 마이그레이션~~ | ~~category_name 기반, 포맷 무관~~ | ✅ 완료 |
+| 미구현 manipulator | `change_compression`, `shuffle_image_ids` 구현 | 미정 |
 | S3StorageClient | 3차 K8S 전환 시 구현 | Step 3 |
-| React Flow Lineage 시각화 | DatasetLineage 데이터는 이미 생성됨 | Phase 2-b |
-| EDA 자동화 | `app/tasks/eda_tasks.py` skeleton만 존재 | Phase 2-a |
+| ~~React Flow Lineage 시각화~~ | ~~DatasetLineage DAG 시각화~~ | ✅ 완료 (Phase 2-b) |
+| ~~EDA 자동화~~ | ~~클래스 분포, bbox 분포, 해상도 통계~~ | ✅ 완료 (Phase 2-a) |
 | 테스트 자동화 | Integration/Regression/E2E 테스트 추가 | Celery 안정화 후 |
-| 엣지 연결 규칙 검증 | 노드 타입 호환성 체크 | 다음 GUI 개선 세션 |
 | 검증 결과 노드별 하이라이트 | validate API 결과를 노드에 매핑 | 다음 GUI 개선 세션 |
-| 기존 데이터셋 뷰어 전수 검증 | 모든 READY 데이터셋 샘플뷰어/EDA 정상 동작 확인 | 다음 세션 |
+| 기존 데이터셋 뷰어 전수 검증 | 모든 READY 데이터셋 샘플뷰어/EDA 정상 동작 확인 | 미정 |
 
 ---
 
-## 9. 핵심 파일 맵 (현행)
+## 10. 핵심 파일 맵 (현행)
 
 ### lib/ (순수 로직, DB 무의존)
 
@@ -489,6 +522,7 @@ source/output_name/train/v1.0.0/
 | `components/pipeline/DynamicParamForm.tsx` | params_schema 기반 동적 폼 (7 타입) |
 | `components/pipeline/ExecutionStatusModal.tsx` | ExecutionSubmittedModal — 실행 제출 확인 모달 |
 | `components/pipeline/PipelineJsonPreview.tsx` | JSON 프리뷰 디버그 패널 |
+| `components/pipeline/ExecutionDetailDrawer.tsx` | 공유 실행 상세 Drawer (파이프라인 이력 + 데이터셋 상세에서 사용) |
 
 ### 검증 완료된 파이프라인 시나리오
 

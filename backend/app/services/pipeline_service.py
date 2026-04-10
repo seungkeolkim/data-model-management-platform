@@ -189,11 +189,15 @@ class PipelineService:
         annotation_format = config.output.annotation_format.upper()
         split = config.output.split.upper()
 
+        # ── 소스 데이터셋 그룹들의 task_types 교집합 계산 ──
+        source_task_types = await self._intersect_source_task_types(config)
+
         # ── DatasetGroup 조회 또는 생성 ──
         group = await self._find_or_create_dataset_group(
             name=config.name,
             dataset_type=dataset_type,
             annotation_format=annotation_format,
+            task_types=source_task_types,
         )
 
         # ── 버전 자동 생성 ──
@@ -308,10 +312,12 @@ class PipelineService:
         name: str,
         dataset_type: str,
         annotation_format: str,
+        task_types: list[str] | None = None,
     ) -> DatasetGroup:
         """
         이름 + dataset_type으로 기존 그룹을 찾고, 없으면 새로 생성한다.
         소프트 삭제된 그룹은 무시한다.
+        기존 그룹이 있고 task_types가 비어 있으면, 전달된 task_types로 업데이트한다.
         """
         result = await self.db.execute(
             select(DatasetGroup).where(
@@ -323,6 +329,14 @@ class PipelineService:
         existing_group = result.scalar_one_or_none()
 
         if existing_group is not None:
+            # 기존 그룹에 task_types가 없으면 소스 교집합으로 채운다
+            if not existing_group.task_types and task_types:
+                existing_group.task_types = task_types
+                logger.info(
+                    "기존 DatasetGroup task_types 자동 설정",
+                    group_id=existing_group.id,
+                    task_types=task_types,
+                )
             logger.info(
                 "기존 DatasetGroup 사용",
                 group_id=existing_group.id, group_name=existing_group.name,
@@ -334,17 +348,68 @@ class PipelineService:
             name=name,
             dataset_type=dataset_type,
             annotation_format=annotation_format,
+            task_types=task_types,
         )
         self.db.add(new_group)
         await self.db.flush()
         logger.info(
             "신규 DatasetGroup 생성",
             group_id=new_group.id, group_name=new_group.name,
+            task_types=task_types,
         )
         return new_group
 
+    async def _intersect_source_task_types(
+        self, config: PipelineConfig,
+    ) -> list[str] | None:
+        """
+        파이프라인 config에서 소스 데이터셋들의 그룹을 조회하고,
+        각 그룹의 task_types 교집합을 반환한다.
+
+        소스가 없거나 교집합이 �어 있으면 None을 반환한다.
+        """
+        # 모든 태스크에서 소스 데이터셋 ID 수집
+        source_dataset_ids: set[str] = set()
+        for task_config in config.tasks.values():
+            source_dataset_ids.update(task_config.get_source_dataset_ids())
+
+        if not source_dataset_ids:
+            return None
+
+        # 소스 데이터셋들의 그룹 task_types 조회
+        result = await self.db.execute(
+            select(DatasetGroup.task_types)
+            .join(Dataset, Dataset.group_id == DatasetGroup.id)
+            .where(Dataset.id.in_(source_dataset_ids))
+            .distinct()
+        )
+        all_task_types_rows = result.scalars().all()
+
+        # 교집합 계산
+        intersection: set[str] | None = None
+        for task_types_row in all_task_types_rows:
+            if not task_types_row:
+                continue
+            current_set = set(task_types_row)
+            if intersection is None:
+                intersection = current_set
+            else:
+                intersection &= current_set
+
+        if not intersection:
+            return None
+
+        return sorted(intersection)
+
     async def _next_version(self, group_id: str, split: str) -> str:
-        """해당 group+split의 다음 버전을 자동 계산한다."""
+        """
+        해당 group+split의 다음 버전을 자동 계산한다.
+
+        버전 정책: {major}.{minor}
+        - major: 사용자가 명시적으로 파이프라인을 실행할 때 증가
+        - minor: 향후 automation이 파이프라인을 자동 실행할 때 증가 (미구현)
+        파이프라인 실행은 사용자 주도이므로 major를 올린다.
+        """
         result = await self.db.execute(
             select(Dataset.version)
             .where(Dataset.group_id == group_id, Dataset.split == split.upper())
@@ -353,11 +418,11 @@ class PipelineService:
         )
         last_version = result.scalar_one_or_none()
         if not last_version:
-            return "v1.0.0"
+            return "1.0"
 
         try:
             parts = last_version.lstrip("v").split(".")
-            patch = int(parts[2]) + 1
-            return f"v{parts[0]}.{parts[1]}.{patch}"
+            major = int(parts[0]) + 1
+            return f"{major}.0"
         except (IndexError, ValueError):
-            return "v1.0.0"
+            return "1.0"
