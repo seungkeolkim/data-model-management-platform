@@ -85,6 +85,12 @@ class PipelineConfig(BaseModel):
     description: str | None = None
     output: OutputConfig
     tasks: dict[str, TaskConfig] = Field(..., min_length=1)
+    # DAG schema 버전. 프론트 SDK가 config 생성 시 기입.
+    # 하위 호환 migrator는 도입하지 않음(YAGNI). 미래 변경 대비 완충 필드.
+    schema_version: int | None = Field(
+        default=None,
+        description="프론트 SDK가 기입한 DAG 스키마 버전",
+    )
 
     @model_validator(mode="after")
     def _validate_task_references(self) -> PipelineConfig:

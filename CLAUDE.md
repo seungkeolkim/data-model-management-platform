@@ -24,8 +24,9 @@ Step 1의 세부적인 작업:
 - 3차 설계: `docs_history/objective_n_plan_3rd.md`
 - 4차 설계: `docs_history/objective_n_plan_4th.md`
 - 5차 설계: `docs_history/objective_n_plan_5th.md`
-- **6차 설계 (현행)**: `objective_n_plan_6th.md`
-- 통합 핸드오프 (현행): `docs_for_claude/013-consolidated-handoff.md` (001~012는 `docs_history/handoffs/`)
+- 6차 설계: `docs_history/objective_n_plan_6th.md`
+- **7차 설계 (현행)**: `objective_n_plan_7th.md`
+- 통합 핸드오프 (현행): `docs_for_claude/014-node-sdk-complete-handoff.md` (001~013은 `docs_history/handoffs/`)
 
 | Phase | 내용 | 상태 |
 |-------|------|------|
@@ -101,9 +102,13 @@ Docker Compose로 4개 서비스 운영: **postgres:16**, **backend** (Uvicorn),
 - **`lib/pipeline/config.py`** — PipelineConfig, SourceConfig, ManipulatorConfig (Pydantic)
 - **`lib/pipeline/storage_protocol.py`** — StorageProtocol (typing.Protocol) — app.core.storage.StorageClient와 분리
 - **`lib/pipeline/io/`** — COCO JSON / YOLO txt 파서·라이터, 클래스 매핑 테이블
-- **`lib/manipulators/`** — UnitManipulator 구현체 + MANIPULATOR_REGISTRY
+- **`lib/manipulators/`** — UnitManipulator 구현체 + MANIPULATOR_REGISTRY (pkgutil 기반 자동 발견)
 
 **절대 원칙:** `lib/` → `app/` import 금지. `app/` → `lib/` import만 허용.
+
+### 파이프라인 노드 / Manipulator 추가 방법
+
+새 Manipulator(예: 새 augment·filter) 또는 새 DAG NodeKind(예: split 전용 노드)를 추가할 때는 반드시 **`docs/pipeline-node-sdk-guide.md`** 를 먼저 읽을 것. registry 자동 발견 규칙, NodeDefinition 5종 계약, `assertRegistryCompleteness` 감시 포인트 등이 정리되어 있다. 이 가이드 없이 임의로 파일을 추가하면 런타임 assert로 부팅이 실패한다.
 
 ### 프론트엔드
 
