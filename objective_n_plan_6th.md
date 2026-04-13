@@ -13,10 +13,10 @@
 
 | Step | 범위 | 상태 |
 |------|------|------|
-| **Step 1** | 데이터셋 관리 (Phase 0~3) | Phase 0/1 완료, Phase 2 마무리 단계 |
-| **Step 2** | 학습 자동화 (단일/다중 GPU) | 진입 준비 |
+| **Step 1** | 데이터셋 관리 (Phase 0~3) | Phase 0/1/2-a/2-b 완료, Phase 2 마무리 단계, Phase 3 예정 |
+| **Step 2** | 학습 자동화 (단일/다중 GPU) | 진입 준비 (TrainingExecutor/GPUResourceManager 골격만 예정) |
 | **Step 3** | K8S 클러스터화, GPU 스케줄링 | 미착수 |
-| **Step 4** | Label Studio 연결, Synthetic Train Data, MLOps | 미착수 |
+| **Step 4** | Label Studio, Synthetic Data, MLOps (Auto Labeling, Offline Testing, Auto Deploy 등) | 미착수 |
 | **Step 5** | Generative Model 도입 MLOps | 미착수 |
 
 Step 1 세부 Phase:
@@ -25,10 +25,10 @@ Step 1 세부 Phase:
 |-------|------|------|
 | Phase 0 | 인프라, DB 스키마, /health | 완료 |
 | Phase 1 | 데이터셋 등록/관리 GUI | 완료 |
-| Phase 2 | Manipulator + Celery 파이프라인 + GUI 에디터 | **진행 중** (핵심 완료, 확장/고도화만 잔여) |
+| Phase 2 | Manipulator + Celery 파이프라인 + GUI 에디터 | **진행 중** (핵심 완료, 확장/고도화 잔여) |
 | Phase 2-a | EDA 자동화 | 완료 |
 | Phase 2-b | 샘플 뷰어 + Lineage 시각화 | 완료 |
-| Phase 3 | 2차 수용 준비 & UX 정리 | 예정 |
+| Phase 3 | 2차 수용 준비 & UX 정리 (Training/GPU 인터페이스 골격, 알림 signal, Manipulator 관리/시스템 상태 페이지, UX 일관성) | 예정 — Step 2 진입 전 필수 |
 
 ---
 
@@ -304,26 +304,85 @@ useEffect(() => { ... }, [statusValue, processedCount])
 
 ---
 
-## 7. TODO 우선순위 (v6 기준)
+## 7. TODO 전체 목록 (Step / Phase 별)
 
-### 7-1. 최우선 액션 아이템
+### 7-1. Step 1 Phase 2 — 액션 아이템 + 잔여 백로그
 
-| 순위 | 항목 | 설명 |
-|-----|------|------|
-| 1 | **노드 추가 SDK화** | DataLoad/Operator/Merge/Save + Manipulator 인터페이스 일원화. 신규 노드 추가를 한 파일 수정으로 완결시키는 구조로 전환 |
-| 1-a | **노드 추가 가이드 문서** | SDK화 완료 후 "새 노드 만드는 법" md (`docs_for_claude/` 또는 developer docs) |
-| 2 | **Classification 데이터 입력** | 현재 Detection only. Classification 전용 등록/파서/manipulator/뷰어 설계 및 구현 |
-| 3 | **Automation 실구현** | §6 시나리오. 파이프라인 템플릿, downstream 탐색, `is_automation`→minor 증가 |
-| 4 | **버전 정책 점검** | `{major}.{minor}` 운영 검증. 수동/자동 동시 발생 충돌 처리 |
-| 5 | **Detection / Attribute Classification 모델 학습** | Docker 컨테이너 + config 동적 주입. Step 2 진입점 (1 & 2 완료 후) |
+앞쪽 5개는 v5.2/v6에서 신규로 잡은 최우선 액션, 그 아래는 이전 설계서부터 이월된 잔여 / 백로그 항목.
 
-### 7-2. 잔여 / 백로그
+| 순위 | 영역 | 항목 | 설명 |
+|------|------|------|------|
+| 1 | 액션 | **노드 추가 SDK화** | DataLoad/Operator/Merge/Save + Manipulator 인터페이스 일원화. 신규 노드 추가를 한 파일 수정으로 완결시키는 구조로 전환 |
+| 1-a | 액션 | **노드 추가 가이드 문서** | SDK화 완료 후 "새 노드 만드는 법" md (`docs_for_claude/` 또는 developer docs) |
+| 2 | 액션 | **Classification 데이터 입력** | 현재 Detection only. Classification 전용 등록/파서/manipulator/뷰어 설계 및 구현 |
+| 3 | 액션 | **Automation 실구현** | §6 시나리오. 파이프라인 템플릿, downstream 탐색, `is_automation`→minor 증가 |
+| 4 | 액션 | **버전 정책 점검** | `{major}.{minor}` 운영 검증. 수동/자동 동시 발생 충돌 처리 |
+| — | Manipulator | 미구현 2종 | `change_compression`, `shuffle_image_ids` |
+| — | Manipulator | 신규 후보 | IoU 기반 겹치는 annotation 제거, IoU 기반 마스킹 |
+| — | Manipulator UX | `sample_n_images` DAG 내 위치 | 필터 전/후, merge 전/후 배치에 따른 결과 차이 — 안내 또는 검증 경고 |
+| — | GUI | 검증 결과 노드별 하이라이트 | validate `issue_field` → 개별 노드 매핑 |
+| — | GUI | MergeNode params_schema 폼 | 확장 대비, 보류 가능 |
+| — | 인프라 / 품질 | 네이밍 점검 | `_write_data_yaml` 등 general 함수명 리네이밍 |
+| — | 인프라 / 품질 | 뷰어/EDA 전수 검증 | 통일포맷 `schema_version=2` 캐시 재생성 확인 |
+| — | 인프라 / 품질 | 테스트 자동화 | Integration / Regression / E2E (Celery 안정화 후) |
+| — | 인프라 / 품질 | DB seed 정합성 재확인 | 코드 구현 12종과 대조 |
+| — | Step 2 연계 | YOLO `data.yaml` path 주입 | `path/train/val` 키 주입 (학습 시 경로 필요) |
+
+### 7-2. Step 1 Phase 3 — 2차 수용 준비 & UX 정리 (예정)
+
+1차 설계서 §13 기준. Step 2 진입 전 필수 Phase.
 
 | 영역 | 항목 |
 |------|------|
-| Manipulator | 미구현 2종 (`change_compression`, `shuffle_image_ids`), IoU 기반 annotation 제거 / 마스킹 신규 후보, `sample_n_images` DAG 내 위치(필터 전/후, merge 전/후) 안내 또는 검증 경고 |
-| GUI | 검증 결과 노드별 하이라이트 (validate `issue_field` 매핑), MergeNode params_schema 폼 (확장 대비, 보류 가능) |
-| 인프라 | YOLO `data.yaml` path 주입 (Step 2), 네이밍 점검(`_write_data_yaml` 등), 기존 데이터셋 뷰어/EDA 전수 검증(통일포맷 스키마 v2 재생성 확인), 테스트 자동화(integration/regression/e2e), S3StorageClient(Step 3), DB seed 정합성 재확인 |
+| 백엔드 골격 | `TrainingExecutor` 추상 인터페이스 (submit_job / get_job_status / cancel_job) |
+| 백엔드 골격 | `GPUResourceManager` 추상 인터페이스 (get_available_gpus / reserve_gpus / release_gpus) |
+| 백엔드 골격 | 알림 Celery signal 골격 + SMTP 환경변수 구조 |
+| 프론트엔드 | GNB 확정 (모델 학습 메뉴 "준비 중" 표시) |
+| 프론트엔드 | Manipulator 관리 페이지 |
+| 프론트엔드 | 시스템 상태 페이지 |
+| 프론트엔드 | 전체 UX 정리 (빈 상태 안내, 에러 토스트, 로딩 상태 일관성) |
+
+### 7-3. Step 2 — 학습 자동화 (단일/다중 GPU 서버)
+
+| 항목 | 설명 |
+|------|------|
+| Detection / Attribute Classification 모델 학습 | Docker 컨테이너 기반, config 동적 주입 (Step 2 진입점) |
+| `DockerTrainingExecutor` 구현 | TrainingExecutor 인터페이스의 1차 구현체 (단일 서버 GPU) |
+| GPUResourceManager — 단일 서버 | `nvidia-smi` 기반 자원 관리 |
+| MLflow 실험 추적 통합 | 학습 실험의 파라미터/메트릭/아티팩트 추적 |
+| Prometheus / Grafana / DCGM Exporter | 메트릭 수집 + 대시보드 + GPU 메트릭 |
+| 알림 | SMTP / SendGrid 연동 (학습 완료/실패) |
+
+### 7-4. Step 3 — K8S 클러스터화 + GPU 학습 스케줄링
+
+| 항목 | 설명 |
+|------|------|
+| `S3StorageClient` | LocalStorageClient 대체 (구현체 교체만) |
+| `KubernetesTrainingExecutor` | Pod 기반 학습 실행 |
+| GPUResourceManager — K8S | K8S 리소스 API 기반 클러스터 자원 관리 |
+| Helm 패키징 | K8S 배포 표준화 |
+| Argo Workflows 또는 Kubeflow Pipelines | ML 파이프라인 오케스트레이션 |
+| Volcano | GPU 스케줄러 |
+| KEDA | 오토스케일링 |
+| MinIO / 클라우드 S3 | 오브젝트 스토리지 |
+
+### 7-5. Step 4 — Label Studio + Synthetic Data + MLOps
+
+| 항목 | 설명 |
+|------|------|
+| Label Studio 연결 | 외부 라벨링 도구 통합 |
+| AI 생성 Synthetic Train Data | 합성 학습 데이터 생성 파이프라인 |
+| Auto Labeling | 모델 기반 자동 라벨링 |
+| Offline Testing | 배포 전 오프라인 평가 |
+| Auto Deploy | 학습 완료 → 배포 자동화 |
+| 학습 스케줄링 자동화 | 주기적/트리거 기반 재학습 |
+| 데이터 자동 수집 파이프라인 | 외부 소스 → 플랫폼 자동 취합 |
+
+### 7-6. Step 5 — Generative Model MLOps
+
+| 항목 | 설명 |
+|------|------|
+| Generative Model 도입 MLOps 일체 | 생성 모델 학습/배포/평가/관리 전반 |
 
 ---
 
