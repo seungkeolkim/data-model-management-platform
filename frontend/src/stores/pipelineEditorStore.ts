@@ -12,6 +12,7 @@ import type {
   PipelineValidationResponse,
   PipelineValidationIssue,
 } from '../types/pipeline'
+import { distributeIssuesToNodes } from '@/pipeline-sdk'
 
 // =============================================================================
 // 스토어 인터페이스
@@ -73,13 +74,14 @@ export const usePipelineEditorStore = create<PipelineEditorState>((set, get) => 
   updateNodeParams: (nodeId, params) =>
     set((state) => {
       const existing = state.nodeDataMap[nodeId]
-      if (!existing || (existing.type !== 'operator' && existing.type !== 'merge')) {
+      // params를 가질 수 있는 노드 타입만 갱신 대상
+      if (!existing || !('params' in existing)) {
         return state
       }
       return {
         nodeDataMap: {
           ...state.nodeDataMap,
-          [nodeId]: { ...existing, params },
+          [nodeId]: { ...existing, params } as typeof existing,
         },
       }
     }),
@@ -101,57 +103,10 @@ export const usePipelineEditorStore = create<PipelineEditorState>((set, get) => 
     set({ validationResult: result }),
 
   applyValidationToNodes: (issues) =>
-    set((state) => {
-      // 먼저 모든 노드의 검증 이슈 초기화
-      const updatedMap = { ...state.nodeDataMap }
-      for (const nodeId of Object.keys(updatedMap)) {
-        updatedMap[nodeId] = { ...updatedMap[nodeId], validationIssues: [] }
-      }
-
-      // field 패턴에서 노드 ID 추출하여 이슈 매핑
-      // 예: "tasks.task_abc123.operator" → nodeId = "abc123"
-      // 예: "output.dataset_type" → SaveNode에 매핑
-      for (const issue of issues) {
-        const field = issue.field
-        if (field.startsWith('tasks.task_')) {
-          // task_<nodeId>.xxx 패턴
-          const taskKey = field.split('.')[1]  // "task_abc123"
-          const nodeId = taskKey.replace(/^task_/, '')
-          if (updatedMap[nodeId]) {
-            const node = updatedMap[nodeId]
-            const existing = node.validationIssues ?? []
-            updatedMap[nodeId] = { ...node, validationIssues: [...existing, issue] }
-          }
-        } else if (field.startsWith('output.') || field === 'name') {
-          // Save 노드에 매핑 — saveNode 찾기
-          const saveNodeId = Object.keys(updatedMap).find(
-            (id) => updatedMap[id].type === 'save'
-          )
-          if (saveNodeId) {
-            const node = updatedMap[saveNodeId]
-            const existing = node.validationIssues ?? []
-            updatedMap[saveNodeId] = { ...node, validationIssues: [...existing, issue] }
-          }
-        }
-        // source 관련 이슈는 DataLoad 노드에 매핑
-        if (issue.code?.startsWith('SOURCE_DATASET_')) {
-          // field 예: "tasks.task_xxx.inputs[0]" — source:<dataset_id> 관련
-          // DataLoad 노드를 dataset_id로 찾아야 하므로 field에서 추출 시도
-          // 간단히: issue.message에 dataset_id가 포함된 경우 매칭
-          for (const nodeId of Object.keys(updatedMap)) {
-            const nodeData = updatedMap[nodeId]
-            if (nodeData.type === 'dataLoad' && nodeData.datasetId) {
-              if (issue.field.includes(nodeData.datasetId) || issue.message.includes(nodeData.datasetId)) {
-                const existing = nodeData.validationIssues ?? []
-                updatedMap[nodeId] = { ...nodeData, validationIssues: [...existing, issue] }
-              }
-            }
-          }
-        }
-      }
-
-      return { nodeDataMap: updatedMap }
-    }),
+    set((state) => ({
+      // SDK의 registry 순회 기반 매핑 사용 — 노드 타입별 하드코딩 제거
+      nodeDataMap: distributeIssuesToNodes(state.nodeDataMap, issues) as typeof state.nodeDataMap,
+    })),
 
   clearValidation: () =>
     set((state) => {

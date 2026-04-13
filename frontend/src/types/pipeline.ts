@@ -28,6 +28,11 @@ export interface PipelineConfig {
   description?: string
   output: OutputConfig
   tasks: Record<string, TaskConfig>
+  /**
+   * DAG 스키마 버전. 현재 SDK는 v1을 생성.
+   * 하위 버전 migrator는 도입하지 않음 — 미래 파이프라인 변경 대비 완충용 필드.
+   */
+  schema_version?: number
 }
 
 // =============================================================================
@@ -154,12 +159,24 @@ export interface SaveNodeData {
   [key: string]: unknown
 }
 
+/** Placeholder 노드: registry에 없는 operator 복원 시 사용 (열람 전용, 실행 차단) */
+export interface PlaceholderNodeData {
+  type: 'placeholder'
+  originalOperator: string
+  originalParams: Record<string, unknown>
+  originalInputs: string[]
+  reason: string
+  validationIssues?: PipelineValidationIssue[]
+  [key: string]: unknown
+}
+
 /** 모든 노드 데이터의 유니온 타입 */
 export type PipelineNodeData =
   | DataLoadNodeData
   | OperatorNodeData
   | MergeNodeData
   | SaveNodeData
+  | PlaceholderNodeData
 
 // =============================================================================
 // React Flow 노드/엣지 타입 앨리어스
