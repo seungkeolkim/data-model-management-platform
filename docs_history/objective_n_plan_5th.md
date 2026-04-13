@@ -1,8 +1,9 @@
 # 데이터 관리 & 학습 자동화 플랫폼 — 5차 설계서
 
-> **작업지시서 v5.1** | Phase 2 기준 (비동기 등록 + 필터 manipulator + UI 개선 + 버전 정책 변경)
+> **작업지시서 v5.2** | Phase 2 기준 (비동기 등록 + 필터 manipulator + UI 개선 + 버전 정책 변경 + 엣지 입력 수 제한)
 > `objective_n_plan_4th.md`의 비동기 등록 전환 + filter_final_classes + UI 개선 반영
 > v5.1: 실행 상세 Drawer, 버전 정책 `{major}.{minor}`, 출력 그룹 task_types 자동 설정
+> v5.2: Merge 외 노드에 다중 입력 엣지 연결 차단
 > 이전 설계서: `docs_history/objective_n_plan_4th.md`
 
 ---
@@ -119,6 +120,7 @@ MANIPULATOR_REGISTRY 4종째. 지정 class 이름의 annotation만 유지하고 
 | **버전 정책 변경** | `v{major}.{minor}.{patch}` → `{major}.{minor}` (major=수동, minor=automation) |
 | **출력 그룹 task_types 자동 설정** | 소스 그룹들의 task_types 교집합으로 자동 부여 |
 | **데이터셋↔파이프라인 상호 참조** | 데이터셋 상세에서 생성 Pipeline ID 표시 + Drawer 직접 오픈 |
+| **엣지 입력 수 제한** | Merge 외 노드에 두 번째 입력 엣지 연결 시도 시 경고 모달 + 차단 (v5.2) |
 
 ### 미완료 (Phase 2 남은 작업)
 
@@ -140,7 +142,7 @@ MANIPULATOR_REGISTRY 4종째. 지정 class 이름의 annotation만 유지하고 
 
 #### GUI 고도화
 
-4. **엣지 연결 규칙 검증** — 현재 아무 노드나 연결 가능, 타입 호환성 체크 필요
+4. ~~**엣지 입력 수 제한**~~ — ✅ Merge 외 노드는 입력 엣지 1개로 제한 (v5.2)
 5. **검증 결과 노드별 하이라이트** — validate API 결과를 개별 노드에 매핑
 
 ---
@@ -272,14 +274,19 @@ DB 검증 (`app/services/pipeline_service.py`):
 
 ## 5. GUI 파이프라인 에디터 설계 (5차 업데이트)
 
-### 5-1. 4종 커스텀 노드 (변경 없음)
+### 5-1. 4종 커스텀 노드 (5-2 업데이트: 입력 수 제한 강제)
 
 | 노드 | 입력 핸들 | 출력 핸들 | 역할 |
 |------|-----------|-----------|------|
 | **DataLoadNode** | 없음 | 1개 | 3단계 캐스케이드 선택 (그룹->Split->버전) -> `source:<datasetId>` |
-| **OperatorNode** | 1개 | 1개 | 범용 operator (카테고리별 색상/아이콘, **params 실시간 반영**) |
+| **OperatorNode** | 1개 (최대 1) | 1개 | 범용 operator (카테고리별 색상/아이콘, **params 실시간 반영**) |
 | **MergeNode** | N개 (동적) | 1개 | merge_datasets, 연결 엣지 수에 따라 핸들 자동 증가 |
-| **SaveNode** | 1개 | 없음 | 출력 설정 (name, dataset_type, split, format) 인라인 폼 |
+| **SaveNode** | 1개 (최대 1) | 없음 | 출력 설정 (name, dataset_type, split, format) 인라인 폼 |
+
+**엣지 입력 수 제한 (v5.2):**
+- `onConnect` 핸들러가 대상 노드의 타입을 확인
+- Merge 노드가 아닌 경우 이미 입력 엣지가 있으면 `Modal.warning` 표시 + 엣지 생성 차단
+- 메시지: "Merge 노드를 제외한 노드는 입력을 하나만 받을 수 있습니다. 여러 입력을 합치려면 Merge 노드를 사용하세요."
 
 ### 5-2. 노드 데이터 구조 (변경 없음)
 
@@ -441,9 +448,22 @@ source/output_name/train/1.0/
 
 ## 9. 장기 TODO
 
+### 9-1. 액션 아이템 (v5.2 신규, 우선순위 순)
+
+| 순위 | 항목 | 설명 | 시점 |
+|-----|------|------|------|
+| 1 | **노드 추가 기능 - SDK화** | 모든 노드(DataLoad/Operator/Merge/Save + Manipulator)의 구현 인터페이스 일원화. 신규 노드 추가를 쉽게 만들기 위함 | 다음 세션 후보 |
+| 1-2 | **노드 추가 가이드 문서** | SDK화 이후 "새 노드 만드는 법" md 문서 작성 | 1 이후 |
+| 2 | **Classification 데이터 입력** | 현재 Detection only 스코프. Classification 데이터셋 등록/관리 플로우 설계 및 구현 | 1 이후 또는 병행 |
+| 3 | **원천 소스 버전업 시 파이프라인 자동 수행** | §7-2 Automation 시나리오 실구현. 원천 SOURCE `1.0→2.0` 시 downstream 사전등록 config 자동 재실행 + 출력 minor 증가(`1.0→1.1`) | 2 이후 |
+| 4 | **버전 정책 점검** | 현행 `{major}.{minor}` 정책 재검토 (수동/자동 구분, 충돌 시 동작) | 3 진행 중 병행 |
+| 5 | **Detection / Attribute Classification 모델 학습** | Docker 컨테이너 기반, config 동적 주입. Step 2 진입점. (1&2 완료 후, 약간 먼 미래) | Step 2 |
+
+### 9-2. 기존 장기 TODO
+
 | 항목 | 설명 | 시점 |
 |---|---|---|
-| **DAG 정합성 검증 강화** | DB 의존 vs logical plan 검증, 중간 노드 output 타입 추론, 엣지 연결 규칙 | **다음 세션** |
+| **DAG 정합성 검증 강화** | 현재 PipelineConfig JSON은 실제로 PP(Physical Plan)에 해당. DB 옵티마이저가 없으므로 LP/PP 분리 불필요 — JSON에 대한 stat 수집 & type checking 수준의 사전 검증만 필요. 엣지 입력 수 제한은 v5.2에서 완료, 이외 항목은 당장 필수 아님 | 필요 시 |
 | **파이프라인 자동 실행 (Automation)** | 원천 데이터 버전 업 → downstream 자동 재실행 → minor 버전 증가 | 미정 |
 | 네이밍 점검 | `_write_data_yaml` 등 general한 함수명 리네이밍 | 별도 세션 |
 | YOLO yaml path | data.yaml에 이미지 경로 미포함 → 학습 시 path 주입 필요 | Step 2 (학습 자동화) |

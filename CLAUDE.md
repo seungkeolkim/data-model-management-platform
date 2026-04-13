@@ -23,8 +23,9 @@ Step 1의 세부적인 작업:
 - 2차 설계: `docs_history/objective_n_plan_2nd.md`
 - 3차 설계: `docs_history/objective_n_plan_3rd.md`
 - 4차 설계: `docs_history/objective_n_plan_4th.md`
-- **5차 설계 (현행)**: `objective_n_plan_5th.md`
-- 파이프라인/Manipulator 핸드오프: `docs_for_claude/003-pipeline-manipulator-handoff.md`
+- 5차 설계: `docs_history/objective_n_plan_5th.md`
+- **6차 설계 (현행)**: `objective_n_plan_6th.md`
+- 통합 핸드오프 (현행): `docs_for_claude/013-consolidated-handoff.md` (001~012는 `docs_history/handoffs/`)
 
 | Phase | 내용 | 상태 |
 |-------|------|------|
