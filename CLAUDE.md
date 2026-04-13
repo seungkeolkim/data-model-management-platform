@@ -101,9 +101,13 @@ Docker Compose로 4개 서비스 운영: **postgres:16**, **backend** (Uvicorn),
 - **`lib/pipeline/config.py`** — PipelineConfig, SourceConfig, ManipulatorConfig (Pydantic)
 - **`lib/pipeline/storage_protocol.py`** — StorageProtocol (typing.Protocol) — app.core.storage.StorageClient와 분리
 - **`lib/pipeline/io/`** — COCO JSON / YOLO txt 파서·라이터, 클래스 매핑 테이블
-- **`lib/manipulators/`** — UnitManipulator 구현체 + MANIPULATOR_REGISTRY
+- **`lib/manipulators/`** — UnitManipulator 구현체 + MANIPULATOR_REGISTRY (pkgutil 기반 자동 발견)
 
 **절대 원칙:** `lib/` → `app/` import 금지. `app/` → `lib/` import만 허용.
+
+### 파이프라인 노드 / Manipulator 추가 방법
+
+새 Manipulator(예: 새 augment·filter) 또는 새 DAG NodeKind(예: split 전용 노드)를 추가할 때는 반드시 **`docs/pipeline-node-sdk-guide.md`** 를 먼저 읽을 것. registry 자동 발견 규칙, NodeDefinition 5종 계약, `assertRegistryCompleteness` 감시 포인트 등이 정리되어 있다. 이 가이드 없이 임의로 파일을 추가하면 런타임 assert로 부팅이 실패한다.
 
 ### 프론트엔드
 
