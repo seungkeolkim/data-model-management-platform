@@ -223,3 +223,7 @@ etc_utils/
 
 # 파이프라인 생성 결과물
 backend/_pipeline_output/
+
+# 프론트엔드 빌드 캐시/산출물
+frontend/*.tsbuildinfo
+frontend/vite.config.d.ts

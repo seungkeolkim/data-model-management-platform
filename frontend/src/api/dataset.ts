@@ -14,6 +14,7 @@ import type {
   Dataset,
   FileBrowserListResponse,
   FileBrowserRootsResponse,
+  ClassificationScanResponse,
   SampleListResponse,
   EdaStatsResponse,
   LineageGraphResponse,
@@ -92,6 +93,12 @@ export const fileBrowserApi = {
 
   list: (params?: { path?: string; mode?: 'directory' | 'file' | 'all' }) =>
     api.get<FileBrowserListResponse>('/filebrowser/list', { params }),
+
+  // Classification 데이터셋 루트를 2레벨(<head>/<class>/)로 단순 스캔
+  classificationScan: (path: string) =>
+    api.get<ClassificationScanResponse>('/filebrowser/classification-scan', {
+      params: { path },
+    }),
 }
 
 // Health

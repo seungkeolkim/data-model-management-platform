@@ -25,3 +25,31 @@ class FileBrowserListResponse(BaseModel):
 
 class FileBrowserRootsResponse(BaseModel):
     roots: list[str]            # 허용된 루트 절대경로 목록
+
+
+# =============================================================================
+# Classification 폴더 스캔
+# =============================================================================
+# 데이터셋 루트 하위를 2레벨 구조 ( <head>/<class>/<images> ) 로 단순 스캔한다.
+# 이 시점에는 어떤 규칙(예: prefix 0_, 1_)도 판단하지 않는다 — 화면에서
+# 사용자가 직접 순서·설정을 고를 수 있도록 원형 구조를 그대로 반환한다.
+
+
+class ClassificationClassEntry(BaseModel):
+    """하나의 Output Class (level2) 정보."""
+    name: str                   # 폴더명 원본 (예: "0_no_helmet")
+    path: str                   # 절대경로
+    image_count: int            # 해당 폴더 바로 아래 이미지 파일 수
+
+
+class ClassificationHeadEntry(BaseModel):
+    """하나의 Classification Head (level1) 정보."""
+    name: str                   # 폴더명 원본 (예: "hardhat_wear")
+    path: str                   # 절대경로
+    classes: list[ClassificationClassEntry]
+
+
+class ClassificationScanResponse(BaseModel):
+    """데이터셋 루트 2레벨 스캔 결과."""
+    root_path: str                              # 스캔한 루트 절대경로
+    heads: list[ClassificationHeadEntry]        # 발견된 head 목록

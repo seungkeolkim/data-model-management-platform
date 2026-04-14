@@ -9,14 +9,17 @@ GUI로 탐색하여 이미지 폴더 및 어노테이션 파일을 선택할 수
 """
 from __future__ import annotations
 
-import structlog
 from datetime import datetime
 from pathlib import Path
 
+import structlog
 from fastapi import APIRouter, HTTPException, Query
 
-from app.core.config import settings
+from app.core.config import app_config, settings
 from app.schemas.filebrowser import (
+    ClassificationClassEntry,
+    ClassificationHeadEntry,
+    ClassificationScanResponse,
     FileBrowserEntry,
     FileBrowserListResponse,
     FileBrowserRootsResponse,
@@ -124,3 +127,105 @@ def list_directory(
         is_browse_root=is_browse_root,
         entries=entries,
     )
+
+
+def _count_image_files(directory: Path, allowed_extensions: set[str]) -> int:
+    """디렉토리 바로 아래(비재귀)의 허용 확장자 이미지 파일 수."""
+    count = 0
+    try:
+        for child in directory.iterdir():
+            if child.name.startswith("."):
+                continue
+            if not child.is_file():
+                continue
+            if child.suffix.lower() in allowed_extensions:
+                count += 1
+    except (OSError, PermissionError):
+        return 0
+    return count
+
+
+@router.get("/classification-scan", response_model=ClassificationScanResponse)
+def scan_classification_dataset(
+    path: str = Query(..., description="스캔할 데이터셋 루트 절대경로"),
+):
+    """
+    Classification 데이터셋 루트를 2레벨 구조로 스캔.
+
+    기대 구조:
+        <path>/
+            <head_name>/
+                <class_name>/
+                    *.jpg | *.png | ...
+
+    이 함수는 순수하게 폴더/파일 구조만 긁어온다.
+    폴더명 규약(예: `0_negative`, `1_positive`)에 따른 판단은 여기서 하지 않으며,
+    순서·class index·binary/multi-class 등은 화면에서 사용자가 확정한다.
+
+    - 허용 업로드 루트(`LOCAL_UPLOAD_BASE`) 하위가 아니면 403.
+    - head 폴더명 알파벳 오름차순, class 폴더명 알파벳 오름차순으로 정렬하여 반환.
+    - 이미지 수는 해당 class 폴더 바로 아래(비재귀) 파일만 계수.
+    """
+    logger.info("Classification 데이터셋 스캔 요청", path=path)
+    root = _upload_root()
+    target = Path(path)
+
+    if not target.exists():
+        raise HTTPException(status_code=404, detail=f"경로가 존재하지 않습니다: {path}")
+    if not target.is_dir():
+        raise HTTPException(status_code=400, detail="디렉토리 경로를 지정하세요.")
+
+    # 업로드 루트 외부 차단
+    try:
+        target.relative_to(root)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=403,
+            detail="허용된 업로드 루트 하위 경로만 스캔할 수 있습니다.",
+        ) from exc
+
+    allowed_extensions = app_config.allowed_image_extensions
+
+    try:
+        head_dirs = sorted(
+            (child for child in target.iterdir()
+             if child.is_dir() and not child.name.startswith(".")),
+            key=lambda p: p.name.lower(),
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail="디렉토리 접근 권한이 없습니다.") from exc
+
+    heads: list[ClassificationHeadEntry] = []
+    for head_dir in head_dirs:
+        try:
+            class_dirs = sorted(
+                (child for child in head_dir.iterdir()
+                 if child.is_dir() and not child.name.startswith(".")),
+                key=lambda p: p.name.lower(),
+            )
+        except PermissionError:
+            # 권한 없는 head는 빈 클래스 리스트로 표시하고 계속 진행
+            class_dirs = []
+
+        class_entries = [
+            ClassificationClassEntry(
+                name=class_dir.name,
+                path=str(class_dir),
+                image_count=_count_image_files(class_dir, allowed_extensions),
+            )
+            for class_dir in class_dirs
+        ]
+        heads.append(
+            ClassificationHeadEntry(
+                name=head_dir.name,
+                path=str(head_dir),
+                classes=class_entries,
+            )
+        )
+
+    logger.info(
+        "Classification 데이터셋 스캔 완료",
+        path=str(target),
+        head_count=len(heads),
+    )
+    return ClassificationScanResponse(root_path=str(target), heads=heads)

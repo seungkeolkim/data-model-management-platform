@@ -163,6 +163,27 @@ export interface FileBrowserRootsResponse {
 }
 
 // =============================================================================
+// Classification 폴더 스캔 (2레벨 <head>/<class>/ 구조)
+// =============================================================================
+
+export interface ClassificationClassEntry {
+  name: string           // class 폴더명 원본
+  path: string           // 절대경로
+  image_count: number    // 해당 폴더 바로 아래 이미지 파일 수
+}
+
+export interface ClassificationHeadEntry {
+  name: string           // head 폴더명 원본
+  path: string           // 절대경로
+  classes: ClassificationClassEntry[]
+}
+
+export interface ClassificationScanResponse {
+  root_path: string
+  heads: ClassificationHeadEntry[]
+}
+
+// =============================================================================
 // Manipulator
 // =============================================================================
 

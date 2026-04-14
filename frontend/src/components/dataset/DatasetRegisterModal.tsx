@@ -32,9 +32,15 @@ import {
   CheckCircleOutlined,
   SafetyCertificateOutlined,
 } from '@ant-design/icons'
-import { datasetGroupsApi } from '../../api/dataset'
+import { datasetGroupsApi, fileBrowserApi } from '../../api/dataset'
 import ServerFileBrowser from '../common/ServerFileBrowser'
-import type { DatasetGroup, TaskType, AnnotationFormat, FormatValidateResponse } from '../../types/dataset'
+import type {
+  DatasetGroup,
+  TaskType,
+  AnnotationFormat,
+  FormatValidateResponse,
+  ClassificationScanResponse,
+} from '../../types/dataset'
 
 const { Text } = Typography
 const { Option } = Select
@@ -158,10 +164,22 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
   const [annotationFiles, setAnnotationFiles] = useState<string[]>([])
   const [annotationMetaFile, setAnnotationMetaFile] = useState<string | null>(null)
 
+  // Classification 전용: 데이터셋 루트 + 2레벨 스캔 결과
+  const [classificationRootDir, setClassificationRootDir] = useState<string | null>(null)
+  const [classificationScan, setClassificationScan] = useState<ClassificationScanResponse | null>(null)
+  const [classificationScanLoading, setClassificationScanLoading] = useState(false)
+  const [classificationScanError, setClassificationScanError] = useState<string | null>(null)
+  const [classificationRootBrowserOpen, setClassificationRootBrowserOpen] = useState(false)
+
   // 파일 브라우저 열림 상태
   const [imageBrowserOpen, setImageBrowserOpen] = useState(false)
   const [annotationBrowserOpen, setAnnotationBrowserOpen] = useState(false)
   const [metaFileBrowserOpen, setMetaFileBrowserOpen] = useState(false)
+
+  // CLASSIFICATION이면 이미지/어노테이션 입력 대신 단일 루트 폴더 방식으로 전환한다.
+  // 현재는 폴더 구조를 긁어와 읽기 전용으로 표시하는 단계까지만 제공하며,
+  // 클래스 순서 지정·manifest 생성 등 후속 로직은 UI 확정 후 추가한다.
+  const isClassification = selectedTaskType === 'CLASSIFICATION'
 
   // 포맷 검증 상태
   const [formatValidating, setFormatValidating] = useState(false)
@@ -191,8 +209,33 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
       .finally(() => setGroupListLoading(false))
   }, [open, existingGroup])
 
-  const isStep1Ready = imageDir !== null && annotationFiles.length > 0
+  // CLASSIFICATION은 루트 폴더 + 스캔 결과 1개 이상이면 다음 단계 진행 가능.
+  // 그 외(Detection 등)는 기존처럼 이미지 폴더 + 어노테이션 파일이 필요하다.
+  const isStep1Ready = isClassification
+    ? classificationRootDir !== null && classificationScan !== null && classificationScan.heads.length > 0
+    : imageDir !== null && annotationFiles.length > 0
   const isNewGroup = selectedGroupOption === NEW_GROUP_SENTINEL
+
+  /** 선택된 루트 폴더를 백엔드에 스캔 요청. 결과는 읽기 전용으로 표시. */
+  const runClassificationScan = async (rootPath: string) => {
+    setClassificationScanLoading(true)
+    setClassificationScanError(null)
+    setClassificationScan(null)
+    try {
+      const res = await fileBrowserApi.classificationScan(rootPath)
+      setClassificationScan(res.data)
+      if (res.data.heads.length === 0) {
+        setClassificationScanError('루트 아래에서 Head 폴더를 찾을 수 없습니다.')
+      }
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
+      setClassificationScanError(
+        typeof detail === 'string' ? detail : '폴더 스캔 중 오류가 발생했습니다.',
+      )
+    } finally {
+      setClassificationScanLoading(false)
+    }
+  }
 
   /** 그룹+split 조합이 바뀔 때 다음 버전 조회 */
   const fetchNextVersion = (groupId: string | null, split: string) => {
@@ -322,6 +365,10 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
     setImageDir(null)
     setAnnotationFiles([])
     setAnnotationMetaFile(null)
+    setClassificationRootDir(null)
+    setClassificationScan(null)
+    setClassificationScanError(null)
+    setClassificationScanLoading(false)
     setSelectedGroupOption(NEW_GROUP_SENTINEL)
     setFormatValidationResult(null)
     setNextVersion('1.0')
@@ -393,7 +440,155 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
           </Button>
 
           {/* ── Step 1: 파일 선택 ── */}
-          {currentStep >= 1 && (
+          {currentStep >= 1 && isClassification && (
+            <>
+              <Divider style={{ margin: '4px 0 16px' }} />
+
+              <Alert
+                type="info"
+                showIcon
+                style={{ marginBottom: 16 }}
+                message="Classification 데이터셋"
+                description={
+                  <Text style={{ fontSize: 12 }}>
+                    데이터셋 루트를 선택하면 <code>&lt;head&gt;/&lt;class&gt;/&lt;이미지&gt;</code> 2레벨 구조로
+                    폴더를 스캔합니다. 폴더명 규약은 해석하지 않고 구조만 그대로 읽어옵니다.
+                  </Text>
+                }
+              />
+
+              {/* 데이터셋 루트 폴더 선택 */}
+              <Form.Item label={<Text strong>데이터셋 루트 폴더</Text>} required>
+                <Space direction="vertical" style={{ width: '100%' }}>
+                  <Button
+                    icon={<FolderOpenOutlined />}
+                    onClick={() => setClassificationRootBrowserOpen(true)}
+                  >
+                    폴더 선택
+                  </Button>
+                  {classificationRootDir && (
+                    <Tag
+                      color="blue"
+                      closable
+                      onClose={() => {
+                        setClassificationRootDir(null)
+                        setClassificationScan(null)
+                        setClassificationScanError(null)
+                      }}
+                      icon={<FolderOpenOutlined />}
+                      style={{ maxWidth: 560 }}
+                    >
+                      {classificationRootDir}
+                    </Tag>
+                  )}
+                </Space>
+              </Form.Item>
+
+              {/* 스캔 진행 / 오류 표시 */}
+              {classificationScanLoading && (
+                <div style={{ marginBottom: 12 }}>
+                  <Spin size="small" /> <Text type="secondary" style={{ fontSize: 12 }}>폴더 구조 분석 중...</Text>
+                </div>
+              )}
+              {classificationScanError && !classificationScanLoading && (
+                <Alert
+                  type="warning"
+                  showIcon
+                  message={classificationScanError}
+                  style={{ marginBottom: 12 }}
+                />
+              )}
+
+              {/* 스캔 결과 (읽기 전용 트리) */}
+              {classificationScan && classificationScan.heads.length > 0 && !classificationScanLoading && (
+                <div style={{ marginBottom: 16 }}>
+                  <Text strong style={{ fontSize: 13 }}>발견된 구조</Text>
+                  <div
+                    style={{
+                      marginTop: 6,
+                      border: '1px solid #f0f0f0',
+                      borderRadius: 6,
+                      padding: '10px 12px',
+                      background: '#fafafa',
+                      maxHeight: 260,
+                      overflowY: 'auto',
+                    }}
+                  >
+                    {classificationScan.heads.map((head) => (
+                      <div key={head.path} style={{ marginBottom: 10 }}>
+                        <Space size={6}>
+                          <FolderOpenOutlined style={{ color: '#1677ff' }} />
+                          <Text strong>{head.name}</Text>
+                          <Text type="secondary" style={{ fontSize: 11 }}>
+                            (class {head.classes.length}개)
+                          </Text>
+                        </Space>
+                        <div style={{ marginLeft: 22, marginTop: 4 }}>
+                          {head.classes.length === 0 ? (
+                            <Text type="secondary" style={{ fontSize: 12 }}>
+                              하위 class 폴더가 없습니다.
+                            </Text>
+                          ) : (
+                            head.classes.map((cls) => (
+                              <div key={cls.path} style={{ fontSize: 12 }}>
+                                <Space size={6}>
+                                  <Text>{cls.name}</Text>
+                                  <Text type="secondary" style={{ fontSize: 11 }}>
+                                    {cls.image_count.toLocaleString()}장
+                                  </Text>
+                                </Space>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Split */}
+              <Form.Item label="Split" name="split" initialValue="NONE" rules={[{ required: true }]}>
+                <Radio.Group
+                  onChange={(e) => {
+                    const newSplit = e.target.value
+                    const groupId = existingGroup?.id
+                      ?? (selectedGroupOption !== NEW_GROUP_SENTINEL ? selectedGroupOption : null)
+                    fetchNextVersion(groupId, newSplit)
+                  }}
+                >
+                  {SPLIT_OPTIONS.map(s => <Radio.Button key={s} value={s}>{s}</Radio.Button>)}
+                </Radio.Group>
+              </Form.Item>
+
+              <Button
+                type="primary"
+                block
+                disabled={!isStep1Ready}
+                onClick={() => {
+                  setCurrentStep(2)
+                  const currentSplit = form.getFieldValue('split') || 'NONE'
+                  if (existingGroup) {
+                    fetchNextVersion(existingGroup.id, currentSplit)
+                  } else if (selectedGroupOption !== NEW_GROUP_SENTINEL) {
+                    fetchNextVersion(selectedGroupOption, currentSplit)
+                  } else {
+                    setNextVersion('1.0')
+                  }
+                }}
+                style={{ marginBottom: 4 }}
+              >
+                다음 단계 →
+              </Button>
+              {!isStep1Ready && (
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  데이터셋 루트 폴더를 선택하고 스캔 결과를 확인해야 합니다.
+                </Text>
+              )}
+            </>
+          )}
+
+          {currentStep >= 1 && !isClassification && (
             <>
               <Divider style={{ margin: '4px 0 16px' }} />
 
@@ -560,6 +755,11 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
             <>
               <Divider style={{ margin: '16px 0' }} />
 
+              {/* Classification은 어노테이션 파일 대신 폴더 구조로 라벨이 결정되므로
+                  이 단계에서 포맷을 고르지 않는다. 추후 CLS_FOLDER/manifest 저장이
+                  확정되면 여기 정보를 다시 노출할 수 있다. */}
+              {!isClassification && (
+              <>
               <Form.Item
                 label={
                   <Space>
@@ -680,6 +880,8 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
                   )}
                 </div>
               )}
+              </>
+              )}
 
               <Divider dashed style={{ margin: '12px 0' }} />
 
@@ -757,32 +959,55 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
                 <Descriptions.Item label="사용 목적">
                   {selectedTaskType && <Tag color="purple">{selectedTaskType}</Tag>}
                 </Descriptions.Item>
-                <Descriptions.Item label="이미지 폴더">
-                  <Text code style={{ fontSize: 11 }}>{imageDir}</Text>
-                </Descriptions.Item>
-                <Descriptions.Item label="어노테이션 파일">
-                  <Space wrap size={4}>
-                    {groupAnnotationFilesForDisplay(annotationFiles).map(item =>
-                      item.type === 'folder' ? (
-                        <Tag key={`folder:${item.path}`} icon={<FolderOpenOutlined />} color="gold">
-                          {item.displayName}/ ({item.fileCount?.toLocaleString()}개)
+                {isClassification ? (
+                  <>
+                    <Descriptions.Item label="데이터셋 루트">
+                      <Text code style={{ fontSize: 11 }}>{classificationRootDir}</Text>
+                    </Descriptions.Item>
+                    <Descriptions.Item label="스캔 결과">
+                      {classificationScan && (
+                        <Space direction="vertical" size={2}>
+                          {classificationScan.heads.map((head) => (
+                            <Text key={head.path} style={{ fontSize: 12 }}>
+                              <Text strong>{head.name}</Text>
+                              <Text type="secondary"> — class {head.classes.length}개 / 이미지 </Text>
+                              {head.classes.reduce((sum, cls) => sum + cls.image_count, 0).toLocaleString()}장
+                            </Text>
+                          ))}
+                        </Space>
+                      )}
+                    </Descriptions.Item>
+                  </>
+                ) : (
+                  <>
+                    <Descriptions.Item label="이미지 폴더">
+                      <Text code style={{ fontSize: 11 }}>{imageDir}</Text>
+                    </Descriptions.Item>
+                    <Descriptions.Item label="어노테이션 파일">
+                      <Space wrap size={4}>
+                        {groupAnnotationFilesForDisplay(annotationFiles).map(item =>
+                          item.type === 'folder' ? (
+                            <Tag key={`folder:${item.path}`} icon={<FolderOpenOutlined />} color="gold">
+                              {item.displayName}/ ({item.fileCount?.toLocaleString()}개)
+                            </Tag>
+                          ) : (
+                            <Tag key={item.path} icon={<FileOutlined />}>{item.displayName}</Tag>
+                          )
+                        )}
+                      </Space>
+                    </Descriptions.Item>
+                    {annotationMetaFile && (
+                      <Descriptions.Item label="어노테이션 메타 파일">
+                        <Tag icon={<FileOutlined />} color="geekblue">
+                          {annotationMetaFile.split('/').pop()}
                         </Tag>
-                      ) : (
-                        <Tag key={item.path} icon={<FileOutlined />}>{item.displayName}</Tag>
-                      )
+                      </Descriptions.Item>
                     )}
-                  </Space>
-                </Descriptions.Item>
-                {annotationMetaFile && (
-                  <Descriptions.Item label="어노테이션 메타 파일">
-                    <Tag icon={<FileOutlined />} color="geekblue">
-                      {annotationMetaFile.split('/').pop()}
-                    </Tag>
-                  </Descriptions.Item>
+                    <Descriptions.Item label="Annotation Format">
+                      <Tag color={FORMAT_TAG_COLOR[selectedFormat] ?? 'default'}>{selectedFormat}</Tag>
+                    </Descriptions.Item>
+                  </>
                 )}
-                <Descriptions.Item label="Annotation Format">
-                  <Tag color={FORMAT_TAG_COLOR[selectedFormat] ?? 'default'}>{selectedFormat}</Tag>
-                </Descriptions.Item>
                 <Descriptions.Item label="버전">
                   <Tag color="blue">{nextVersion}</Tag>
                   <Text type="secondary" style={{ fontSize: 11, marginLeft: 4 }}>자동 생성</Text>
@@ -793,9 +1018,30 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
                 <Alert type="error" message={submitError} showIcon style={{ marginBottom: 16 }} />
               )}
 
+              {isClassification && (
+                <Alert
+                  type="warning"
+                  showIcon
+                  style={{ marginBottom: 16 }}
+                  message="Classification 등록 로직은 아직 연결되지 않았습니다"
+                  description={
+                    <Text style={{ fontSize: 12 }}>
+                      현재는 폴더 구조 스캔 결과를 확인하는 단계까지만 제공합니다.
+                      클래스 순서 확정, 이미지 중복 처리, manifest 생성 등 등록 파이프라인은
+                      UI 확정 후 추가될 예정입니다.
+                    </Text>
+                  }
+                />
+              )}
+
               <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
                 <Button onClick={handleClose} disabled={submitting}>취소</Button>
-                <Button type="primary" loading={submitting} onClick={handleSubmit}>
+                <Button
+                  type="primary"
+                  loading={submitting}
+                  onClick={handleSubmit}
+                  disabled={isClassification}
+                >
                   데이터셋 등록
                 </Button>
               </Space>
@@ -833,6 +1079,20 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
         onSelect={(paths) => setAnnotationMetaFile(paths[0])}
         mode="file"
         title="어노테이션 메타 파일 선택 (예: data.yaml)"
+      />
+
+      {/* ── Classification 루트 폴더 브라우저 ── */}
+      <ServerFileBrowser
+        open={classificationRootBrowserOpen}
+        onClose={() => setClassificationRootBrowserOpen(false)}
+        onSelect={(paths) => {
+          const picked = paths[0]
+          setClassificationRootDir(picked)
+          // 폴더 선택 즉시 스캔 실행 (결과는 읽기 전용으로 표시만 함)
+          void runClassificationScan(picked)
+        }}
+        mode="directory"
+        title="Classification 데이터셋 루트 폴더 선택"
       />
     </>
   )
