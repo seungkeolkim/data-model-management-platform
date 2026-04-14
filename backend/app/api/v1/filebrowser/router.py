@@ -145,6 +145,19 @@ def _count_image_files(directory: Path, allowed_extensions: set[str]) -> int:
     return count
 
 
+def _has_visible_subdirs(directory: Path) -> bool:
+    """디렉토리 바로 아래에 숨김 파일이 아닌 서브디렉토리가 존재하는지 확인."""
+    try:
+        for child in directory.iterdir():
+            if child.name.startswith("."):
+                continue
+            if child.is_dir():
+                return True
+    except (OSError, PermissionError):
+        return False
+    return False
+
+
 @router.get("/classification-scan", response_model=ClassificationScanResponse)
 def scan_classification_dataset(
     path: str = Query(..., description="스캔할 데이터셋 루트 절대경로"),
@@ -212,6 +225,7 @@ def scan_classification_dataset(
                 name=class_dir.name,
                 path=str(class_dir),
                 image_count=_count_image_files(class_dir, allowed_extensions),
+                has_subdirs=_has_visible_subdirs(class_dir),
             )
             for class_dir in class_dirs
         ]

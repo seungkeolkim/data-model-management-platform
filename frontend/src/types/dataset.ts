@@ -170,6 +170,7 @@ export interface ClassificationClassEntry {
   name: string           // class 폴더명 원본
   path: string           // 절대경로
   image_count: number    // 해당 폴더 바로 아래 이미지 파일 수
+  has_subdirs: boolean   // 서브디렉토리 존재 여부 (true면 2레벨 초과 의심)
 }
 
 export interface ClassificationHeadEntry {

@@ -40,6 +40,9 @@ class ClassificationClassEntry(BaseModel):
     name: str                   # 폴더명 원본 (예: "0_no_helmet")
     path: str                   # 절대경로
     image_count: int            # 해당 폴더 바로 아래 이미지 파일 수
+    # class 폴더 안에 서브디렉토리가 있으면 사용자가 데이터셋 루트를 잘못 선택했을
+    # 가능성이 높다 (기대 구조는 <root>/<head>/<class>/<images> 2레벨이므로).
+    has_subdirs: bool = False
 
 
 class ClassificationHeadEntry(BaseModel):

@@ -36,6 +36,7 @@ import {
   ArrowDownOutlined,
   DeleteOutlined,
   ReloadOutlined,
+  ExclamationCircleOutlined,
 } from '@ant-design/icons'
 import { datasetGroupsApi, fileBrowserApi } from '../../api/dataset'
 import ServerFileBrowser from '../common/ServerFileBrowser'
@@ -569,9 +570,63 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
               )}
 
               {/* 스캔 결과 (읽기 전용 트리) */}
-              {classificationScan && classificationScan.heads.length > 0 && !classificationScanLoading && (
+              {classificationScan && classificationScan.heads.length > 0 && !classificationScanLoading && (() => {
+                // 2레벨 기대 구조에서 벗어난 징후 집계 — 데이터셋 루트를 잘못 골랐을 가능성이 있음.
+                // (1) class 폴더 안에 서브디렉토리가 있는 경우 → 2레벨을 초과한 구조일 수 있음
+                // (2) class 폴더에 이미지가 0장 → 빈 class이거나 상위 폴더를 잘못 선택했을 수 있음
+                const classesWithSubdirs = classificationScan.heads.flatMap((head) =>
+                  head.classes.filter((cls) => cls.has_subdirs),
+                )
+                const classesWithNoImages = classificationScan.heads.flatMap((head) =>
+                  head.classes.filter((cls) => cls.image_count === 0),
+                )
+                const hasWarning = classesWithSubdirs.length > 0 || classesWithNoImages.length > 0
+
+                return (
                 <div style={{ marginBottom: 16 }}>
-                  <Text strong style={{ fontSize: 13 }}>발견된 구조 <Text type="secondary" style={{ fontSize: 11 }}>(읽기 전용 · 현재 폴더 상태)</Text></Text>
+                  <Space size={8} wrap style={{ marginBottom: 4 }}>
+                    <Text strong style={{ fontSize: 13 }}>
+                      발견된 구조
+                      <Text type="secondary" style={{ fontSize: 11, marginLeft: 4 }}>
+                        (읽기 전용 · 현재 폴더 상태)
+                      </Text>
+                    </Text>
+                    {hasWarning && (
+                      <Tag
+                        color="warning"
+                        icon={<ExclamationCircleOutlined />}
+                        style={{ fontSize: 11 }}
+                      >
+                        데이터셋 루트 선택 확인 필요
+                      </Tag>
+                    )}
+                  </Space>
+                  {hasWarning && (
+                    <Alert
+                      type="warning"
+                      showIcon
+                      style={{ marginBottom: 8 }}
+                      message="2레벨 구조에서 벗어난 항목이 있습니다"
+                      description={
+                        <ul style={{ margin: '4px 0', paddingLeft: 20, fontSize: 12 }}>
+                          {classesWithSubdirs.length > 0 && (
+                            <li>
+                              class 폴더 내부에 서브디렉토리가 존재합니다
+                              ({classesWithSubdirs.length}개) — 루트를 한 단계 아래에서
+                              골라야 할 수 있습니다.
+                            </li>
+                          )}
+                          {classesWithNoImages.length > 0 && (
+                            <li>
+                              이미지가 0장인 class 폴더가 있습니다
+                              ({classesWithNoImages.length}개) — 루트를 잘못 선택했거나
+                              폴더가 비어 있을 수 있으니 확인하세요.
+                            </li>
+                          )}
+                        </ul>
+                      }
+                    />
+                  )}
                   <div
                     style={{
                       marginTop: 6,
@@ -602,9 +657,22 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
                               <div key={cls.path} style={{ fontSize: 12 }}>
                                 <Space size={6}>
                                   <Text>{cls.name}</Text>
-                                  <Text type="secondary" style={{ fontSize: 11 }}>
+                                  <Text
+                                    type={cls.image_count === 0 ? 'warning' : 'secondary'}
+                                    style={{ fontSize: 11 }}
+                                  >
                                     {cls.image_count.toLocaleString()}장
                                   </Text>
+                                  {cls.has_subdirs && (
+                                    <Text type="warning" style={{ fontSize: 11 }}>
+                                      <ExclamationCircleOutlined /> 하위 폴더 있음
+                                    </Text>
+                                  )}
+                                  {cls.image_count === 0 && (
+                                    <Text type="warning" style={{ fontSize: 11 }}>
+                                      <ExclamationCircleOutlined /> 이미지 없음
+                                    </Text>
+                                  )}
                                 </Space>
                               </div>
                             ))
@@ -614,7 +682,8 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
                     ))}
                   </div>
                 </div>
-              )}
+                )
+              })()}
 
               {/* 등록 설정 (편집 가능 · 최종 등록 의도) */}
               {classificationScan && classificationScan.heads.length > 0 && !classificationScanLoading && (
