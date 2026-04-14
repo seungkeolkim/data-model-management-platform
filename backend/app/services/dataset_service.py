@@ -1496,8 +1496,14 @@ class DatasetGroupService:
         dataset: Dataset,
         page: int = 1,
         page_size: int = 50,
+        head_filters: dict[str, list[str]] | None = None,
     ) -> dict:
-        """Classification 샘플 뷰어용 이미지 목록 반환."""
+        """Classification 샘플 뷰어용 이미지 목록 반환.
+
+        head_filters: {head_name: [class_name, ...]} — 같은 head 내 class는 OR,
+        서로 다른 head 간에는 AND로 결합한다. 페이지네이션 이전에 적용되므로
+        프론트엔드가 페이지를 넘기며 필터가 깨지는 문제를 피할 수 있다.
+        """
         classification_index = self._get_or_create_classification_sample_index(dataset)
         if classification_index is None:
             return {
@@ -1509,6 +1515,20 @@ class DatasetGroupService:
             }
 
         all_images = classification_index["images"]
+
+        # head_filters 적용 — 빈 dict/None이면 통과
+        if head_filters:
+            filtered_images = []
+            for entry in all_images:
+                labels = entry.get("labels") or {}
+                # 모든 head 조건이 충족되어야 한다(AND)
+                if all(
+                    any(cls in (labels.get(head_name) or []) for cls in class_names)
+                    for head_name, class_names in head_filters.items()
+                ):
+                    filtered_images.append(entry)
+            all_images = filtered_images
+
         total = len(all_images)
 
         # 이미지 서빙 URL base. detection과 동일하게 {storage_uri}/images/ 아래 서빙.

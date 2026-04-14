@@ -94,8 +94,23 @@ export const datasetsApi = {
 
   // Classification 전용 응답. 동일 엔드포인트지만 annotation_format=CLS_MANIFEST일 때
   // 백엔드가 다른 shape을 반환하므로 호출자가 타입을 알고 나눠 쓴다.
-  classificationSamples: (datasetId: string, params?: { page?: number; page_size?: number }) =>
-    api.get<ClassificationSampleListResponse>(`/datasets/${datasetId}/samples`, { params }),
+  classificationSamples: (
+    datasetId: string,
+    params?: {
+      page?: number
+      page_size?: number
+      // "head:class" 문자열 목록. 같은 head 내 OR, 서로 다른 head 간 AND.
+      head_filter?: string[]
+    },
+  ) =>
+    api.get<ClassificationSampleListResponse>(`/datasets/${datasetId}/samples`, {
+      params,
+      // axios 기본 serializer는 array를 ?head_filter[]=... 로 직렬화하므로
+      // FastAPI의 list[str] Query와 맞도록 반복 key 형식으로 바꾼다.
+      paramsSerializer: {
+        indexes: null,
+      },
+    }),
 
   classificationEda: (datasetId: string) =>
     api.get<ClassificationEdaResponse>(`/datasets/${datasetId}/eda`),

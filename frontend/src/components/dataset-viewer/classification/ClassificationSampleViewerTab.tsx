@@ -5,16 +5,19 @@
  * 다른 점:
  *   - bbox overlay가 없다.
  *   - 대신 이미지 아래에 head별 class 라벨을 Tag로 나열.
- *   - 좌측 필터는 "head → class" 드롭다운(모든 head × class 조합).
+ *   - 좌측 필터는 head별 체크박스 그룹. 같은 head 내 여러 class는 OR,
+ *     서로 다른 head 간에는 AND로 결합된다. 필터는 서버 측에서 적용된다.
  */
 import { useMemo, useState, useEffect, useRef, type CSSProperties } from 'react'
 import {
+  Button,
   Card,
+  Checkbox,
+  Collapse,
   Empty,
   Input,
   List,
   Pagination,
-  Select,
   Space,
   Spin,
   Tag,
@@ -23,7 +26,10 @@ import {
 import { FileImageOutlined, SearchOutlined } from '@ant-design/icons'
 import { useQuery } from '@tanstack/react-query'
 import { datasetsApi } from '../../../api/dataset'
-import type { ClassificationSampleImageItem } from '../../../types/dataset'
+import type {
+  ClassificationSampleHeadInfo,
+  ClassificationSampleImageItem,
+} from '../../../types/dataset'
 
 const { Text } = Typography
 
@@ -43,15 +49,31 @@ export default function ClassificationSampleViewerTab({ datasetId }: Props) {
   const [currentPage, setCurrentPage] = useState(1)
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [searchText, setSearchText] = useState('')
-  // 필터: "HEAD=CLASS" 문자열 단위. 비어있으면 필터 없음.
-  const [filterHeadClass, setFilterHeadClass] = useState<string | null>(null)
+  // 필터: head별 선택된 class 목록. 같은 head 내 OR, 서로 다른 head 간 AND.
+  // 서버에서 적용되므로 페이지네이션 전에 반영된다.
+  const [headClassFilter, setHeadClassFilter] = useState<Record<string, string[]>>({})
   const pageSize = 20
 
+  // FastAPI list[str] Query 직렬화 형식: "head:class" 반복
+  const headFilterParams = useMemo(() => {
+    const params: string[] = []
+    for (const [headName, classes] of Object.entries(headClassFilter)) {
+      for (const className of classes) {
+        params.push(`${headName}:${className}`)
+      }
+    }
+    return params
+  }, [headClassFilter])
+
   const { data, isLoading } = useQuery({
-    queryKey: ['classification-samples', datasetId, currentPage, pageSize],
+    queryKey: ['classification-samples', datasetId, currentPage, pageSize, headFilterParams],
     queryFn: () =>
       datasetsApi
-        .classificationSamples(datasetId, { page: currentPage, page_size: pageSize })
+        .classificationSamples(datasetId, {
+          page: currentPage,
+          page_size: pageSize,
+          head_filter: headFilterParams,
+        })
         .then(r => r.data),
   })
 
@@ -65,41 +87,41 @@ export default function ClassificationSampleViewerTab({ datasetId }: Props) {
     return () => clearTimeout(timer)
   }, [isLoading])
 
+  // 필터 or 검색이 바뀌면 선택 인덱스 리셋
   useEffect(() => {
     setSelectedIndex(0)
-  }, [currentPage, filterHeadClass, searchText])
+  }, [currentPage, headClassFilter, searchText])
+
+  // 필터가 바뀌면 1페이지로 이동 (서버 결과가 달라지므로)
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [headClassFilter])
 
   const items = data?.items ?? []
   const total = data?.total ?? 0
   const heads = data?.heads ?? []
 
-  // head → class 전체 옵션. <Select> options 구성용.
-  const filterOptions = useMemo(() => {
-    const options: { value: string; label: string }[] = []
-    for (const head of heads) {
-      for (const className of head.classes) {
-        options.push({
-          value: `${head.name}=${className}`,
-          label: `${head.name} = ${className}`,
-        })
-      }
-    }
-    return options
-  }, [heads])
-
-  // 파일명 검색 + head/class 필터 적용
+  // 파일명 검색만 클라이언트 측. head/class 필터는 서버에서 처리됨.
   const filteredItems = useMemo(() => {
-    let list: ClassificationSampleImageItem[] = items
-    if (searchText) {
-      const q = searchText.toLowerCase()
-      list = list.filter(item => (item.file_name || '').toLowerCase().includes(q))
-    }
-    if (filterHeadClass) {
-      const [headName, className] = filterHeadClass.split('=')
-      list = list.filter(item => (item.labels?.[headName] ?? []).includes(className))
-    }
-    return list
-  }, [items, searchText, filterHeadClass])
+    if (!searchText) return items
+    const query = searchText.toLowerCase()
+    return items.filter(item => (item.file_name || '').toLowerCase().includes(query))
+  }, [items, searchText])
+
+  const totalSelectedFilters = headFilterParams.length
+  const hasAnyFilter = totalSelectedFilters > 0
+
+  // head별 체크박스 그룹 변경 핸들러
+  const handleHeadClassToggle = (headName: string, nextClasses: string[]) => {
+    setHeadClassFilter(prev => {
+      const next = { ...prev }
+      if (nextClasses.length === 0) delete next[headName]
+      else next[headName] = nextClasses
+      return next
+    })
+  }
+
+  const handleClearFilters = () => setHeadClassFilter({})
 
   const selectedImage: ClassificationSampleImageItem | null =
     filteredItems[selectedIndex] ?? null
@@ -119,35 +141,49 @@ export default function ClassificationSampleViewerTab({ datasetId }: Props) {
     )
   }
 
-  if (total === 0) {
+  // 필터가 없는데도 결과가 0이면 진짜로 빈 데이터셋 — Empty로 대체
+  if (total === 0 && !hasAnyFilter) {
     return <Empty description="manifest.jsonl을 읽을 수 없거나 이미지가 없습니다." />
   }
 
   return (
     <div style={{ display: 'flex', gap: 16, height: 'calc(100vh - 220px)' }}>
       {/* 좌측: 이미지 리스트 + 검색 + 필터 */}
-      <div style={{ width: 260, flexShrink: 0, display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <div style={{ width: 300, flexShrink: 0, display: 'flex', flexDirection: 'column', height: '100%' }}>
         <Input
           prefix={<SearchOutlined />}
-          placeholder="파일명 검색"
+          placeholder="파일명 검색 (현재 페이지)"
           size="small"
           value={searchText}
           onChange={e => setSearchText(e.target.value)}
           allowClear
           style={{ marginBottom: 8 }}
         />
-        <Select
-          size="small"
-          placeholder="head/class 필터"
-          value={filterHeadClass}
-          onChange={setFilterHeadClass}
-          options={filterOptions}
-          allowClear
-          showSearch
-          optionFilterProp="label"
-          style={{ marginBottom: 8, width: '100%' }}
+
+        <HeadClassFilterPanel
+          heads={heads}
+          selected={headClassFilter}
+          onToggleHead={handleHeadClassToggle}
+          onClearAll={handleClearFilters}
+          totalSelected={totalSelectedFilters}
         />
-        <div style={{ flex: 1, overflowY: 'auto', border: '1px solid #f0f0f0', borderRadius: 6 }}>
+
+        <div
+          style={{
+            flex: 1,
+            overflowY: 'auto',
+            border: '1px solid #f0f0f0',
+            borderRadius: 6,
+            marginTop: 8,
+          }}
+        >
+          {total === 0 ? (
+            <div style={{ padding: 24, textAlign: 'center' }}>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                조건에 맞는 이미지가 없습니다.
+              </Text>
+            </div>
+          ) : null}
           <List
             size="small"
             dataSource={filteredItems}
@@ -203,6 +239,105 @@ export default function ClassificationSampleViewerTab({ datasetId }: Props) {
           <Empty description="이미지를 선택하세요" />
         )}
       </div>
+    </div>
+  )
+}
+
+/**
+ * head별 체크박스 필터 패널.
+ * - Collapse로 head 단위 접고 펼침 — head 수가 많아도 스크롤/공간 문제가 적다.
+ * - 같은 head 안에서 고른 여러 class는 OR (서버 구현과 일치).
+ * - 서로 다른 head 간에는 AND.
+ */
+function HeadClassFilterPanel({
+  heads,
+  selected,
+  onToggleHead,
+  onClearAll,
+  totalSelected,
+}: {
+  heads: ClassificationSampleHeadInfo[]
+  selected: Record<string, string[]>
+  onToggleHead: (headName: string, nextClasses: string[]) => void
+  onClearAll: () => void
+  totalSelected: number
+}) {
+  if (heads.length === 0) return null
+
+  // 초기에 이미 선택된 head만 펼쳐 둔다. 나머지는 접힘.
+  const defaultOpenKeys = heads
+    .filter(head => (selected[head.name]?.length ?? 0) > 0)
+    .map(head => head.name)
+
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginBottom: 4,
+          fontSize: 12,
+        }}
+      >
+        <Text strong style={{ fontSize: 12 }}>
+          Head / Class 필터
+        </Text>
+        <Space size={6}>
+          {totalSelected > 0 && (
+            <Tag color="blue" style={{ fontSize: 11, margin: 0 }}>
+              {totalSelected} 선택
+            </Tag>
+          )}
+          <Button
+            type="link"
+            size="small"
+            disabled={totalSelected === 0}
+            onClick={onClearAll}
+            style={{ padding: 0, fontSize: 12 }}
+          >
+            초기화
+          </Button>
+        </Space>
+      </div>
+      <Collapse
+        size="small"
+        // key를 defaultOpenKeys의 join으로 만들어 selected가 바뀌면 강제 재마운트 없이
+        // defaultActiveKey 효과만 살린다. 사용자가 수동으로 펼친 상태는 유지됨.
+        defaultActiveKey={defaultOpenKeys}
+        items={heads.map(head => {
+          const selectedClasses = selected[head.name] ?? []
+          return {
+            key: head.name,
+            label: (
+              <span style={{ fontSize: 12 }}>
+                {head.name}
+                {head.multi_label && (
+                  <Tag color="purple" style={{ marginLeft: 6, fontSize: 10 }}>
+                    multi
+                  </Tag>
+                )}
+                {selectedClasses.length > 0 && (
+                  <Tag color="blue" style={{ marginLeft: 6, fontSize: 10 }}>
+                    {selectedClasses.length}/{head.classes.length}
+                  </Tag>
+                )}
+              </span>
+            ),
+            children: (
+              <Checkbox.Group
+                value={selectedClasses}
+                onChange={next => onToggleHead(head.name, next as string[])}
+                style={{ display: 'flex', flexDirection: 'column', gap: 4 }}
+                options={head.classes.map(className => ({
+                  value: className,
+                  label: <span style={{ fontSize: 12 }}>{className}</span>,
+                }))}
+              />
+            ),
+          }
+        })}
+      />
     </div>
   )
 }

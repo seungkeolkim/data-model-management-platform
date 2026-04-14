@@ -159,6 +159,10 @@ async def get_dataset_samples(
     dataset_id: str,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
+    # classification 전용 필터. 반복 쿼리 파라미터 형식: head_filter=<head>:<class>
+    # 동일 head에 여러 class 지정 시 OR, 다른 head 간에는 AND로 결합한다.
+    # 예) ?head_filter=hardhat_wear:1_helmet&head_filter=vest_wear:2_vest
+    head_filter: list[str] = Query(default=[]),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -178,7 +182,23 @@ async def get_dataset_samples(
         dataset.group.annotation_format if dataset.group else None
     )
     if annotation_format == "CLS_MANIFEST":
-        return svc.get_classification_sample_list(dataset, page=page, page_size=page_size)
+        # "head:class" 문자열 목록을 {head: [class, ...]} 로 그룹핑
+        head_filters: dict[str, list[str]] = {}
+        for raw in head_filter:
+            if ":" not in raw:
+                continue
+            head_name, class_name = raw.split(":", 1)
+            head_name = head_name.strip()
+            class_name = class_name.strip()
+            if not head_name or not class_name:
+                continue
+            head_filters.setdefault(head_name, []).append(class_name)
+        return svc.get_classification_sample_list(
+            dataset,
+            page=page,
+            page_size=page_size,
+            head_filters=head_filters,
+        )
     return svc.get_sample_list(dataset, page=page, page_size=page_size)
 
 
