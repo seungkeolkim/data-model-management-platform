@@ -255,6 +255,25 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
       .finally(() => setGroupListLoading(false))
   }, [open, existingGroup])
 
+  // 선택된 사용 목적(task_type)과 일치하는 그룹만 드롭다운에 노출한다.
+  // task_types가 null이거나 비어있는 과거 데이터는 안전 차원에서 숨긴다 —
+  // 사용 목적이 다른 그룹에 엉뚱한 split이 끼어 들어가는 사고를 막기 위함.
+  const filteredGroupList = selectedTaskType === null
+    ? existingGroupList
+    : existingGroupList.filter(
+        (group) => Array.isArray(group.task_types)
+          && group.task_types.includes(selectedTaskType),
+      )
+
+  // 사용 목적이 바뀌어 선택된 그룹이 더 이상 목록에 없다면 "새 그룹 만들기"로 리셋.
+  useEffect(() => {
+    if (selectedGroupOption === NEW_GROUP_SENTINEL) return
+    const stillAvailable = filteredGroupList.some((group) => group.id === selectedGroupOption)
+    if (!stillAvailable) {
+      setSelectedGroupOption(NEW_GROUP_SENTINEL)
+    }
+  }, [filteredGroupList, selectedGroupOption])
+
   // CLASSIFICATION은 루트 폴더 + 스캔 결과 1개 이상이면 다음 단계 진행 가능.
   // 그 외(Detection 등)는 기존처럼 이미지 폴더 + 어노테이션 파일이 필요하다.
   const isStep1Ready = isClassification
@@ -1158,7 +1177,15 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
                   <Form.Item
                     label="데이터셋 그룹"
                     required
-                    extra={<Text type="secondary" style={{ fontSize: 12 }}>같은 데이터셋의 TRAIN/VAL/TEST를 묶는 단위</Text>}
+                    extra={
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        같은 데이터셋의 TRAIN/VAL/TEST를 묶는 단위.
+                        {selectedTaskType && (
+                          <> 사용 목적이 <Tag color="purple" style={{ margin: '0 2px' }}>{selectedTaskType}</Tag>
+                          인 그룹만 표시됩니다.</>
+                        )}
+                      </Text>
+                    }
                   >
                     <Spin spinning={groupListLoading} size="small">
                       <Select
@@ -1186,7 +1213,7 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
                             <Text strong style={{ color: '#1677ff' }}>새 그룹 만들기</Text>
                           </Space>
                         </Option>
-                        {existingGroupList.map(group => (
+                        {filteredGroupList.map(group => (
                           <Option key={group.id} value={group.id} label={group.name}>
                             <Space>
                               <Text>{group.name}</Text>
