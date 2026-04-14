@@ -50,6 +50,55 @@ const SPLIT_COLOR: Record<string, string> = {
   NONE: 'default',
 }
 
+// 그룹 목록 Split 컬럼에서 split별 표시 순서. 등록 순서와 무관하게 항상 동일.
+const SPLIT_ORDER: Record<string, number> = {
+  TRAIN: 0,
+  VAL: 1,
+  TEST: 2,
+  NONE: 3,
+}
+
+/**
+ * "{major}.{minor}" 형식의 버전 문자열을 숫자 튜플로 파싱.
+ * 파싱 실패 시 [-1, -1]로 취급해 정상 버전에 밀리도록 한다.
+ */
+function parseVersionTuple(version: string): [number, number] {
+  const [majorRaw, minorRaw] = (version ?? '').split('.')
+  const major = Number.parseInt(majorRaw, 10)
+  const minor = Number.parseInt(minorRaw, 10)
+  return [
+    Number.isFinite(major) ? major : -1,
+    Number.isFinite(minor) ? minor : -1,
+  ]
+}
+
+/**
+ * split(TRAIN/VAL/TEST/NONE)별로 가장 최신 버전의 Dataset 한 개씩을 골라
+ * SPLIT_ORDER 순서대로 정렬해 반환한다.
+ * 같은 split에 여러 version이 존재해도 태그가 중복되지 않도록 하기 위한 도우미.
+ */
+function pickLatestDatasetPerSplit(datasets: DatasetSummary[]): DatasetSummary[] {
+  const latestBySplit = new Map<string, DatasetSummary>()
+  for (const dataset of datasets) {
+    const current = latestBySplit.get(dataset.split)
+    if (!current) {
+      latestBySplit.set(dataset.split, dataset)
+      continue
+    }
+    const [currentMajor, currentMinor] = parseVersionTuple(current.version)
+    const [nextMajor, nextMinor] = parseVersionTuple(dataset.version)
+    const isNewer =
+      nextMajor > currentMajor ||
+      (nextMajor === currentMajor && nextMinor > currentMinor)
+    if (isNewer) {
+      latestBySplit.set(dataset.split, dataset)
+    }
+  }
+  return Array.from(latestBySplit.values()).sort(
+    (a, b) => (SPLIT_ORDER[a.split] ?? 99) - (SPLIT_ORDER[b.split] ?? 99),
+  )
+}
+
 export default function DatasetListPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
@@ -175,28 +224,33 @@ export default function DatasetListPage() {
       key: 'splits',
       width: groupColumnWidths.splits,
       onHeaderCell: buildGroupHeaderCellProps('splits'),
-      render: (_: unknown, record: DatasetGroup) => (
-        <Space wrap size={4}>
-          {record.datasets.map(d => (
-            <Tooltip
-              key={d.id}
-              title={
-                <span>
-                  버전: {d.version}<br />
-                  이미지: {d.image_count?.toLocaleString() ?? '-'}장<br />
-                  포맷: {d.annotation_format ?? 'NONE'}<br />
-                  상태: {d.status}
-                </span>
-              }
-            >
-              <Tag color={SPLIT_COLOR[d.split] ?? 'default'}>
-                {d.split}
-              </Tag>
-            </Tooltip>
-          ))}
-          {record.datasets.length === 0 && <Text type="secondary" style={{ fontSize: 12 }}>없음</Text>}
-        </Space>
-      ),
+      render: (_: unknown, record: DatasetGroup) => {
+        // split(TRAIN/VAL/TEST/NONE)별로 가장 최신 버전 1개씩만 추려 보여준다.
+        // 같은 split에 여러 version이 있어도 tag가 중복으로 뜨지 않도록 함.
+        const latestBySplit = pickLatestDatasetPerSplit(record.datasets)
+        return (
+          <Space wrap size={4}>
+            {latestBySplit.map(dataset => (
+              <Tooltip
+                key={dataset.id}
+                title={
+                  <span>
+                    버전: {dataset.version}<br />
+                    이미지: {dataset.image_count?.toLocaleString() ?? '-'}장<br />
+                    포맷: {dataset.annotation_format ?? 'NONE'}<br />
+                    상태: {dataset.status}
+                  </span>
+                }
+              >
+                <Tag color={SPLIT_COLOR[dataset.split] ?? 'default'}>
+                  {dataset.split}
+                </Tag>
+              </Tooltip>
+            ))}
+            {latestBySplit.length === 0 && <Text type="secondary" style={{ fontSize: 12 }}>없음</Text>}
+          </Space>
+        )
+      },
     },
     {
       title: '총 이미지',
