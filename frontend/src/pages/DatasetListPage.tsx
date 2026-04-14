@@ -32,6 +32,7 @@ import dayjs from 'dayjs'
 import { datasetGroupsApi } from '../api/dataset'
 import DatasetRegisterModal from '../components/dataset/DatasetRegisterModal'
 import type { DatasetGroup, DatasetSummary } from '../types/dataset'
+import { useResizableColumnWidths } from '../components/common/ResizableTableColumns'
 
 const { Title, Text } = Typography
 
@@ -60,6 +61,23 @@ export default function DatasetListPage() {
   const [modalOpen, setModalOpen] = useState(false)
   const [selectedGroup, setSelectedGroup] = useState<DatasetGroup | null>(null)
   const [deletingGroupId, setDeletingGroupId] = useState<string | null>(null)
+
+  // 그룹 목록 테이블의 컬럼별 초기 너비. 헤더 우측 경계 드래그로 조정 가능.
+  const {
+    widthByKey: groupColumnWidths,
+    buildHeaderCellProps: buildGroupHeaderCellProps,
+    tableComponents: resizableTableComponents,
+  } = useResizableColumnWidths({
+    name: 280,
+    dataset_type: 110,
+    task_types: 200,
+    annotation_format: 110,
+    splits: 220,
+    image_count: 110,
+    status: 100,
+    created_at: 120,
+    action: 180,
+  })
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['dataset-groups', page, pageSize, search],
@@ -99,6 +117,8 @@ export default function DatasetListPage() {
       title: '그룹명',
       dataIndex: 'name',
       key: 'name',
+      width: groupColumnWidths.name,
+      onHeaderCell: buildGroupHeaderCellProps('name'),
       render: (name: string, record: DatasetGroup) => (
         <Space>
           <FolderOpenOutlined style={{ color: '#1677ff' }} />
@@ -113,7 +133,8 @@ export default function DatasetListPage() {
       title: '데이터 유형',
       dataIndex: 'dataset_type',
       key: 'dataset_type',
-      width: 110,
+      width: groupColumnWidths.dataset_type,
+      onHeaderCell: buildGroupHeaderCellProps('dataset_type'),
       render: (v: string) => {
         const color: Record<string, string> = {
           RAW: 'default', SOURCE: 'blue', PROCESSED: 'green', FUSION: 'volcano',
@@ -124,7 +145,8 @@ export default function DatasetListPage() {
     {
       title: '사용 목적',
       key: 'task_types',
-      width: 200,
+      width: groupColumnWidths.task_types,
+      onHeaderCell: buildGroupHeaderCellProps('task_types'),
       render: (_: unknown, record: DatasetGroup) => (
         <Space wrap size={4}>
           {(record.task_types ?? []).map(t => (
@@ -138,7 +160,8 @@ export default function DatasetListPage() {
       title: '포맷',
       dataIndex: 'annotation_format',
       key: 'annotation_format',
-      width: 110,
+      width: groupColumnWidths.annotation_format,
+      onHeaderCell: buildGroupHeaderCellProps('annotation_format'),
       render: (v: string) => {
         const color: Record<string, string> = {
           COCO: 'green', YOLO: 'orange', ATTR_JSON: 'cyan',
@@ -150,7 +173,8 @@ export default function DatasetListPage() {
     {
       title: 'Split',
       key: 'splits',
-      width: 220,
+      width: groupColumnWidths.splits,
+      onHeaderCell: buildGroupHeaderCellProps('splits'),
       render: (_: unknown, record: DatasetGroup) => (
         <Space wrap size={4}>
           {record.datasets.map(d => (
@@ -177,7 +201,8 @@ export default function DatasetListPage() {
     {
       title: '총 이미지',
       key: 'image_count',
-      width: 110,
+      width: groupColumnWidths.image_count,
+      onHeaderCell: buildGroupHeaderCellProps('image_count'),
       align: 'right' as const,
       render: (_: unknown, record: DatasetGroup) => {
         const total = record.datasets.reduce((s, d) => s + (d.image_count ?? 0), 0)
@@ -187,7 +212,8 @@ export default function DatasetListPage() {
     {
       title: '상태',
       key: 'status',
-      width: 100,
+      width: groupColumnWidths.status,
+      onHeaderCell: buildGroupHeaderCellProps('status'),
       render: (_: unknown, record: DatasetGroup) => {
         const statuses = [...new Set(record.datasets.map(d => d.status))]
         if (statuses.length === 0) return <Badge status="default" text="없음" />
@@ -202,13 +228,15 @@ export default function DatasetListPage() {
       title: '등록일',
       dataIndex: 'created_at',
       key: 'created_at',
-      width: 120,
+      width: groupColumnWidths.created_at,
+      onHeaderCell: buildGroupHeaderCellProps('created_at'),
       render: (v: string) => dayjs(v).format('YYYY-MM-DD'),
     },
     {
       title: '',
       key: 'action',
-      width: 180,
+      width: groupColumnWidths.action,
+      onHeaderCell: buildGroupHeaderCellProps('action'),
       render: (_: unknown, record: DatasetGroup) => (
         <Space>
           <Button
@@ -297,10 +325,13 @@ export default function DatasetListPage() {
         />
       )}
 
-      {/* 테이블 */}
+      {/* 테이블 — 컬럼 너비는 헤더 우측 경계 드래그로 조정 가능,
+          좁은 창에서는 가로 스크롤로 대응(그룹명 컬럼이 쪼개지는 문제 방지). */}
       <Table
         dataSource={data?.items ?? []}
         columns={columns}
+        components={resizableTableComponents}
+        scroll={{ x: 'max-content' }}
         rowKey="id"
         loading={isLoading}
         pagination={{
