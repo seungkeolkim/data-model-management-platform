@@ -16,13 +16,11 @@ from app.schemas.dataset import (
     DatasetResponse,
     DatasetUpdate,
     DatasetValidateRequest,
-    EdaStatsResponse,
     FormatValidateResponse,
     LineageGraphResponse,
     LineageNodeResponse,
     LineageEdgeResponse,
     MessageResponse,
-    SampleListResponse,
 )
 from app.services.dataset_service import DatasetGroupService
 
@@ -154,7 +152,9 @@ async def delete_dataset(
 # ─────────────────────────────────────────────────────────────────
 
 
-@router.get("/{dataset_id}/samples", response_model=SampleListResponse)
+# detection / classification 응답 스키마가 달라 response_model을 쓰지 않고
+# dict를 그대로 돌려준다. 프론트엔드는 group.annotation_format으로 타입을 분기한다.
+@router.get("/{dataset_id}/samples")
 async def get_dataset_samples(
     dataset_id: str,
     page: int = Query(default=1, ge=1),
@@ -164,27 +164,46 @@ async def get_dataset_samples(
     """
     데이터셋 이미지 + annotation 목록 조회 (페이지네이션).
     이미지 URL은 nginx static 서빙 경로로 반환된다.
+
+    annotation_format에 따라 detection / classification 응답 구조가 달라진다.
+    - detection: SampleListResponse (bbox 포함)
+    - classification(CLS_MANIFEST): ClassificationSampleListResponse (head별 label 포함)
     """
     svc = DatasetGroupService(db)
     dataset = await svc.get_dataset(dataset_id)
     if not dataset:
         raise HTTPException(status_code=404, detail="Dataset not found")
+
+    annotation_format = dataset.annotation_format or (
+        dataset.group.annotation_format if dataset.group else None
+    )
+    if annotation_format == "CLS_MANIFEST":
+        return svc.get_classification_sample_list(dataset, page=page, page_size=page_size)
     return svc.get_sample_list(dataset, page=page, page_size=page_size)
 
 
-@router.get("/{dataset_id}/eda", response_model=EdaStatsResponse)
+@router.get("/{dataset_id}/eda")
 async def get_dataset_eda(
     dataset_id: str,
     db: AsyncSession = Depends(get_db),
 ):
     """
     데이터셋 EDA 통계 조회.
-    클래스 분포, bbox 크기 분포, 이미지 해상도 범위 등 자동 분석 결과.
+
+    - detection: 클래스 분포, bbox 크기 분포, 이미지 해상도 범위
+    - classification(CLS_MANIFEST): head별 class 분포, head 쌍 co-occurrence,
+      multi-label head의 positive ratio, 이미지 해상도 범위
     """
     svc = DatasetGroupService(db)
     dataset = await svc.get_dataset(dataset_id)
     if not dataset:
         raise HTTPException(status_code=404, detail="Dataset not found")
+
+    annotation_format = dataset.annotation_format or (
+        dataset.group.annotation_format if dataset.group else None
+    )
+    if annotation_format == "CLS_MANIFEST":
+        return svc.get_classification_eda_stats(dataset)
     return svc.get_eda_stats(dataset)
 
 

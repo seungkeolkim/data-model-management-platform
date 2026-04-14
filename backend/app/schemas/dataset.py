@@ -484,3 +484,96 @@ class EdaStatsResponse(BaseModel):
     image_width_max: int | None = None
     image_height_min: int | None = None
     image_height_max: int | None = None
+
+
+# =============================================================================
+# Classification 전용 뷰어/EDA 스키마
+# =============================================================================
+# detection 스키마와 구조 자체가 달라(이미지당 bbox 목록 대신 이미지당 head별
+# class 라벨 리스트) 별도 응답 모델로 분리. 라우터는 annotation_format을 보고
+# 둘 중 하나를 반환한다(FastAPI response_model은 제거하고 dict로 직렬화).
+
+
+class ClassificationHeadInfo(BaseModel):
+    """샘플 뷰어/EDA에서 공통으로 쓰는 head 요약 (name + multi_label + classes)."""
+    name: str
+    multi_label: bool
+    classes: list[str]
+
+
+class ClassificationSampleImageItem(BaseModel):
+    """Classification 샘플 뷰어용 이미지 1장 정보.
+
+    detection과 달리 bbox/area가 없는 대신 head별 class 라벨을 반환한다.
+    file_name은 원본 파일명(표시용), image_url은 nginx가 서빙하는 sha 기반 경로.
+    """
+    sha: str
+    file_name: str                # original_filename (표시용)
+    image_url: str
+    width: int | None = None
+    height: int | None = None
+    labels: dict[str, list[str]]  # head_name → [class_name, ...]
+
+
+class ClassificationSampleListResponse(BaseModel):
+    """Classification 샘플 뷰어 응답 (페이지네이션)."""
+    items: list[ClassificationSampleImageItem]
+    total: int
+    page: int
+    page_size: int
+    heads: list[ClassificationHeadInfo] = []
+
+
+class ClassificationHeadClassDistributionItem(BaseModel):
+    """head 내 class별 이미지 수 (positive count 기준)."""
+    class_name: str
+    image_count: int
+
+
+class ClassificationHeadDistribution(BaseModel):
+    """head 1개의 class 분포.
+
+    single-label head는 class별 image_count 합이 labeled_image_count와 같다.
+    multi-label head는 한 이미지가 여러 class에 속할 수 있어 합이 더 클 수 있다.
+    """
+    head_name: str
+    multi_label: bool
+    labeled_image_count: int              # 이 head에 라벨이 하나라도 있는 이미지 수
+    unlabeled_image_count: int            # 이 head 라벨이 비어있는 이미지 수
+    classes: list[ClassificationHeadClassDistributionItem]
+
+
+class ClassificationCooccurrencePair(BaseModel):
+    """head_a × head_b 동시발생 행렬.
+
+    joint_counts[i][j] = classes_a[i] 와 classes_b[j] 를 동시에 갖는 이미지 수.
+    marginals a_counts / b_counts 는 각 class의 positive 총 count (정규화용).
+    """
+    head_a: str
+    head_b: str
+    classes_a: list[str]
+    classes_b: list[str]
+    a_counts: list[int]
+    b_counts: list[int]
+    joint_counts: list[list[int]]
+
+
+class ClassificationPositiveRatioItem(BaseModel):
+    """multi-label head의 class별 positive 비율 (class imbalance 지표)."""
+    head_name: str
+    class_name: str
+    positive_count: int
+    negative_count: int
+    positive_ratio: float                 # positive / (positive + negative)
+
+
+class ClassificationEdaResponse(BaseModel):
+    """Classification 전용 EDA 응답."""
+    total_images: int
+    image_width_min: int | None = None
+    image_width_max: int | None = None
+    image_height_min: int | None = None
+    image_height_max: int | None = None
+    per_head_distribution: list[ClassificationHeadDistribution] = []
+    head_cooccurrence: list[ClassificationCooccurrencePair] = []
+    multi_label_positive_ratio: list[ClassificationPositiveRatioItem] = []

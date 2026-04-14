@@ -74,4 +74,10 @@ export interface DatasetKindDefinition {
     group: DatasetGroup,
     ctx: DatasetListCellContext,
   ) => ReactNode
+  /** 데이터셋 상세 페이지의 샘플 뷰어 탭. kind별로 overlay 유무 등 렌더 규칙이 다르다. */
+  renderSampleViewer: (datasetId: string) => ReactNode
+  /** EDA 탭. kind별 지표 구성이 달라 definition에 위임. */
+  renderEdaTab: (datasetId: string) => ReactNode
+  /** Lineage 탭. 현재 classification은 placeholder. */
+  renderLineageTab: (datasetId: string) => ReactNode
 }

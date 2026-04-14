@@ -17,6 +17,9 @@ import type {
 } from '../../types/dataset'
 import { isDetectionClassInfo } from '../../types/dataset'
 import type { DatasetKindDefinition, DatasetListCellContext } from '../types'
+import SampleViewerTab from '../../components/dataset-viewer/SampleViewerTab'
+import EdaTab from '../../components/dataset-viewer/EdaTab'
+import LineageTab from '../../components/dataset-viewer/LineageTab'
 
 const { Text } = Typography
 
@@ -211,4 +214,7 @@ export const detectionDefinition: DatasetKindDefinition = {
   renderClassInfoCell,
   renderFormatCell,
   renderMetaFileAction,
+  renderSampleViewer: (datasetId) => <SampleViewerTab datasetId={datasetId} />,
+  renderEdaTab: (datasetId) => <EdaTab datasetId={datasetId} />,
+  renderLineageTab: (datasetId) => <LineageTab datasetId={datasetId} />,
 }

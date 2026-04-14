@@ -20,6 +20,8 @@ import type {
   SampleListResponse,
   EdaStatsResponse,
   LineageGraphResponse,
+  ClassificationSampleListResponse,
+  ClassificationEdaResponse,
 } from '../types/dataset'
 
 // Dataset Groups
@@ -89,6 +91,14 @@ export const datasetsApi = {
 
   eda: (datasetId: string) =>
     api.get<EdaStatsResponse>(`/datasets/${datasetId}/eda`),
+
+  // Classification 전용 응답. 동일 엔드포인트지만 annotation_format=CLS_MANIFEST일 때
+  // 백엔드가 다른 shape을 반환하므로 호출자가 타입을 알고 나눠 쓴다.
+  classificationSamples: (datasetId: string, params?: { page?: number; page_size?: number }) =>
+    api.get<ClassificationSampleListResponse>(`/datasets/${datasetId}/samples`, { params }),
+
+  classificationEda: (datasetId: string) =>
+    api.get<ClassificationEdaResponse>(`/datasets/${datasetId}/eda`),
 
   lineage: (datasetId: string) =>
     api.get<LineageGraphResponse>(`/datasets/${datasetId}/lineage`),

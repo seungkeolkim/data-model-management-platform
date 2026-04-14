@@ -33,10 +33,8 @@ import dayjs from 'dayjs'
 import { datasetsApi, datasetGroupsApi } from '../api/dataset'
 import { pipelinesApi } from '../api/pipeline'
 import type { PipelineExecutionResponse } from '../types/pipeline'
-import SampleViewerTab from '../components/dataset-viewer/SampleViewerTab'
-import EdaTab from '../components/dataset-viewer/EdaTab'
-import LineageTab from '../components/dataset-viewer/LineageTab'
 import ExecutionDetailDrawer from '../components/pipeline/ExecutionDetailDrawer'
+import { resolveDatasetKind } from '../dataset-display-sdk/registry'
 
 const { Title, Text } = Typography
 
@@ -117,6 +115,8 @@ export default function DatasetViewerPage() {
   }
 
   const annotationFormat = dataset.annotation_format || group.annotation_format
+  // kind(detection/classification)에 따라 샘플 뷰어/EDA/Lineage 탭 렌더러를 선택
+  const kindDefinition = resolveDatasetKind(group)
 
   return (
     <div>
@@ -185,7 +185,7 @@ export default function DatasetViewerPage() {
               <span><EyeOutlined /> 샘플 뷰어</span>
             ),
             children: dataset.status === 'READY'
-              ? <SampleViewerTab datasetId={datasetId!} />
+              ? kindDefinition.renderSampleViewer(datasetId!)
               : <Alert type="info" message={`데이터셋 상태가 ${dataset.status}입니다. READY 상태에서만 샘플을 조회할 수 있습니다.`} showIcon style={{ marginTop: 16 }} />,
           },
           {
@@ -194,7 +194,7 @@ export default function DatasetViewerPage() {
               <span><BarChartOutlined /> EDA</span>
             ),
             children: dataset.status === 'READY'
-              ? <EdaTab datasetId={datasetId!} />
+              ? kindDefinition.renderEdaTab(datasetId!)
               : <Alert type="info" message={`데이터셋 상태가 ${dataset.status}입니다. READY 상태에서만 EDA를 조회할 수 있습니다.`} showIcon style={{ marginTop: 16 }} />,
           },
           {
@@ -202,7 +202,7 @@ export default function DatasetViewerPage() {
             label: (
               <span><ApartmentOutlined /> Lineage</span>
             ),
-            children: <LineageTab datasetId={datasetId!} />,
+            children: kindDefinition.renderLineageTab(datasetId!),
           },
         ]}
       />

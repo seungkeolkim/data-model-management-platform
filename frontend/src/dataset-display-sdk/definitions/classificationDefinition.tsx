@@ -10,8 +10,10 @@
  * 데이터 소스는 Dataset.metadata.class_info 만 사용한다 — 그룹의 head_schema는 SSOT지만
  * split별 실제 수록 class(중복 충돌 SKIP 등)는 dataset 개별 값이 정확하므로(사용자 결정).
  */
-import { Button, Popover, Space, Tag, Tooltip, Typography } from 'antd'
+import { Button, Empty, Popover, Space, Tag, Tooltip, Typography } from 'antd'
 import { FileTextOutlined, InfoCircleOutlined } from '@ant-design/icons'
+import ClassificationSampleViewerTab from '../../components/dataset-viewer/classification/ClassificationSampleViewerTab'
+import ClassificationEdaTab from '../../components/dataset-viewer/classification/ClassificationEdaTab'
 import type {
   DatasetGroup,
   DatasetSummary,
@@ -165,4 +167,13 @@ export const classificationDefinition: DatasetKindDefinition = {
   renderClassInfoCell,
   renderFormatCell,
   renderMetaFileAction,
+  renderSampleViewer: (datasetId) => <ClassificationSampleViewerTab datasetId={datasetId} />,
+  renderEdaTab: (datasetId) => <ClassificationEdaTab datasetId={datasetId} />,
+  renderLineageTab: (_datasetId) => (
+    // Classification 파이프라인/데이터 변형은 아직 미구현 — 변형이 생기면 이 자리에 LineageTab 연결.
+    <Empty
+      description="Classification 데이터 변형 구현 후 제공됩니다."
+      style={{ marginTop: 80 }}
+    />
+  ),
 }
