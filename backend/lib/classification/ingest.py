@@ -61,22 +61,63 @@ class ClassificationHeadInput:
 
 
 @dataclass
+class ImageOccurrence:
+    """특정 SHA 이미지가 어느 (head, class) 폴더의 어떤 파일로 나타났는지 기록.
+
+    파일명이 서로 다른 두 파일이 내용상 같아(SHA 동일) 중복으로 검출될 수 있으므로,
+    문제 상황을 사람이 재현·추적할 수 있도록 원본 경로/파일명 쌍을 모두 보존한다.
+    """
+    head_name: str
+    class_name: str
+    original_filename: str
+    source_abs_path: str
+
+
+@dataclass
 class DuplicateConflict:
-    """single-label head에서 이미지가 여러 class에 걸쳐 있는 경우."""
+    """single-label head에서 이미지가 여러 class에 걸쳐 있는 경우.
+
+    occurrences는 '이 head에서' 이 sha가 등장한 모든 (class, 파일) 목록.
+    파일명이 양쪽에서 다를 수 있으므로 모두 노출한다.
+    """
     sha: str
     head_name: str
     conflicting_classes: list[str]
-    # 원본 파일명 중 하나(사용자 메시지용)
-    sample_original_filename: str
+    occurrences: list[ImageOccurrence]
+
+    @property
+    def sample_original_filename(self) -> str:
+        """이전 API 호환용 — occurrences 중 첫 번째 파일명."""
+        if self.occurrences:
+            return self.occurrences[0].original_filename
+        return ""
+
+
+@dataclass
+class IntraClassDuplicate:
+    """같은 (head, class) 폴더 안에 SHA가 동일한 이미지가 2개 이상 존재하는 경우.
+
+    첫 번째 파일만 pool에 저장되고 나머지 파일명은 silently 병합되므로,
+    사용자가 원본 폴더 상태를 점검할 수 있도록 경고로 수집한다.
+    """
+    sha: str
+    head_name: str
+    class_name: str
+    filenames: list[str]               # 발견된 순서대로의 원본 파일명 (2개 이상)
+    source_abs_paths: list[str]
 
 
 class DuplicateConflictError(Exception):
     """dup_policy=FAIL 상태에서 중복 이미지가 감지됨."""
 
     def __init__(self, conflict: DuplicateConflict) -> None:
+        occurrences_text = ", ".join(
+            f"{occ.class_name}/{occ.original_filename}"
+            for occ in conflict.occurrences
+        )
         super().__init__(
-            f"head '{conflict.head_name}'에서 이미지 '{conflict.sample_original_filename}'가 "
-            f"여러 class({conflict.conflicting_classes})에 동시에 포함되어 있습니다."
+            f"head '{conflict.head_name}'에서 동일 이미지(sha={conflict.sha[:12]}...)가 "
+            f"여러 class에 동시에 존재합니다: {occurrences_text}"
         )
         self.conflict = conflict
 
@@ -89,6 +130,7 @@ class ClassificationIngestResult:
     manifest_relpath: str  # "manifest.jsonl"
     head_schema_relpath: str  # "head_schema.json"
     skipped_conflicts: list[DuplicateConflict] = field(default_factory=list)
+    intra_class_duplicates: list[IntraClassDuplicate] = field(default_factory=list)
 
 
 def _compute_sha1(image_path: Path, chunk_size: int = 1024 * 1024) -> str:
@@ -164,13 +206,14 @@ def ingest_classification(
     images_dir = dest_root / "images"
     images_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1차 패스: 이미지별 SHA-1 계산 + head별 class 라벨 누적.
+    # 1차 패스: 이미지별 SHA-1 계산 + head별 class별 등장 기록.
     # image_records[sha] = {
-    #   "original_filename": "...",
     #   "suffix": ".jpg",
-    #   "source_abs_path": Path,
-    #   "labels": {head_name: {class_name, ...}, ...}
+    #   "source_abs_path": Path,          # pool에 복사할 대표 파일 (첫 등장)
+    #   "original_filename": "...",       # 대표 파일의 원본 이름 (manifest용)
+    #   "occurrences": [ImageOccurrence, ...],  # 해당 sha가 등장한 모든 (head, class, 파일)
     # }
+    # SHA가 같은 파일은 파일명이 달라도 내용이 같으므로, 어느 쪽을 대표로 쓸지는 첫 등장 기준.
     image_records: dict[str, dict] = {}
 
     for head in heads:
@@ -178,20 +221,46 @@ def ingest_classification(
             class_dir = Path(head.source_class_paths[class_index])
             for image_path in _iter_images_in_class_dir(class_dir, extensions):
                 sha = _compute_sha1(image_path)
+                occurrence = ImageOccurrence(
+                    head_name=head.name,
+                    class_name=class_name,
+                    original_filename=image_path.name,
+                    source_abs_path=str(image_path),
+                )
                 record = image_records.get(sha)
                 if record is None:
                     record = {
                         "original_filename": image_path.name,
                         "suffix": image_path.suffix.lower(),
                         "source_abs_path": image_path,
-                        "labels": {},
+                        "occurrences": [occurrence],
                     }
                     image_records[sha] = record
+                else:
+                    record["occurrences"].append(occurrence)
 
-                head_labels = record["labels"].setdefault(head.name, set())
-                head_labels.add(class_name)
+    # 2차 패스 (a): 같은 (head, class) 폴더 안에서 SHA가 중복으로 나타난 건 경고로 수집.
+    # pool에는 대표 파일 하나만 복사되고 나머지 파일명은 병합되므로 사용자에게 알린다.
+    intra_class_duplicates: list[IntraClassDuplicate] = []
+    for sha, record in image_records.items():
+        # (head, class) → 등장한 파일명 리스트
+        per_bucket: dict[tuple[str, str], list[ImageOccurrence]] = {}
+        for occ in record["occurrences"]:
+            per_bucket.setdefault((occ.head_name, occ.class_name), []).append(occ)
+        for (head_name, class_name), occs in per_bucket.items():
+            if len(occs) < 2:
+                continue
+            intra_class_duplicates.append(
+                IntraClassDuplicate(
+                    sha=sha,
+                    head_name=head_name,
+                    class_name=class_name,
+                    filenames=[occ.original_filename for occ in occs],
+                    source_abs_paths=[occ.source_abs_path for occ in occs],
+                )
+            )
 
-    # 2차 패스: 중복 정책 적용 (single-label head에 한해 class 2개 이상이면 충돌).
+    # 2차 패스 (b): single-label head에서 class 2개 이상 걸친 이미지 → 충돌 처리.
     skipped_shas: set[str] = set()
     skipped_conflicts: list[DuplicateConflict] = []
 
@@ -199,16 +268,19 @@ def ingest_classification(
         for head in heads:
             if head.multi_label:
                 continue
-            label_set = record["labels"].get(head.name)
-            if label_set is None:
+            head_occurrences: list[ImageOccurrence] = [
+                occ for occ in record["occurrences"] if occ.head_name == head.name
+            ]
+            if not head_occurrences:
                 continue
-            if len(label_set) <= 1:
+            distinct_classes = sorted({occ.class_name for occ in head_occurrences})
+            if len(distinct_classes) <= 1:
                 continue
             conflict = DuplicateConflict(
                 sha=sha,
                 head_name=head.name,
-                conflicting_classes=sorted(label_set),
-                sample_original_filename=record["original_filename"],
+                conflicting_classes=distinct_classes,
+                occurrences=head_occurrences,
             )
             if duplicate_policy == "FAIL":
                 raise DuplicateConflictError(conflict)
@@ -238,14 +310,14 @@ def ingest_classification(
                 shutil.copy2(record["source_abs_path"], dest_image_path)
 
             # head별 라벨을 정렬된 list로 직렬화 (다중 label 포함, 항상 list).
-            labels_out: dict[str, list[str]] = {}
+            # occurrences에서 (head_name, class_name) distinct set을 뽑아 label로 변환.
+            labels_out: dict[str, list[str]] = {head.name: [] for head in heads}
+            head_class_seen: dict[str, set[str]] = {head.name: set() for head in heads}
+            for occ in record["occurrences"]:
+                if occ.head_name in head_class_seen:
+                    head_class_seen[occ.head_name].add(occ.class_name)
             for head in heads:
-                label_set = record["labels"].get(head.name)
-                if label_set is None:
-                    # 해당 head에 대해 이 이미지는 라벨이 없음 — 빈 list로 기록
-                    labels_out[head.name] = []
-                    continue
-                labels_sorted = sorted(label_set)
+                labels_sorted = sorted(head_class_seen[head.name])
                 labels_out[head.name] = labels_sorted
                 for class_name in labels_sorted:
                     class_idx = class_index_lookup[head.name][class_name]
@@ -273,4 +345,5 @@ def ingest_classification(
         manifest_relpath="manifest.jsonl",
         head_schema_relpath="head_schema.json",
         skipped_conflicts=skipped_conflicts,
+        intra_class_duplicates=intra_class_duplicates,
     )

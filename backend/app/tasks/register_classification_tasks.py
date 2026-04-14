@@ -30,6 +30,7 @@ from lib.classification import (
     ClassificationHeadInput,
     DuplicateConflict,
     DuplicateConflictError,
+    IntraClassDuplicate,
     ingest_classification,
 )
 
@@ -79,6 +80,19 @@ def _purge_dest_except_log(dest_abs: Path) -> None:
             logger.warning("dest 정리 중 일부 실패 (%s): %s", entry, str(purge_error))
 
 
+def _format_conflict_occurrences(conflict: DuplicateConflict) -> list[str]:
+    """충돌이 발생한 (class, 원본 파일명, 원본 절대경로) 쌍을 사람이 읽을 형태로 나열.
+
+    파일명이 양쪽에서 서로 다를 수 있으므로 모두 노출한다.
+    """
+    lines: list[str] = []
+    for occ in conflict.occurrences:
+        lines.append(
+            f"    class '{occ.class_name}' ← {occ.original_filename}  ({occ.source_abs_path})"
+        )
+    return lines
+
+
 def _format_duplicate_conflict_lines(
     conflict: DuplicateConflict,
     heads_payload: list[dict[str, Any]],
@@ -92,16 +106,19 @@ def _format_duplicate_conflict_lines(
         f"duplicate_policy: {duplicate_policy}",
         f"head_name: {conflict.head_name}",
         f"conflicting_classes: [{classes}]",
-        f"sample_original_filename: {conflict.sample_original_filename}",
         f"sha: {conflict.sha}",
         "",
         "원인:",
-        f"  head '{conflict.head_name}'은 single-label 설정인데 이미지 '{conflict.sample_original_filename}'"
-        f" (sha={conflict.sha[:12]}...)",
-        f"  이 {classes} 클래스 폴더 여러 곳에 동시에 존재합니다. 정책이 FAIL이라 ingest를 중단했습니다.",
+        f"  head '{conflict.head_name}'은 single-label 설정인데 내용이 동일한 이미지"
+        f"(sha={conflict.sha[:12]}...)가 여러 class 폴더에 존재합니다.",
+        "  동일한 바이트 내용이면 파일명이 달라도 같은 이미지로 판정됩니다.",
+        "  정책이 FAIL이라 ingest를 중단했습니다.",
+        "",
+        "동일 이미지가 발견된 위치 (class / 파일명 / 절대경로):",
+        *_format_conflict_occurrences(conflict),
         "",
         "조치 방법:",
-        "  1) 원본 폴더에서 중복 이미지를 한 쪽으로만 정리한 뒤 다시 등록하거나",
+        "  1) 위 경로의 중복 파일을 한 쪽으로만 정리한 뒤 다시 등록하거나",
         "  2) 등록 모달에서 중복 정책을 'SKIP(해당 이미지 스킵)'으로 바꿔 다시 시도하세요.",
         "     SKIP 모드는 충돌 이미지를 양쪽 모두에서 제외하고 진행합니다.",
         "",
@@ -116,21 +133,37 @@ def _format_duplicate_conflict_lines(
 
 def _format_skipped_conflict_lines(
     skipped_conflicts: list[DuplicateConflict],
+    intra_class_duplicates: list[IntraClassDuplicate],
 ) -> list[str]:
-    """SKIP 정책으로 제외된 이미지 상세 목록을 사람이 읽을 라인으로 변환."""
-    lines = [
-        f"result: READY_WITH_SKIPS (skipped={len(skipped_conflicts)})",
-        "",
-        "아래 이미지들은 여러 class에 중복 존재하여 양쪽 모두에서 제외되었습니다.",
-        "(duplicate_policy=SKIP)",
+    """SKIP 정책으로 제외된 이미지 + 같은 class 내 중복 경고를 한 로그로 합쳐 작성."""
+    lines: list[str] = [
+        f"result: READY_WITH_SKIPS (skipped={len(skipped_conflicts)}, "
+        f"intra_class_duplicates={len(intra_class_duplicates)})",
         "",
     ]
-    for conflict in skipped_conflicts:
-        classes = ", ".join(conflict.conflicting_classes)
+    if skipped_conflicts:
+        lines.append("── 여러 class에 동시에 존재하여 양쪽에서 제외된 이미지 (duplicate_policy=SKIP) ──")
+        lines.append("")
+        for conflict in skipped_conflicts:
+            classes = ", ".join(conflict.conflicting_classes)
+            lines.append(
+                f"- head='{conflict.head_name}' classes=[{classes}] sha={conflict.sha[:12]}..."
+            )
+            lines.extend(_format_conflict_occurrences(conflict))
+            lines.append("")
+    if intra_class_duplicates:
         lines.append(
-            f"- head='{conflict.head_name}' file='{conflict.sample_original_filename}' "
-            f"classes=[{classes}] sha={conflict.sha[:12]}..."
+            "── 같은 (head, class) 폴더 내 동일 이미지 경고 — pool에는 첫 파일 1개만 저장됨 ──"
         )
+        lines.append("")
+        for dup in intra_class_duplicates:
+            lines.append(
+                f"- head='{dup.head_name}' class='{dup.class_name}' sha={dup.sha[:12]}... "
+                f"발견 {len(dup.filenames)}개:"
+            )
+            for filename, abs_path in zip(dup.filenames, dup.source_abs_paths):
+                lines.append(f"    {filename}  ({abs_path})")
+            lines.append("")
     return lines
 
 
@@ -232,14 +265,32 @@ def _execute_classification_register(
             })
 
         # SKIP 정책으로 제외된 이미지 상세 — metadata와 process.log 양쪽에 보존.
+        # 파일명이 양쪽에서 다를 수 있으므로 occurrences 전체를 기록한다.
         skipped_detail: list[dict[str, Any]] = [
             {
                 "sha": conflict.sha,
                 "head_name": conflict.head_name,
                 "conflicting_classes": conflict.conflicting_classes,
-                "sample_original_filename": conflict.sample_original_filename,
+                "occurrences": [
+                    {
+                        "class_name": occ.class_name,
+                        "original_filename": occ.original_filename,
+                        "source_abs_path": occ.source_abs_path,
+                    }
+                    for occ in conflict.occurrences
+                ],
             }
             for conflict in result.skipped_conflicts
+        ]
+        intra_class_detail: list[dict[str, Any]] = [
+            {
+                "sha": dup.sha,
+                "head_name": dup.head_name,
+                "class_name": dup.class_name,
+                "filenames": dup.filenames,
+                "source_abs_paths": dup.source_abs_paths,
+            }
+            for dup in result.intra_class_duplicates
         ]
 
         dataset.status = "READY"
@@ -254,26 +305,34 @@ def _execute_classification_register(
                 "heads": class_info_heads,
                 "skipped_conflict_count": len(result.skipped_conflicts),
                 "skipped_conflicts": skipped_detail,
+                "intra_class_duplicate_count": len(result.intra_class_duplicates),
+                "intra_class_duplicates": intra_class_detail,
             }
         }
         db.commit()
 
-        # 스킵이 있었던 경우 process.log에 어떤 파일이 양쪽에 있어서 지워졌는지 남긴다.
-        if result.skipped_conflicts:
+        # 스킵 또는 같은 class 내 중복이 있으면 process.log에 상세 목록을 남긴다.
+        if result.skipped_conflicts or result.intra_class_duplicates:
             _write_process_log(
                 dest_abs,
-                _format_skipped_conflict_lines(result.skipped_conflicts),
+                _format_skipped_conflict_lines(
+                    result.skipped_conflicts, result.intra_class_duplicates,
+                ),
             )
 
         logger.info(
-            "Classification 등록 완료: dataset_id=%s, images=%d, skipped=%d",
-            dataset_id, result.image_count, len(result.skipped_conflicts),
+            "Classification 등록 완료: dataset_id=%s, images=%d, skipped=%d, intra_dup=%d",
+            dataset_id,
+            result.image_count,
+            len(result.skipped_conflicts),
+            len(result.intra_class_duplicates),
         )
         return {
             "status": "READY",
             "dataset_id": dataset_id,
             "image_count": result.image_count,
             "skipped_conflict_count": len(result.skipped_conflicts),
+            "intra_class_duplicate_count": len(result.intra_class_duplicates),
         }
 
     except DuplicateConflictError as conflict_error:
@@ -301,8 +360,15 @@ def _execute_classification_register(
                     "kind": "DUPLICATE_IMAGE_CONFLICT",
                     "head_name": conflict_error.conflict.head_name,
                     "conflicting_classes": conflict_error.conflict.conflicting_classes,
-                    "sample_original_filename": conflict_error.conflict.sample_original_filename,
                     "sha": conflict_error.conflict.sha,
+                    "occurrences": [
+                        {
+                            "class_name": occ.class_name,
+                            "original_filename": occ.original_filename,
+                            "source_abs_path": occ.source_abs_path,
+                        }
+                        for occ in conflict_error.conflict.occurrences
+                    ],
                     "process_log_relpath": (
                         PROCESS_LOG_FILENAME if log_path is not None else None
                     ),

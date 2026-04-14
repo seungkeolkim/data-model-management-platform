@@ -14,6 +14,8 @@ from lib.classification.ingest import (
     ClassificationIngestResult,
     DuplicateConflict,
     DuplicateConflictError,
+    ImageOccurrence,
+    IntraClassDuplicate,
     ingest_classification,
 )
 
@@ -22,5 +24,7 @@ __all__ = [
     "ClassificationIngestResult",
     "DuplicateConflict",
     "DuplicateConflictError",
+    "ImageOccurrence",
+    "IntraClassDuplicate",
     "ingest_classification",
 ]
