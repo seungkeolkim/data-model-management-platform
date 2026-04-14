@@ -174,7 +174,7 @@ images_dirname = images
 | `id` | UUID | PK |
 | `name` | String | 그룹명 (예: my_coco_2024) |
 | `dataset_type` | String | `RAW` \| `SOURCE` \| `PROCESSED` \| `FUSION` |
-| `annotation_format` | String | `COCO` \| `YOLO` \| `ATTR_JSON` \| `CLS_FOLDER` \| `CUSTOM` \| `NONE` |
+| `annotation_format` | String | `COCO` \| `YOLO` \| `ATTR_JSON` \| `CLS_MANIFEST` \| `CUSTOM` \| `NONE` |
 | `task_types` | JSONB | `["DETECTION", "SEGMENTATION", ...]` |
 | `modality` | String | `RGB` \| `THERMAL` \| `DEPTH` \| `MULTISPECTRAL` |
 | `description` | Text | 설명 |

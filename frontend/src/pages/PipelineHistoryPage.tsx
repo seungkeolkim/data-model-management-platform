@@ -18,7 +18,6 @@ import {
   ReloadOutlined,
   AimOutlined,
   AppstoreOutlined,
-  TagsOutlined,
   SearchOutlined,
   PictureOutlined,
 } from '@ant-design/icons'
@@ -66,11 +65,11 @@ const TASK_TYPE_OPTIONS: {
     ready: false,
   },
   {
-    key: 'ATTR_CLASSIFICATION',
-    label: 'Attribute Classification',
-    description: '속성 분류 데이터 변형',
-    icon: <TagsOutlined style={{ fontSize: 28 }} />,
-    color: '#fa8c16',
+    key: 'CLASSIFICATION',
+    label: 'Classification',
+    description: '이미지 분류 데이터 변형 (단일/다중 head 포함)',
+    icon: <PictureOutlined style={{ fontSize: 28 }} />,
+    color: '#13c2c2',
     ready: false,
   },
   {
@@ -79,14 +78,6 @@ const TASK_TYPE_OPTIONS: {
     description: '제로샷 학습용 데이터 변형',
     icon: <SearchOutlined style={{ fontSize: 28 }} />,
     color: '#722ed1',
-    ready: false,
-  },
-  {
-    key: 'CLASSIFICATION',
-    label: 'Classification',
-    description: '이미지 분류 데이터 변형',
-    icon: <PictureOutlined style={{ fontSize: 28 }} />,
-    color: '#13c2c2',
     ready: false,
   },
 ]

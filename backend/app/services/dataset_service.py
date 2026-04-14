@@ -19,8 +19,10 @@ from app.core.config import app_config, settings
 from app.core.storage import get_storage_client
 from app.models.all_models import Dataset, DatasetGroup
 from app.schemas.dataset import (
+    ClassificationHeadWarning,
     DatasetGroupCreate,
     DatasetGroupUpdate,
+    DatasetRegisterClassificationRequest,
     DatasetRegisterRequest,
     DatasetUpdate,
     FormatValidateRequest,
@@ -179,6 +181,174 @@ class DatasetGroupService:
                 storage_uri=storage_uri,
                 error=str(storage_error),
             )
+
+    # -------------------------------------------------------------------------
+    # Classification 등록
+    # -------------------------------------------------------------------------
+
+    async def register_classification_dataset(
+        self,
+        req: DatasetRegisterClassificationRequest,
+    ) -> tuple[DatasetGroup, Dataset, str | None, list[ClassificationHeadWarning]]:
+        """
+        Classification 전용 RAW 데이터셋 등록.
+
+        - source_root_dir은 LOCAL_UPLOAD_BASE 하위여야 하고 존재하는 디렉토리
+        - source_class_paths(각 head의 class 경로)는 존재 자체만 확인 (빈 dir 허용)
+        - 기존 그룹이면 head_schema 일관성 검증 후 경고/차단
+        - 신규 그룹이면 head_schema를 새로 기록, annotation_format=CLS_MANIFEST 고정
+        - Dataset 선생성(PROCESSING) + Celery 태스크 dispatch
+        """
+        from app.tasks.register_classification_tasks import (
+            register_classification_dataset as register_classification_task,
+        )
+
+        # ------------------------------------------------------------------
+        # 소스 경로 검증
+        # ------------------------------------------------------------------
+        logger.info(
+            "Classification 등록 요청",
+            root_dir=req.source_root_dir,
+            heads=[head.name for head in req.heads],
+            policy=req.duplicate_image_policy,
+        )
+        root_dir = self._validate_browse_path(req.source_root_dir, expect_dir=True)
+        # LOCAL_UPLOAD_BASE 하위인지 확인 (파일 브라우저 라우터와 동일한 정책)
+        upload_base = Path(settings.local_upload_base)
+        try:
+            root_dir.relative_to(upload_base)
+        except ValueError as exc:
+            raise ValueError(
+                f"허용된 업로드 루트({upload_base}) 하위 경로만 등록할 수 있습니다: {root_dir}"
+            ) from exc
+
+        # head별 class 경로 존재 검증 (빈 dir 허용)
+        for head in req.heads:
+            for class_path_str in head.source_class_paths:
+                class_path = Path(class_path_str)
+                if not class_path.exists():
+                    raise ValueError(
+                        f"class 경로가 존재하지 않습니다 (head={head.name}): {class_path_str}"
+                    )
+                if not class_path.is_dir():
+                    raise ValueError(
+                        f"class 경로가 디렉토리가 아닙니다 (head={head.name}): {class_path_str}"
+                    )
+
+        # ------------------------------------------------------------------
+        # 그룹 처리 + head_schema 일관성 검증
+        # ------------------------------------------------------------------
+        warnings: list[ClassificationHeadWarning] = []
+        new_head_schema = {
+            "heads": [
+                {
+                    "name": head.name,
+                    "multi_label": head.multi_label,
+                    "classes": list(head.classes),
+                }
+                for head in req.heads
+            ]
+        }
+
+        if req.group_id:
+            result = await self.db.execute(
+                select(DatasetGroup).where(DatasetGroup.id == req.group_id)
+            )
+            group = result.scalar_one_or_none()
+            if not group:
+                raise ValueError(f"DatasetGroup을 찾을 수 없습니다: {req.group_id}")
+            if not (group.task_types and "CLASSIFICATION" in group.task_types):
+                raise ValueError(
+                    "지정한 그룹은 CLASSIFICATION 용도가 아닙니다. 다른 그룹을 선택하세요."
+                )
+            existing_schema = group.head_schema or {"heads": []}
+            warnings = _diff_head_schema(existing_schema, new_head_schema)
+            merged_schema = _merge_head_schema(existing_schema, new_head_schema)
+            group.head_schema = merged_schema
+        else:
+            existing = await self.db.execute(
+                select(DatasetGroup).where(
+                    DatasetGroup.name == req.group_name,
+                    DatasetGroup.deleted_at.is_(None),
+                )
+            )
+            if existing.scalar_one_or_none():
+                raise ValueError(
+                    f"동일한 이름의 데이터셋 그룹이 이미 존재합니다: '{req.group_name}'\n"
+                    f"기존 그룹에 추가하려면 group_id를 지정하세요."
+                )
+            group = DatasetGroup(
+                id=str(uuid.uuid4()),
+                name=req.group_name,
+                dataset_type="RAW",
+                annotation_format="CLS_MANIFEST",
+                task_types=["CLASSIFICATION"],
+                modality=req.modality,
+                source_origin=req.source_origin,
+                description=req.description,
+                head_schema=new_head_schema,
+            )
+            self.db.add(group)
+            await self.db.flush()
+
+        # ------------------------------------------------------------------
+        # 버전·Dataset 선생성
+        # ------------------------------------------------------------------
+        version = await self._next_version(group.id, req.split)
+        dup = await self.db.execute(
+            select(Dataset).where(
+                Dataset.group_id == group.id,
+                Dataset.split == req.split.upper(),
+                Dataset.version == version,
+                Dataset.deleted_at.is_(None),
+            )
+        )
+        if dup.scalar_one_or_none():
+            raise ValueError(
+                f"동일한 split/version 데이터셋이 이미 존재합니다: "
+                f"split={req.split}, version={version}"
+            )
+
+        storage_uri = self.storage.build_dataset_uri(
+            "RAW", group.name, req.split, version,
+        )
+        dataset = Dataset(
+            id=str(uuid.uuid4()),
+            group_id=group.id,
+            split=req.split.upper(),
+            version=version,
+            annotation_format="CLS_MANIFEST",
+            storage_uri=storage_uri,
+            status="PROCESSING",
+        )
+        self.db.add(dataset)
+        await self.db.flush()
+
+        # ------------------------------------------------------------------
+        # Celery 태스크 dispatch
+        # ------------------------------------------------------------------
+        heads_payload = [
+            {
+                "name": head.name,
+                "multi_label": head.multi_label,
+                "classes": list(head.classes),
+                "source_class_paths": list(head.source_class_paths),
+            }
+            for head in req.heads
+        ]
+        async_result = register_classification_task.delay(
+            dataset_id=dataset.id,
+            storage_uri=storage_uri,
+            heads_payload=heads_payload,
+            duplicate_policy=req.duplicate_image_policy,
+        )
+        logger.info(
+            "Classification 등록 태스크 dispatch 완료",
+            dataset_id=dataset.id,
+            celery_task_id=async_result.id,
+        )
+
+        return group, dataset, async_result.id, warnings
 
     # -------------------------------------------------------------------------
     # GUI 등록 (파일 브라우저 방식)
@@ -1148,3 +1318,106 @@ def _compute_bbox_area_distribution(
         if count > 0:
             distribution.append({"range_label": label, "count": count})
     return distribution
+
+
+# =============================================================================
+# Classification head_schema 일관성 헬퍼
+# =============================================================================
+# 규칙:
+# - 기존 head의 class 순서 변경/삭제: 금지 (학습 output index 계약 파괴)
+# - 신규 head 추가: warning 후 허용
+# - 기존 head에 신규 class append: warning 후 허용 (사용자 책임)
+# - multi_label 값 변경: 금지 (라벨 해석 자체가 달라짐)
+
+def _diff_head_schema(
+    existing: dict,
+    incoming: dict,
+) -> list["ClassificationHeadWarning"]:
+    """기존 group head_schema 대비 incoming의 차이를 경고로 수집.
+    차단 조건은 ValueError로 즉시 raise."""
+    from app.schemas.dataset import ClassificationHeadWarning
+
+    existing_heads = {h["name"]: h for h in (existing.get("heads") or [])}
+    warnings: list[ClassificationHeadWarning] = []
+
+    for incoming_head in incoming.get("heads") or []:
+        head_name = incoming_head["name"]
+        existing_head = existing_heads.get(head_name)
+        if existing_head is None:
+            warnings.append(ClassificationHeadWarning(
+                head_name=head_name,
+                kind="NEW_HEAD",
+                detail=(
+                    f"기존 그룹에 없던 head '{head_name}'이(가) 추가됩니다. "
+                    "학습 시 head 정렬을 확인하세요."
+                ),
+            ))
+            continue
+
+        if bool(existing_head.get("multi_label")) != bool(incoming_head.get("multi_label")):
+            raise ValueError(
+                f"head '{head_name}'의 multi_label 값이 기존과 다릅니다. "
+                "라벨 해석이 변해 학습 호환성이 깨지므로 변경할 수 없습니다."
+            )
+
+        existing_classes: list[str] = list(existing_head.get("classes") or [])
+        incoming_classes: list[str] = list(incoming_head.get("classes") or [])
+
+        # 기존 prefix가 그대로 보존되어야 함 (순서 변경/삭제 금지).
+        if incoming_classes[: len(existing_classes)] != existing_classes:
+            raise ValueError(
+                f"head '{head_name}'의 기존 class 순서가 변경되거나 삭제되었습니다. "
+                f"학습 output index 계약이 깨집니다. "
+                f"(기존={existing_classes}, 요청={incoming_classes})"
+            )
+
+        appended_classes = incoming_classes[len(existing_classes):]
+        if appended_classes:
+            warnings.append(ClassificationHeadWarning(
+                head_name=head_name,
+                kind="NEW_CLASS",
+                detail=(
+                    f"head '{head_name}'에 새 class가 추가됩니다: {appended_classes}. "
+                    "기존 모델은 새 class를 예측할 수 없습니다."
+                ),
+            ))
+
+    return warnings
+
+
+def _merge_head_schema(existing: dict, incoming: dict) -> dict:
+    """기존 head_schema에 incoming의 신규 head·신규 class를 병합한다.
+    기존 head의 class 순서는 보존되고, 이 함수 호출 전에 _diff_head_schema로
+    규칙 위반을 이미 검증했다고 가정한다."""
+    existing_heads = {h["name"]: dict(h) for h in (existing.get("heads") or [])}
+    merged_heads_ordered: list[dict] = []
+    seen: set[str] = set()
+
+    # 기존 순서 유지하면서 class append만 반영
+    for existing_head in existing.get("heads") or []:
+        head_name = existing_head["name"]
+        incoming_head = next(
+            (h for h in incoming.get("heads") or [] if h["name"] == head_name),
+            None,
+        )
+        if incoming_head is None:
+            merged_heads_ordered.append(dict(existing_head))
+        else:
+            merged_heads_ordered.append({
+                "name": head_name,
+                "multi_label": bool(existing_head.get("multi_label")),
+                "classes": list(incoming_head.get("classes") or []),
+            })
+        seen.add(head_name)
+
+    # incoming 신규 head는 뒤에 append
+    for incoming_head in incoming.get("heads") or []:
+        if incoming_head["name"] in seen:
+            continue
+        merged_heads_ordered.append({
+            "name": incoming_head["name"],
+            "multi_label": bool(incoming_head.get("multi_label")),
+            "classes": list(incoming_head.get("classes") or []),
+        })
+
+    return {"heads": merged_heads_ordered}

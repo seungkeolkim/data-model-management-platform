@@ -8,12 +8,15 @@ import type {
   DatasetGroupUpdate,
   DatasetGroupListResponse,
   DatasetRegisterRequest,
+  DatasetRegisterClassificationRequest,
+  DatasetRegisterClassificationResponse,
   DatasetValidateRequest,
   FormatValidateRequest,
   FormatValidateResponse,
   Dataset,
   FileBrowserListResponse,
   FileBrowserRootsResponse,
+  ClassificationScanResponse,
   SampleListResponse,
   EdaStatsResponse,
   LineageGraphResponse,
@@ -43,6 +46,12 @@ export const datasetGroupsApi = {
 
   register: (data: DatasetRegisterRequest) =>
     api.post<DatasetGroup>('/dataset-groups/register', data),
+
+  registerClassification: (data: DatasetRegisterClassificationRequest) =>
+    api.post<DatasetRegisterClassificationResponse>(
+      '/dataset-groups/register-classification',
+      data,
+    ),
 
   validateFormat: (data: FormatValidateRequest) =>
     api.post<FormatValidateResponse>('/dataset-groups/validate-format', data),
@@ -92,6 +101,12 @@ export const fileBrowserApi = {
 
   list: (params?: { path?: string; mode?: 'directory' | 'file' | 'all' }) =>
     api.get<FileBrowserListResponse>('/filebrowser/list', { params }),
+
+  // Classification 데이터셋 루트를 2레벨(<head>/<class>/)로 단순 스캔
+  classificationScan: (path: string) =>
+    api.get<ClassificationScanResponse>('/filebrowser/classification-scan', {
+      params: { path },
+    }),
 }
 
 // Health

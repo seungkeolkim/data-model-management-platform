@@ -53,11 +53,11 @@ class DatasetGroup(Base):
     )
     annotation_format: Mapped[str] = mapped_column(
         String(30), nullable=False, default="NONE",
-        comment="COCO | YOLO | ATTR_JSON | CLS_FOLDER | CUSTOM | NONE"
+        comment="COCO | YOLO | ATTR_JSON | CLS_MANIFEST | CUSTOM | NONE"
     )
     task_types: Mapped[dict | list | None] = mapped_column(
         JSONB, nullable=True,
-        comment='["DETECTION","SEGMENTATION","ATTR_CLASSIFICATION","ZERO_SHOT","CLASSIFICATION"]'
+        comment='["DETECTION","SEGMENTATION","CLASSIFICATION","ZERO_SHOT"] 중 1개 원소 리스트'
     )
     modality: Mapped[str] = mapped_column(
         String(30), nullable=False, default="RGB",
@@ -66,6 +66,14 @@ class DatasetGroup(Base):
     source_origin: Mapped[str | None] = mapped_column(String(500), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     extra: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # classification 전용: 그룹 단위 head/class 계약 (SSOT).
+    # 예시: {"heads":[{"name":"hardhat_wear","multi_label":false,
+    #                  "classes":["no_helmet","helmet"]}, ...]}
+    # detection 등 다른 task 그룹에서는 NULL.
+    head_schema: Mapped[dict | None] = mapped_column(
+        JSONB, nullable=True,
+        comment="Classification 전용. head별 name/multi_label/classes 순서. 학습 output index의 SSOT"
+    )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=False), nullable=False, default=_now, server_default=func.now()
     )

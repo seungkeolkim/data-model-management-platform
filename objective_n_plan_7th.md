@@ -1,9 +1,9 @@
 # 데이터 관리 & 학습 자동화 플랫폼 — 7차 설계서
 
-> **작업지시서 v7.0** | 파이프라인 노드 SDK 완성 직후 baseline
-> 기준일: 2026-04-13
+> **작업지시서 v7.0** | 파이프라인 노드 SDK + Classification 등록 완료 직후 baseline
+> 기준일: 2026-04-14 (Classification 등록 구현·테스트 완료 반영)
 > 이전 설계서: `docs_history/objective_n_plan_6th.md`
-> 통합 핸드오프: `docs_for_claude/014-node-sdk-complete-handoff.md`
+> 통합 핸드오프: `docs_for_claude/015-classification-registration-complete-handoff.md`
 > 노드 SDK 규약: `docs/pipeline-node-sdk-guide.md` (사람용 가이드)
 
 6차 설계서의 §7-1 최우선 액션(노드 SDK화 + 가이드)이 완료되어 baseline에 편입됐다. 7차는 **그 결과를 포함한 현재 스냅샷**과 **남은 Step 1 마무리 / Step 2 진입 준비**를 정리한다.
@@ -86,7 +86,58 @@
 - major = 수동(사용자 등록/실행), minor = automation 예약(미구현)
 - 동일 group 내 split 별로 독립 증가
 
-### 2-8. 노드 SDK 불변식 (절대 준수)
+### 2-8. Classification 등록 (구현 완료 · 2026-04-14)
+
+RAW Classification 데이터셋 등록을 Detection과 분리된 전용 흐름으로 구현. **end-to-end 테스트 완료**.
+
+**폴더 입력 규약 (사용자 준비)**
+- `<root>/<head>/<class>/<images>` 2레벨 고정. LOCAL_UPLOAD_BASE에 준비 후 GUI로 split별 1회 등록
+- `has_subdirs=true` (2레벨 초과) → **등록 차단**
+- 빈 class 폴더(image_count=0) 허용 — 정식 class로 간주
+- class 없는 head(classes=0) → warning (한 단계 아래를 루트로 잘못 선택한 경우)
+
+**디스크 레이아웃 (LOCAL_STORAGE_BASE 하위)**
+- 평면 `images/{sha1}.{원본확장자}` (샤딩 없음)
+- `manifest.jsonl` — 이미지 1장 = 1줄
+- `head_schema.json` — DB `DatasetGroup.head_schema` 복사본 (오프라인 학습용)
+- 실패 시 `process.log` 보존 (dest_root 자체는 남기고 자식만 정리)
+
+**Manifest 한 줄 스키마 (labels는 항상 list)**
+```json
+{"sha":"ab12...","filename":"images/ab12...jpg",
+ "original_filename":"img_0001.jpg",
+ "labels":{"hardhat_wear":["helmet"],"visibility":["seen"]}}
+```
+
+**DB 스키마 — 공유 테이블 + 확장 컬럼**
+- `DatasetGroup`/`Dataset` 공유. classification 전용 테이블 만들지 않음 (lineage/pipeline/solution FK 호환)
+- `DatasetGroup.head_schema JSONB` 신규 (migration 009, classification만 사용 — detection은 NULL):
+  ```json
+  {"heads":[{"name":"hardhat_wear","multi_label":false,"classes":["no_helmet","helmet"]}]}
+  ```
+- `AnnotationFormat` enum: **`CLS_MANIFEST` 신규, `CLS_FOLDER` 제거**
+- `Dataset.class_count` int는 **detection 전용**. classification은 NULL 유지
+- `Dataset.metadata.class_info`: classification에서는 head 배열 + `skipped_conflicts` + `intra_class_duplicates` 상세 저장
+
+**head_schema 일관성 (동일 그룹 신규 버전 등록 시)**
+- 기존 head의 classes **순서 변경/삭제 금지** (학습 index 계약 — `_diff_head_schema`에서 차단)
+- 기존 head `multi_label` 변경 금지
+- 신규 head 추가 → warning `NEW_HEAD` 후 허용
+- 기존 head에 classes append (prefix 보존) → warning `NEW_CLASS` 후 허용 (사용자 책임)
+
+**중복 이미지 정책 (SHA-1 기반 · 내용 동일하면 파일명 달라도 같은 이미지)**
+- single-label head에서 동일 SHA가 여러 class에 존재하면 충돌
+  - **FAIL (기본)**: `DuplicateConflictError` → 등록 중단, process.log에 양쪽 occurrence 전체 기록
+  - **SKIP**: 충돌 이미지를 **양쪽 모두에서 제외**하고 진행, process.log + metadata.class_info.skipped_conflicts에 상세
+- 같은 (head, class) 폴더 내 동일 SHA 중복 → `intra_class_duplicates` 경고 (pool에는 첫 파일만 저장, 나머지 파일명은 process.log에 보존)
+- `ImageOccurrence`: `(head_name, class_name, original_filename, source_abs_path)` — 파일명이 양쪽에서 달라도 추적 가능
+
+**실행 체계**
+- 엔드포인트: `POST /dataset-groups/register-classification` (202 + Celery dispatch)
+- Celery task: `app.tasks.register_classification_tasks.register_classification_dataset` (queue=default)
+- RAW 등록이므로 PipelineExecution 미연결
+
+### 2-9. 노드 SDK 불변식 (절대 준수)
 
 - NodeKind 추가는 **3군데 동시 갱신**: `NodeDataByKind` + `definitions/<kind>Definition.tsx` + `bootstrap.ts` + `registry.ts` expected 배열. 누락 시 런타임 assert로 부팅 실패 (의도된 감시)
 - React Flow `node.data` prop은 초기값만 — NodeComponent는 반드시 `useNodeData(nodeId)` 훅으로 store 구독
@@ -128,17 +179,19 @@
 
 ## 5. 남은 작업 (우선순위 순)
 
-014 핸드오프 §3과 동일. 중복을 피하기 위해 여기서는 요약만 둔다.
+015 핸드오프 §3과 동일. 중복을 피하기 위해 여기서는 요약만 둔다.
 
-1. **Classification 데이터 입력** — Detection 전용 해소
-2. **Automation 실구현** — 템플릿 + downstream 탐색 + minor 증가
-3. **미구현 manipulator 2종** — `change_compression` / `shuffle_image_ids`
-4. **버전 정책 운영 검증** — automation과 함께
-5. **Phase 3** — TrainingExecutor/GPUResourceManager 인터페이스, 알림 골격, GNB/Manipulator/시스템 상태 페이지, 전체 UX 정리
-6. **Step 2** 진입 — DockerTrainingExecutor, nvidia-smi 기반 GPUResourceManager, MLflow, Prometheus+DCGM, SMTP 알림
-7. **Step 3 이후** — S3StorageClient, KubernetesTrainingExecutor, Helm, Argo/Kubeflow, Volcano, KEDA, MinIO
-8. **Step 4** — Label Studio, Synthetic Data, Auto Labeling, Offline Testing, Auto Deploy, 데이터 자동 수집
-9. **Step 5** — Generative Model MLOps
+1. ~~Classification 데이터 입력~~ ✅ **완료 (2026-04-14)**
+2. **Display / UI 분화** [1순위] — 데이터셋 그룹 목록 필터·정렬 + 그룹/데이터셋 상세의 classification vs detection UI 분리
+3. **Automation 실구현** — 템플릿 + downstream 탐색 + minor 증가
+4. **Classification 파이프라인 확장** — classification 전용 manipulator (augment/filter) + pipeline executor가 CLS_MANIFEST 지원
+5. **미구현 manipulator 2종** — `change_compression` / `shuffle_image_ids` (detection용)
+6. **버전 정책 운영 검증** — automation과 함께
+7. **Phase 3** — TrainingExecutor/GPUResourceManager 인터페이스, 알림 골격, GNB/Manipulator/시스템 상태 페이지, 전체 UX 정리
+8. **Step 2** 진입 — DockerTrainingExecutor, nvidia-smi 기반 GPUResourceManager, MLflow, Prometheus+DCGM, SMTP 알림
+9. **Step 3 이후** — S3StorageClient, KubernetesTrainingExecutor, Helm, Argo/Kubeflow, Volcano, KEDA, MinIO
+10. **Step 4** — Label Studio, Synthetic Data, Auto Labeling, Offline Testing, Auto Deploy, 데이터 자동 수집
+11. **Step 5** — Generative Model MLOps
 
 ---
 
@@ -157,6 +210,8 @@
 | `lib/pipeline/io/` | COCO / YOLO 파서·라이터 |
 | `lib/manipulators/__init__.py` | `MANIPULATOR_REGISTRY` — pkgutil 자동 발견 |
 | `lib/manipulators/*.py` | 12종 UnitManipulator 구현 |
+| `lib/classification/ingest.py` | Classification ingest — SHA-1 dedup + manifest.jsonl + head_schema.json + occurrence/intra-class dup 수집 |
+| `lib/classification/__init__.py` | `ingest_classification` / `ClassificationHeadInput` / `DuplicateConflict` / `IntraClassDuplicate` 등 export |
 
 ### 6-2. app/ (FastAPI + DB + Celery)
 
@@ -165,7 +220,11 @@
 | `app/api/v1/pipelines/` | 파이프라인 API 라우터 |
 | `app/services/pipeline_service.py` | DB 검증 + 실행 이력 |
 | `app/tasks/pipeline_tasks.py` | Celery 태스크 |
-| `app/models/all_models.py` | 전체 ORM 모델 단일 파일 |
+| `app/tasks/register_classification_tasks.py` | Classification RAW 등록 Celery task + process.log / metadata 기록 |
+| `app/services/dataset_service.py` | `register_classification_dataset` + `_diff_head_schema` / `_merge_head_schema` |
+| `app/api/v1/dataset_groups/router.py` | `POST /register-classification` 엔드포인트 |
+| `app/models/all_models.py` | 전체 ORM 모델 단일 파일 (`DatasetGroup.head_schema` JSONB 포함) |
+| `migrations/versions/009_add_head_schema.py` | head_schema 컬럼 추가 마이그레이션 |
 
 ### 6-3. frontend/ — SDK 경로 중심
 

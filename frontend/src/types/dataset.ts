@@ -8,8 +8,9 @@
 
 // DatasetGroup의 dataset_type: 데이터 가공 단계 표현
 export type DatasetType = 'RAW' | 'SOURCE' | 'PROCESSED' | 'FUSION'
-export type AnnotationFormat = 'COCO' | 'YOLO' | 'ATTR_JSON' | 'CLS_FOLDER' | 'CUSTOM' | 'NONE'
-export type TaskType = 'DETECTION' | 'SEGMENTATION' | 'ATTR_CLASSIFICATION' | 'ZERO_SHOT' | 'CLASSIFICATION'
+export type AnnotationFormat = 'COCO' | 'YOLO' | 'ATTR_JSON' | 'CLS_MANIFEST' | 'CUSTOM' | 'NONE'
+// CLASSIFICATION은 단일 라벨/다중 head 이미지 분류를 모두 포함 (구 ATTR_CLASSIFICATION 통합).
+export type TaskType = 'DETECTION' | 'SEGMENTATION' | 'CLASSIFICATION' | 'ZERO_SHOT'
 export type Modality = 'RGB' | 'THERMAL' | 'DEPTH' | 'MULTISPECTRAL'
 export type Split = 'TRAIN' | 'VAL' | 'TEST' | 'NONE'
 export type DatasetStatus = 'PENDING' | 'PROCESSING' | 'READY' | 'ERROR'
@@ -123,6 +124,44 @@ export interface DatasetRegisterRequest {
 }
 
 // =============================================================================
+// Classification 등록 요청/응답
+// =============================================================================
+
+export type DuplicateImagePolicy = 'FAIL' | 'SKIP'
+
+export interface ClassificationHeadSpec {
+  name: string                       // head 표시 이름 (편집 가능)
+  multi_label: boolean               // true면 한 이미지가 여러 class에 속할 수 있음
+  classes: string[]                  // 순서 = 출력 index (SSOT)
+  source_class_paths: string[]       // classes와 같은 순서의 원본 폴더 절대경로
+}
+
+export interface DatasetRegisterClassificationRequest {
+  group_id?: string
+  group_name?: string
+  modality?: Modality
+  source_origin?: string
+  description?: string
+  split: Split
+  source_root_dir: string
+  heads: ClassificationHeadSpec[]
+  duplicate_image_policy?: DuplicateImagePolicy
+}
+
+export interface ClassificationHeadWarning {
+  head_name: string
+  kind: 'NEW_HEAD' | 'NEW_CLASS'
+  detail: string
+}
+
+export interface DatasetRegisterClassificationResponse {
+  group_id: string
+  dataset_id: string
+  celery_task_id: string | null
+  warnings: ClassificationHeadWarning[]
+}
+
+// =============================================================================
 // 포맷 검증
 // =============================================================================
 
@@ -159,6 +198,28 @@ export interface FileBrowserListResponse {
 
 export interface FileBrowserRootsResponse {
   roots: string[]
+}
+
+// =============================================================================
+// Classification 폴더 스캔 (2레벨 <head>/<class>/ 구조)
+// =============================================================================
+
+export interface ClassificationClassEntry {
+  name: string           // class 폴더명 원본
+  path: string           // 절대경로
+  image_count: number    // 해당 폴더 바로 아래 이미지 파일 수
+  has_subdirs: boolean   // 서브디렉토리 존재 여부 (true면 2레벨 초과 의심)
+}
+
+export interface ClassificationHeadEntry {
+  name: string           // head 폴더명 원본
+  path: string           // 절대경로
+  classes: ClassificationClassEntry[]
+}
+
+export interface ClassificationScanResponse {
+  root_path: string
+  heads: ClassificationHeadEntry[]
 }
 
 // =============================================================================

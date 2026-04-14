@@ -142,7 +142,7 @@ export default function DatasetListPage() {
       render: (v: string) => {
         const color: Record<string, string> = {
           COCO: 'green', YOLO: 'orange', ATTR_JSON: 'cyan',
-          CLS_FOLDER: 'geekblue', CUSTOM: 'purple', NONE: 'default',
+          CLS_MANIFEST: 'geekblue', CUSTOM: 'purple', NONE: 'default',
         }
         return <Tag color={color[v] ?? 'default'}>{v ?? 'NONE'}</Tag>
       },
