@@ -16,6 +16,8 @@ from app.schemas.dataset import (
     DatasetGroupListResponse,
     DatasetGroupResponse,
     DatasetGroupUpdate,
+    DatasetRegisterClassificationRequest,
+    DatasetRegisterClassificationResponse,
     DatasetRegisterRequest,
     FormatValidateRequest,
     FormatValidateResponse,
@@ -69,6 +71,55 @@ async def register_dataset(
         split=dataset.split,
     )
     return await svc.get_group(group.id)
+
+
+@router.post(
+    "/register-classification",
+    response_model=DatasetRegisterClassificationResponse,
+    status_code=202,
+)
+async def register_classification_dataset(
+    req: DatasetRegisterClassificationRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Classification 전용 RAW 데이터셋 등록.
+
+    폴더 구조 <root>/<head>/<class>/<images>를 사용자가 편집한 결과를 전달받아
+    - 신규 그룹이면 head_schema를 새로 기록
+    - 기존 그룹이면 head_schema 일관성 검증 후 warning/차단
+    - Dataset을 PROCESSING 상태로 선생성하고 Celery로 ingest 태스크를 dispatch
+    한다. 실제 이미지 복사와 manifest 작성은 worker에서 수행된다.
+    """
+    logger.info(
+        "Classification 등록 요청 수신",
+        group_id=req.group_id,
+        group_name=req.group_name,
+        split=req.split,
+        head_count=len(req.heads),
+        root_dir=req.source_root_dir,
+        policy=req.duplicate_image_policy,
+    )
+    svc = DatasetGroupService(db)
+    try:
+        group, dataset, celery_task_id, warnings = await svc.register_classification_dataset(req)
+    except ValueError as exc:
+        logger.warning("Classification 등록 실패 (검증 오류)", error=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    logger.info(
+        "Classification 등록 접수 (ingest 진행 중)",
+        group_id=group.id,
+        dataset_id=dataset.id,
+        celery_task_id=celery_task_id,
+        warning_count=len(warnings),
+    )
+    return DatasetRegisterClassificationResponse(
+        group_id=group.id,
+        dataset_id=dataset.id,
+        celery_task_id=celery_task_id,
+        warnings=warnings,
+    )
 
 
 @router.post("/validate-format", response_model=FormatValidateResponse)

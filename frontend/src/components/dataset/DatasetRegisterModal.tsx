@@ -46,6 +46,9 @@ import type {
   AnnotationFormat,
   FormatValidateResponse,
   ClassificationScanResponse,
+  DuplicateImagePolicy,
+  DatasetRegisterClassificationRequest,
+  ClassificationHeadWarning,
 } from '../../types/dataset'
 
 const { Text } = Typography
@@ -78,14 +81,14 @@ const ANNOTATION_FORMAT_OPTIONS: { value: AnnotationFormat; label: string; desc:
   { value: 'COCO',       label: 'COCO JSON',     desc: 'instances_*.json, COCO 표준 포맷' },
   { value: 'YOLO',       label: 'YOLO txt',      desc: '클래스별 .txt 라벨 파일' },
   { value: 'ATTR_JSON',  label: 'Attribute JSON', desc: '속성 분류용 커스텀 JSON' },
-  { value: 'CLS_FOLDER', label: 'Class Folder',  desc: '폴더명 = 클래스명 구조' },
+  { value: 'CLS_MANIFEST', label: 'Classification Manifest', desc: '단일 풀 + manifest.jsonl (Classification 전용)' },
   { value: 'CUSTOM',     label: 'Custom',        desc: '기타 포맷 (직접 관리)' },
   { value: 'NONE',       label: '미정',          desc: '포맷 미확정 (나중에 설정)' },
 ]
 
 const FORMAT_TAG_COLOR: Record<string, string> = {
   COCO: 'green', YOLO: 'orange', ATTR_JSON: 'cyan',
-  CLS_FOLDER: 'geekblue', CUSTOM: 'purple', NONE: 'default',
+  CLS_MANIFEST: 'geekblue', CUSTOM: 'purple', NONE: 'default',
 }
 
 /** 신규 그룹 생성 옵션의 sentinel 값 */
@@ -217,6 +220,10 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
   const [classificationRootBrowserOpen, setClassificationRootBrowserOpen] = useState(false)
   // 사용자 편집용 상태 — 스캔 완료 시 이 상태로 초기화되고, 등록 payload의 기초가 된다.
   const [editorHeads, setEditorHeads] = useState<ClassificationEditHead[]>([])
+  // Classification 전용: 동일 이미지가 여러 class 폴더에 존재할 때의 처리 정책
+  //  - FAIL : 즉시 등록 중단 (기본값, 사람이 원본 폴더 정리 필요)
+  //  - SKIP : 충돌 이미지는 등록에서 제외하고 진행
+  const [duplicatePolicy, setDuplicatePolicy] = useState<DuplicateImagePolicy>('FAIL')
 
   // 파일 브라우저 열림 상태
   const [imageBrowserOpen, setImageBrowserOpen] = useState(false)
@@ -282,6 +289,18 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
     : imageDir !== null && annotationFiles.length > 0
   const isNewGroup = selectedGroupOption === NEW_GROUP_SENTINEL
 
+  // Classification에서 스캔 결과 중 class 폴더 내부에 서브디렉토리가 있는 항목
+  // → 2레벨(<head>/<class>/<image>) 규약 위반이므로 등록 차단 대상.
+  const hasSubdirsDetected = isClassification && classificationScan
+    ? classificationScan.heads.some((head) => head.classes.some((cls) => cls.has_subdirs))
+    : false
+
+  // Classification 등록 가능 여부: editorHeads가 1개 이상 + 각 head에 class 1개 이상
+  const isClassificationEditorValid = isClassification
+    && editorHeads.length > 0
+    && editorHeads.every((head) => head.classes.length > 0 && head.displayName.trim().length > 0
+      && head.classes.every((cls) => cls.displayName.trim().length > 0))
+
   /** 선택된 루트 폴더를 백엔드에 스캔 요청. 결과는 읽기 전용으로 표시. */
   const runClassificationScan = async (rootPath: string) => {
     setClassificationScanLoading(true)
@@ -319,6 +338,120 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
       .catch(() => setNextVersion('1.0'))
   }
 
+  // ── Classification 등록 ─────────────────────────────────────────────────
+  // editorHeads.classes[i].folderName 은 스캔된 원본 폴더명이므로
+  //   source_class_paths = classificationScan 에서 같은 folderName을 찾아 path를 매칭한다.
+  const handleSubmitClassification = async () => {
+    if (!classificationRootDir || !classificationScan) {
+      setSubmitError('Classification 데이터셋 루트를 스캔한 뒤 등록해 주세요.')
+      return
+    }
+    if (hasSubdirsDetected) {
+      setSubmitError(
+        'class 폴더 내부에 서브디렉토리가 있습니다. 2레벨(<head>/<class>/<image>) 구조로 정리한 후 다시 스캔하세요.',
+      )
+      return
+    }
+    if (!isClassificationEditorValid) {
+      setSubmitError('head 및 class 설정을 확인하세요. (이름 빈 값, 클래스 0개 등)')
+      return
+    }
+
+    const values = form.getFieldsValue()
+    setSubmitting(true)
+    setSubmitError(null)
+    try {
+      let resolvedGroupId: string | undefined = existingGroup?.id
+      let resolvedGroupName: string | undefined
+      if (!existingGroup) {
+        if (isNewGroup) {
+          resolvedGroupName = values.group_name
+        } else {
+          resolvedGroupId = selectedGroupOption
+        }
+      }
+
+      // editorHeads → API heads 변환
+      //   - source_class_paths: 스캔 결과의 (head.folderName, class.folderName) 조합으로 절대경로 매칭
+      //   - 매칭 실패 시 등록 중단 (편집 과정에서 folderName이 손상됐을 때만 발생)
+      const heads = editorHeads.map((head) => {
+        const scanHead = classificationScan.heads.find((h) => h.name === head.folderName)
+        if (!scanHead) {
+          throw new Error(`스캔 결과에서 head 폴더를 찾을 수 없습니다: ${head.folderName}`)
+        }
+        const sourceClassPaths: string[] = []
+        for (const cls of head.classes) {
+          const scanCls = scanHead.classes.find((c) => c.name === cls.folderName)
+          if (!scanCls) {
+            throw new Error(`스캔 결과에서 class 폴더를 찾을 수 없습니다: ${head.folderName}/${cls.folderName}`)
+          }
+          sourceClassPaths.push(scanCls.path)
+        }
+        return {
+          name: head.displayName.trim(),
+          multi_label: head.multiLabel,
+          classes: head.classes.map((cls) => cls.displayName.trim()),
+          source_class_paths: sourceClassPaths,
+        }
+      })
+
+      const payload: DatasetRegisterClassificationRequest = {
+        group_id: resolvedGroupId,
+        group_name: resolvedGroupName,
+        modality: 'RGB',
+        description: values.description,
+        split: values.split,
+        source_root_dir: classificationRootDir,
+        heads,
+        duplicate_image_policy: duplicatePolicy,
+      }
+
+      const res = await datasetGroupsApi.registerClassification(payload)
+      const body = res.data
+
+      // 그룹 상세를 다시 조회해서 onSuccess에 전달 (목록/탐색 갱신에 사용)
+      try {
+        const groupRes = await datasetGroupsApi.get(body.group_id)
+        onSuccess(groupRes.data)
+      } catch {
+        /* 그룹 재조회 실패는 등록 성공에 영향 없음 */
+      }
+
+      Modal.info({
+        title: 'Classification 데이터셋 등록 접수 완료',
+        content: (
+          <div>
+            <p>이미지 ingest가 Celery에서 진행 중입니다. 완료까지 시간이 걸릴 수 있습니다.</p>
+            <p style={{ fontSize: 12, color: '#888' }}>
+              Dataset ID: <code>{body.dataset_id}</code>
+              {body.celery_task_id && <> · Task: <code>{body.celery_task_id}</code></>}
+            </p>
+            {body.warnings.length > 0 && (
+              <>
+                <p style={{ marginTop: 8 }}>경고:</p>
+                <ul style={{ margin: 0, paddingLeft: 20, fontSize: 12 }}>
+                  {body.warnings.map((warn: ClassificationHeadWarning, idx) => (
+                    <li key={idx}>
+                      [<b>{warn.kind}</b>] {warn.head_name}: {warn.detail}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </div>
+        ),
+        okText: '확인',
+      })
+      handleClose()
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
+      const fallback = err instanceof Error ? err.message : 'Classification 등록 중 오류가 발생했습니다.'
+      setSubmitError(typeof detail === 'string' ? detail : fallback)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
   // ── 등록 ─────────────────────────────────────────────────────────────────
   const handleSubmit = async () => {
     try {
@@ -326,6 +459,13 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
     } catch {
       return
     }
+
+    // Classification 브랜치: 폴더 스캔 결과 + editorHeads → register-classification
+    if (isClassification) {
+      await handleSubmitClassification()
+      return
+    }
+
     if (!imageDir || annotationFiles.length === 0) {
       setSubmitError('이미지 폴더와 어노테이션 파일을 선택하세요.')
       return
@@ -439,6 +579,7 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
     setClassificationScanError(null)
     setClassificationScanLoading(false)
     setEditorHeads([])
+    setDuplicatePolicy('FAIL')
     setSelectedGroupOption(NEW_GROUP_SENTINEL)
     setFormatValidationResult(null)
     setNextVersion('1.0')
@@ -574,13 +715,22 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
                 // 2레벨 기대 구조에서 벗어난 징후 집계 — 데이터셋 루트를 잘못 골랐을 가능성이 있음.
                 // (1) class 폴더 안에 서브디렉토리가 있는 경우 → 2레벨을 초과한 구조일 수 있음
                 // (2) class 폴더에 이미지가 0장 → 빈 class이거나 상위 폴더를 잘못 선택했을 수 있음
+                // (3) head 아래에 class 폴더 자체가 없는 경우 → 한 단계 아래(= class 폴더 레벨)를
+                //     루트로 잘못 선택했을 가능성이 높음. 이 head는 사실상 class이고,
+                //     내부에 이미지가 있었다면 그 이미지들이 무시되고 있다는 뜻이다.
                 const classesWithSubdirs = classificationScan.heads.flatMap((head) =>
                   head.classes.filter((cls) => cls.has_subdirs),
                 )
                 const classesWithNoImages = classificationScan.heads.flatMap((head) =>
                   head.classes.filter((cls) => cls.image_count === 0),
                 )
-                const hasWarning = classesWithSubdirs.length > 0 || classesWithNoImages.length > 0
+                const headsWithNoClasses = classificationScan.heads.filter(
+                  (head) => head.classes.length === 0,
+                )
+                const hasWarning =
+                  classesWithSubdirs.length > 0
+                  || classesWithNoImages.length > 0
+                  || headsWithNoClasses.length > 0
 
                 return (
                 <div style={{ marginBottom: 16 }}>
@@ -621,6 +771,14 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
                               이미지가 0장인 class 폴더가 있습니다
                               ({classesWithNoImages.length}개) — 루트를 잘못 선택했거나
                               폴더가 비어 있을 수 있으니 확인하세요.
+                            </li>
+                          )}
+                          {headsWithNoClasses.length > 0 && (
+                            <li>
+                              하위 class 폴더가 전혀 없는 head가 있습니다
+                              ({headsWithNoClasses.length}개) — 루트를 한 단계 위에서
+                              (= class 폴더들의 상위) 골라야 할 수 있습니다.
+                              현재 구조로는 이 head에 포함된 이미지가 등록되지 않습니다.
                             </li>
                           )}
                         </ul>
@@ -1105,9 +1263,9 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
             <>
               <Divider style={{ margin: '16px 0' }} />
 
-              {/* Classification은 어노테이션 파일 대신 폴더 구조로 라벨이 결정되므로
-                  이 단계에서 포맷을 고르지 않는다. 추후 CLS_FOLDER/manifest 저장이
-                  확정되면 여기 정보를 다시 노출할 수 있다. */}
+              {/* Classification은 어노테이션 파일 대신 폴더 구조로 라벨이 결정되며
+                  저장은 CLS_MANIFEST(단일 풀 + manifest.jsonl) 포맷으로 고정되므로
+                  이 단계에서 포맷을 고르지 않는다. */}
               {!isClassification && (
               <>
               <Form.Item
@@ -1386,19 +1544,51 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
               )}
 
               {isClassification && (
-                <Alert
-                  type="warning"
-                  showIcon
-                  style={{ marginBottom: 16 }}
-                  message="Classification 등록 로직은 아직 연결되지 않았습니다"
-                  description={
-                    <Text style={{ fontSize: 12 }}>
-                      현재는 폴더 구조 스캔 결과를 확인하는 단계까지만 제공합니다.
-                      클래스 순서 확정, 이미지 중복 처리, manifest 생성 등 등록 파이프라인은
-                      UI 확정 후 추가될 예정입니다.
-                    </Text>
-                  }
-                />
+                <>
+                  <Form.Item
+                    label={
+                      <Space>
+                        <Text strong>이미지 중복 처리</Text>
+                        <Text type="secondary" style={{ fontSize: 12 }}>
+                          동일 이미지가 여러 class 폴더에 존재할 때의 동작
+                        </Text>
+                      </Space>
+                    }
+                  >
+                    <Radio.Group
+                      value={duplicatePolicy}
+                      onChange={(e) => setDuplicatePolicy(e.target.value as DuplicateImagePolicy)}
+                    >
+                      <Radio value="FAIL">
+                        <Text strong>등록 중단</Text>
+                        <Text type="secondary" style={{ fontSize: 11, marginLeft: 4 }}>
+                          (기본 · 원본 폴더를 정리한 뒤 다시 등록)
+                        </Text>
+                      </Radio>
+                      <Radio value="SKIP">
+                        <Text strong>해당 이미지 스킵</Text>
+                        <Text type="secondary" style={{ fontSize: 11, marginLeft: 4 }}>
+                          (중복 이미지는 등록에서 제외)
+                        </Text>
+                      </Radio>
+                    </Radio.Group>
+                  </Form.Item>
+
+                  {hasSubdirsDetected && (
+                    <Alert
+                      type="error"
+                      showIcon
+                      style={{ marginBottom: 16 }}
+                      message="class 폴더 내부에 서브디렉토리가 있어 등록할 수 없습니다"
+                      description={
+                        <Text style={{ fontSize: 12 }}>
+                          2레벨 구조 <code>&lt;head&gt;/&lt;class&gt;/&lt;이미지&gt;</code>에서 벗어난 항목입니다.
+                          원본 폴더를 정리한 뒤 루트를 다시 스캔하세요.
+                        </Text>
+                      }
+                    />
+                  )}
+                </>
               )}
 
               <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
@@ -1407,7 +1597,7 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
                   type="primary"
                   loading={submitting}
                   onClick={handleSubmit}
-                  disabled={isClassification}
+                  disabled={isClassification && (hasSubdirsDetected || !isClassificationEditorValid)}
                 >
                   데이터셋 등록
                 </Button>

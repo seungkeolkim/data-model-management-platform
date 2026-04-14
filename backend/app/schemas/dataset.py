@@ -28,7 +28,7 @@ ALLOWED_ANNOTATION_FORMATS = Literal[
     "COCO",        # COCO JSON
     "YOLO",        # YOLO txt
     "ATTR_JSON",   # 속성 JSON (커스텀)
-    "CLS_FOLDER",  # 분류 폴더 구조
+    "CLS_MANIFEST",  # Classification: 단일 풀 + manifest.jsonl + head_schema.json
     "CUSTOM",      # 기타 커스텀
     "NONE",        # 미지정
 ]
@@ -48,7 +48,7 @@ class DatasetGroupBase(BaseModel):
     )
     annotation_format: str = Field(
         default="NONE",
-        description="COCO | YOLO | ATTR_JSON | CLS_FOLDER | CUSTOM | NONE",
+        description="COCO | YOLO | ATTR_JSON | CLS_MANIFEST | CUSTOM | NONE",
     )
     task_types: list[str] | None = Field(
         default=None,
@@ -58,6 +58,14 @@ class DatasetGroupBase(BaseModel):
     source_origin: str | None = Field(default=None, max_length=500)
     description: str | None = Field(default=None)
     extra: dict[str, Any] | None = Field(default=None)
+    # classification 전용. head/class 계약(SSOT). 그 외 task 그룹은 None.
+    head_schema: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Classification 전용 head/class 계약. "
+            '예: {"heads":[{"name":"...","multi_label":false,"classes":[...]}]}'
+        ),
+    )
 
 
 class DatasetGroupCreate(DatasetGroupBase):
@@ -157,7 +165,7 @@ class DatasetRegisterRequest(BaseModel):
     # 어노테이션 포맷 (등록 후 선택, 미정이면 NONE)
     annotation_format: str = Field(
         default="NONE",
-        description="COCO | YOLO | ATTR_JSON | CLS_FOLDER | CUSTOM | NONE",
+        description="COCO | YOLO | ATTR_JSON | CLS_MANIFEST | CUSTOM | NONE",
     )
 
     modality: str = Field(default="RGB")
@@ -187,6 +195,108 @@ class DatasetRegisterRequest(BaseModel):
         if not self.group_id and not self.group_name:
             raise ValueError("group_id 또는 group_name 중 하나는 필수입니다.")
         return self
+
+
+# =============================================================================
+# Classification 등록 스키마
+# =============================================================================
+# Classification은 어노테이션 파일 대신 폴더 구조(head/class/이미지)로 라벨이
+# 결정되므로 별도 요청 스키마를 둔다. 등록 시 단일 풀 + manifest.jsonl로 정규화한다.
+
+# single-label head에서 동일 이미지가 여러 class 폴더에 존재할 때의 정책.
+# - FAIL: 감지 즉시 등록 작업 중단 + 사용자 리포트 (기본)
+# - SKIP: 해당 이미지를 pool/manifest에서 제외하고 계속 진행
+DuplicateImagePolicy = Literal["FAIL", "SKIP"]
+
+
+class ClassificationHeadSpec(BaseModel):
+    """등록 시점에 사용자가 확정한 head별 계약."""
+    name: str = Field(..., min_length=1, max_length=100, description="head 이름")
+    multi_label: bool = Field(
+        default=False,
+        description="True면 한 이미지가 이 head에서 여러 class에 속할 수 있음 (라벨 = list)",
+    )
+    # classes 순서가 학습 output index 계약(SSOT). 순서를 바꾸면 기존 모델과 호환성이 깨진다.
+    classes: list[str] = Field(
+        ...,
+        min_length=1,
+        description="class 이름 순서 있는 리스트. 순서 = 출력 index (절대 바꾸지 말 것)",
+    )
+    # 각 class 이름이 실제 소스 폴더의 어떤 디렉토리에 대응되는지 절대경로로 지정.
+    # 사용자가 편집창에서 class 이름을 변경했을 수 있으므로 폴더명 ≠ class명일 수 있음.
+    # 빈 class(이미지 0장)도 정식 class로 허용 — 해당 경로의 이미지는 0장으로 간주.
+    source_class_paths: list[str] = Field(
+        ...,
+        description="classes와 같은 길이. 각 원소는 해당 class 폴더의 절대경로",
+    )
+
+    @model_validator(mode="after")
+    def check_source_paths_length(self) -> ClassificationHeadSpec:
+        if len(self.source_class_paths) != len(self.classes):
+            raise ValueError(
+                "classes와 source_class_paths 길이가 다릅니다. "
+                f"classes={len(self.classes)}, source_class_paths={len(self.source_class_paths)}"
+            )
+        return self
+
+
+class DatasetRegisterClassificationRequest(BaseModel):
+    """
+    Classification RAW 데이터셋 등록 요청.
+
+    폴더 구조 <root>/<head>/<class>/<images>를 스캔·편집한 결과를
+    그대로 전달받아, 백엔드가 Celery로 비동기 ingest를 수행한다.
+
+    - 그룹이 신규면 head_schema가 그룹에 새로 기록됨
+    - 기존 그룹 재등록이면 head_schema 일관성 검증 후 경고/차단
+    """
+    group_id: str | None = Field(default=None, description="기존 그룹 ID (새 그룹이면 None)")
+    group_name: str | None = Field(default=None, description="새 그룹 생성 시 그룹명")
+
+    modality: str = Field(default="RGB")
+    source_origin: str | None = None
+    description: str | None = None
+
+    split: ALLOWED_SPLITS = Field(default="NONE", description="TRAIN | VAL | TEST | NONE")
+
+    # 스캔한 데이터셋 루트 절대경로. LOCAL_UPLOAD_BASE 하위여야 함.
+    source_root_dir: str = Field(
+        ...,
+        description="데이터셋 루트 절대경로 (예: /mnt/uploads/hardhat_classification/val)",
+    )
+
+    heads: list[ClassificationHeadSpec] = Field(
+        ...,
+        min_length=1,
+        description="등록할 head/class 계약. 순서·이름 모두 사용자 확정 값",
+    )
+
+    # 단일 label head에서 이미지 충돌 시 정책. 기본 FAIL.
+    duplicate_image_policy: DuplicateImagePolicy = Field(
+        default="FAIL",
+        description="single-label head의 이미지 중복 정책. FAIL=중단, SKIP=해당 이미지 제외",
+    )
+
+    @model_validator(mode="after")
+    def check_group_identifier(self) -> DatasetRegisterClassificationRequest:
+        if not self.group_id and not self.group_name:
+            raise ValueError("group_id 또는 group_name 중 하나는 필수입니다.")
+        return self
+
+
+class ClassificationHeadWarning(BaseModel):
+    """head_schema 일관성 검증 중 발견된 경고(차단은 아님)."""
+    head_name: str
+    kind: Literal["NEW_HEAD", "NEW_CLASS"]
+    detail: str
+
+
+class DatasetRegisterClassificationResponse(BaseModel):
+    """Classification 등록 큐잉 결과."""
+    group_id: str
+    dataset_id: str
+    celery_task_id: str | None = None
+    warnings: list[ClassificationHeadWarning] = []
 
 
 class DatasetUpdate(BaseModel):

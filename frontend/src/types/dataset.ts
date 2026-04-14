@@ -8,7 +8,7 @@
 
 // DatasetGroup의 dataset_type: 데이터 가공 단계 표현
 export type DatasetType = 'RAW' | 'SOURCE' | 'PROCESSED' | 'FUSION'
-export type AnnotationFormat = 'COCO' | 'YOLO' | 'ATTR_JSON' | 'CLS_FOLDER' | 'CUSTOM' | 'NONE'
+export type AnnotationFormat = 'COCO' | 'YOLO' | 'ATTR_JSON' | 'CLS_MANIFEST' | 'CUSTOM' | 'NONE'
 // CLASSIFICATION은 단일 라벨/다중 head 이미지 분류를 모두 포함 (구 ATTR_CLASSIFICATION 통합).
 export type TaskType = 'DETECTION' | 'SEGMENTATION' | 'CLASSIFICATION' | 'ZERO_SHOT'
 export type Modality = 'RGB' | 'THERMAL' | 'DEPTH' | 'MULTISPECTRAL'
@@ -121,6 +121,44 @@ export interface DatasetRegisterRequest {
   source_image_dir: string
   source_annotation_files: string[]
   source_annotation_meta_file?: string
+}
+
+// =============================================================================
+// Classification 등록 요청/응답
+// =============================================================================
+
+export type DuplicateImagePolicy = 'FAIL' | 'SKIP'
+
+export interface ClassificationHeadSpec {
+  name: string                       // head 표시 이름 (편집 가능)
+  multi_label: boolean               // true면 한 이미지가 여러 class에 속할 수 있음
+  classes: string[]                  // 순서 = 출력 index (SSOT)
+  source_class_paths: string[]       // classes와 같은 순서의 원본 폴더 절대경로
+}
+
+export interface DatasetRegisterClassificationRequest {
+  group_id?: string
+  group_name?: string
+  modality?: Modality
+  source_origin?: string
+  description?: string
+  split: Split
+  source_root_dir: string
+  heads: ClassificationHeadSpec[]
+  duplicate_image_policy?: DuplicateImagePolicy
+}
+
+export interface ClassificationHeadWarning {
+  head_name: string
+  kind: 'NEW_HEAD' | 'NEW_CLASS'
+  detail: string
+}
+
+export interface DatasetRegisterClassificationResponse {
+  group_id: string
+  dataset_id: string
+  celery_task_id: string | null
+  warnings: ClassificationHeadWarning[]
 }
 
 // =============================================================================

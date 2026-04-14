@@ -15,6 +15,7 @@ celery_app = Celery(
     include=[
         "app.tasks.pipeline_tasks",
         "app.tasks.register_tasks",
+        "app.tasks.register_classification_tasks",
         "app.tasks.eda_tasks",
         # "app.tasks.training_tasks",  # 2차 활성화
     ],

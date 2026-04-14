@@ -62,7 +62,7 @@ const FORMAT_COLOR: Record<string, string> = {
   COCO: 'green',
   YOLO: 'orange',
   ATTR_JSON: 'cyan',
-  CLS_FOLDER: 'geekblue',
+  CLS_MANIFEST: 'geekblue',
   CUSTOM: 'purple',
   NONE: 'default',
 }
@@ -354,7 +354,7 @@ export default function DatasetDetailPage() {
                   { value: 'COCO', label: 'COCO' },
                   { value: 'YOLO', label: 'YOLO' },
                   { value: 'ATTR_JSON', label: 'ATTR_JSON' },
-                  { value: 'CLS_FOLDER', label: 'CLS_FOLDER' },
+                  { value: 'CLS_MANIFEST', label: 'CLS_MANIFEST' },
                   { value: 'CUSTOM', label: 'CUSTOM' },
                   { value: 'NONE', label: 'NONE' },
                 ]}

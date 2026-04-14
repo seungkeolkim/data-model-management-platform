@@ -8,6 +8,8 @@ import type {
   DatasetGroupUpdate,
   DatasetGroupListResponse,
   DatasetRegisterRequest,
+  DatasetRegisterClassificationRequest,
+  DatasetRegisterClassificationResponse,
   DatasetValidateRequest,
   FormatValidateRequest,
   FormatValidateResponse,
@@ -44,6 +46,12 @@ export const datasetGroupsApi = {
 
   register: (data: DatasetRegisterRequest) =>
     api.post<DatasetGroup>('/dataset-groups/register', data),
+
+  registerClassification: (data: DatasetRegisterClassificationRequest) =>
+    api.post<DatasetRegisterClassificationResponse>(
+      '/dataset-groups/register-classification',
+      data,
+    ),
 
   validateFormat: (data: FormatValidateRequest) =>
     api.post<FormatValidateResponse>('/dataset-groups/validate-format', data),
