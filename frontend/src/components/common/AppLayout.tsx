@@ -1,5 +1,6 @@
+import { useState } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
-import { Layout, Menu, Typography, Tag } from 'antd'
+import { Button, Layout, Menu, Typography, Tag } from 'antd'
 import {
   DatabaseOutlined,
   BranchesOutlined,
@@ -7,9 +8,11 @@ import {
   SettingOutlined,
   ExperimentOutlined,
   DashboardOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
 } from '@ant-design/icons'
 
-const { Header, Sider, Content } = Layout
+const { Sider, Content } = Layout
 const { Title } = Typography
 
 const menuItems = [
@@ -62,6 +65,8 @@ const menuItems = [
 export default function AppLayout() {
   const location = useLocation()
   const navigate = useNavigate()
+  // 사이드바 접힘 상태. 토글 버튼으로 전환한다.
+  const [siderCollapsed, setSiderCollapsed] = useState(false)
 
   // 현재 경로로 선택된 메뉴 키 결정
   const selectedKey = location.pathname.startsWith('/datasets')
@@ -90,22 +95,43 @@ export default function AppLayout() {
     <Layout style={{ minHeight: '100vh' }}>
       <Sider
         width={220}
+        collapsible
+        collapsed={siderCollapsed}
+        trigger={null}
+        collapsedWidth={64}
         style={{
           background: '#fff',
           borderRight: '1px solid #f0f0f0',
         }}
       >
-        {/* 로고 — 클릭 시 메인 페이지로 이동 */}
+        {/* 로고 영역 — 접힘 상태에선 아이콘만, 펼침 상태에선 타이틀+서브텍스트.
+            우측의 토글 버튼으로 사이드바 접힘/펼침 전환. */}
         <div
-          style={{ padding: '16px 20px', borderBottom: '1px solid #f0f0f0', cursor: 'pointer' }}
-          onClick={() => navigate('/')}
+          style={{
+            padding: siderCollapsed ? '16px 0' : '16px 20px',
+            borderBottom: '1px solid #f0f0f0',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: siderCollapsed ? 'center' : 'space-between',
+            gap: 8,
+          }}
         >
-          <Title level={5} style={{ margin: 0, color: '#1677ff' }}>
-            🤖 ML Platform
-          </Title>
-          <div style={{ fontSize: 11, color: '#999', marginTop: 2 }}>
-            v0.1.0 · 데이터 관리
-          </div>
+          {!siderCollapsed && (
+            <div style={{ cursor: 'pointer', flex: 1 }} onClick={() => navigate('/')}>
+              <Title level={5} style={{ margin: 0, color: '#1677ff' }}>
+                🤖 ML Platform
+              </Title>
+              <div style={{ fontSize: 11, color: '#999', marginTop: 2 }}>
+                v0.1.0 · 데이터 관리
+              </div>
+            </div>
+          )}
+          <Button
+            type="text"
+            size="small"
+            icon={siderCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+            onClick={() => setSiderCollapsed((prev) => !prev)}
+          />
         </div>
 
         <Menu
