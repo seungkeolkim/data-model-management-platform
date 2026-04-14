@@ -119,9 +119,9 @@ export default function DatasetListPage() {
   } = useResizableColumnWidths({
     name: 280,
     dataset_type: 110,
-    task_types: 200,
-    annotation_format: 110,
-    splits: 220,
+    task_types: 130,
+    annotation_format: 85,
+    splits: 160,
     image_count: 110,
     status: 100,
     created_at: 120,
