@@ -9,7 +9,8 @@
 // DatasetGroup의 dataset_type: 데이터 가공 단계 표현
 export type DatasetType = 'RAW' | 'SOURCE' | 'PROCESSED' | 'FUSION'
 export type AnnotationFormat = 'COCO' | 'YOLO' | 'ATTR_JSON' | 'CLS_FOLDER' | 'CUSTOM' | 'NONE'
-export type TaskType = 'DETECTION' | 'SEGMENTATION' | 'ATTR_CLASSIFICATION' | 'ZERO_SHOT' | 'CLASSIFICATION'
+// CLASSIFICATION은 단일 라벨/다중 head 이미지 분류를 모두 포함 (구 ATTR_CLASSIFICATION 통합).
+export type TaskType = 'DETECTION' | 'SEGMENTATION' | 'CLASSIFICATION' | 'ZERO_SHOT'
 export type Modality = 'RGB' | 'THERMAL' | 'DEPTH' | 'MULTISPECTRAL'
 export type Split = 'TRAIN' | 'VAL' | 'TEST' | 'NONE'
 export type DatasetStatus = 'PENDING' | 'PROCESSING' | 'READY' | 'ERROR'

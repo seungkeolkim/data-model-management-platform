@@ -199,9 +199,10 @@ class AppConfig:
 
     @property
     def task_types(self) -> list[str]:
+        # CLASSIFICATION은 단일/다중 head 이미지 분류를 모두 포함 (구 ATTR_CLASSIFICATION 통합).
         return self.getlist(
             "dataset", "task_types",
-            ["DETECTION", "SEGMENTATION", "ATTR_CLASSIFICATION", "ZERO_SHOT", "CLASSIFICATION"]
+            ["DETECTION", "SEGMENTATION", "CLASSIFICATION", "ZERO_SHOT"]
         )
 
 

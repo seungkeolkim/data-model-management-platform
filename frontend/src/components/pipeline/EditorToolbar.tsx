@@ -22,9 +22,8 @@ const { Text } = Typography
 const TASK_TYPE_LABEL: Record<string, string> = {
   DETECTION: 'Object Detection',
   SEGMENTATION: 'Segmentation',
-  ATTR_CLASSIFICATION: 'Attribute Classification',
-  ZERO_SHOT: 'Zero-Shot',
   CLASSIFICATION: 'Classification',
+  ZERO_SHOT: 'Zero-Shot',
 }
 
 interface EditorToolbarProps {

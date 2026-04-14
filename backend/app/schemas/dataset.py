@@ -14,11 +14,12 @@ from pydantic import BaseModel, Field, model_validator
 # =============================================================================
 
 # 데이터셋 task 유형 (DB: task_types JSONB 컬럼)
+# CLASSIFICATION은 단일 라벨/다중 head 이미지 분류를 모두 포함한다.
+# 구 ATTR_CLASSIFICATION은 CLASSIFICATION으로 통합되어 제거됨 (migration 008).
 ALLOWED_TASK_TYPES = Literal[
     "DETECTION",           # 객체 탐지
     "SEGMENTATION",        # 세그멘테이션
-    "CLASSIFICATION",      # 이미지 분류
-    "ATTR_CLASSIFICATION", # 속성 분류
+    "CLASSIFICATION",      # 이미지 분류 (단일/다중 head 포함)
     "ZERO_SHOT",           # 제로샷
 ]
 
@@ -51,7 +52,7 @@ class DatasetGroupBase(BaseModel):
     )
     task_types: list[str] | None = Field(
         default=None,
-        description="사용 목적: DETECTION | SEGMENTATION | CLASSIFICATION | ATTR_CLASSIFICATION | ZERO_SHOT",
+        description="사용 목적: DETECTION | SEGMENTATION | CLASSIFICATION | ZERO_SHOT",
     )
     modality: str = Field(default="RGB")
     source_origin: str | None = Field(default=None, max_length=500)
@@ -144,10 +145,13 @@ class DatasetRegisterRequest(BaseModel):
     group_id: str | None = Field(default=None, description="기존 그룹 ID (새 그룹이면 None)")
     group_name: str | None = Field(default=None, description="새 그룹 생성 시 그룹명")
 
-    # 사용 목적 (드롭다운 선택)
+    # 사용 목적 (등록 UI는 단일 선택이므로 정확히 1개 원소여야 함).
+    # 컬럼은 list로 유지하여 추후 '추가 지원 용도' 멀티선택 도입 시 확장 가능.
     task_types: list[str] = Field(
         ...,
-        description="사용 목적 (DETECTION | SEGMENTATION | CLASSIFICATION | ATTR_CLASSIFICATION | ZERO_SHOT)",
+        min_length=1,
+        max_length=1,
+        description="사용 목적 (단일 원소 리스트). DETECTION | SEGMENTATION | CLASSIFICATION | ZERO_SHOT",
     )
 
     # 어노테이션 포맷 (등록 후 선택, 미정이면 NONE)

@@ -57,7 +57,7 @@ class DatasetGroup(Base):
     )
     task_types: Mapped[dict | list | None] = mapped_column(
         JSONB, nullable=True,
-        comment='["DETECTION","SEGMENTATION","ATTR_CLASSIFICATION","ZERO_SHOT","CLASSIFICATION"]'
+        comment='["DETECTION","SEGMENTATION","CLASSIFICATION","ZERO_SHOT"] 중 1개 원소 리스트'
     )
     modality: Mapped[str] = mapped_column(
         String(30), nullable=False, default="RGB",

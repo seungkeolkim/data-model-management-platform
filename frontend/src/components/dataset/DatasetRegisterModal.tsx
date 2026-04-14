@@ -48,12 +48,18 @@ interface Props {
 
 // ─── 상수 ────────────────────────────────────────────────────────────────────
 
+// 사용 목적 옵션
+// - Classification과 Attribute Classification은 '다중 head를 가진 이미지 전체 분류'로 통합됨
+//   (예: 객체 상의색상/하의색상 등 여러 속성을 동시에 분류)
 const TASK_TYPE_OPTIONS: { value: TaskType; label: string; desc: string }[] = [
-  { value: 'DETECTION',           label: 'Object Detection',         desc: '바운딩 박스 기반 객체 탐지' },
-  { value: 'SEGMENTATION',        label: 'Segmentation',             desc: '픽셀 단위 영역 분할' },
-  { value: 'CLASSIFICATION',      label: 'Classification',           desc: '이미지 전체 분류' },
-  { value: 'ATTR_CLASSIFICATION', label: 'Attribute Classification', desc: '객체별 속성 분류' },
-  { value: 'ZERO_SHOT',           label: 'Zero-Shot',                desc: '제로샷 인식' },
+  { value: 'DETECTION',      label: 'Object Detection', desc: '바운딩 박스 기반 객체 탐지' },
+  { value: 'SEGMENTATION',   label: 'Segmentation',     desc: '픽셀 단위 영역 분할' },
+  {
+    value: 'CLASSIFICATION',
+    label: 'Classification',
+    desc: '이미지 전체 분류, Multi-Head 가능 (예시 : 객체 상의색상, 하의색상 등 다중 속성 분류)',
+  },
+  { value: 'ZERO_SHOT',      label: 'Zero-Shot',        desc: '제로샷 인식' },
 ]
 
 const ANNOTATION_FORMAT_OPTIONS: { value: AnnotationFormat; label: string; desc: string }[] = [
@@ -141,7 +147,8 @@ const SPLIT_OPTIONS = ['TRAIN', 'VAL', 'TEST', 'NONE'] as const
 export default function DatasetRegisterModal({ open, onClose, onSuccess, existingGroup }: Props) {
   const [form] = Form.useForm()
   const [currentStep, setCurrentStep] = useState(0)
-  const [selectedTaskTypes, setSelectedTaskTypes] = useState<TaskType[]>([])
+  // 사용 목적은 단일 선택 (Step 0). 선택 전까진 null.
+  const [selectedTaskType, setSelectedTaskType] = useState<TaskType | null>(null)
   const [selectedFormat, setSelectedFormat] = useState<AnnotationFormat>('NONE')
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
@@ -234,10 +241,14 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
       const splitDir = (values.split as string).toLowerCase()
       const destPath = `raw/${displayGroupName}/${splitDir}/${nextVersion}`
 
+      // 사용 목적은 UI상 단일 선택이지만, 백엔드 스키마(task_types: list[str])는 유지하여
+      // 단일 원소 리스트로 전달한다. 추후 "추가 지원 용도" 멀티선택을 도입할 경우에도
+      // 동일 필드를 재사용할 수 있다.
+      const singleTaskType = values.task_type as TaskType
       const payload = {
         group_id:                resolvedGroupId,
         group_name:              resolvedGroupName,
-        task_types:              values.task_types as TaskType[],
+        task_types:              [singleTaskType],
         annotation_format:       (values.annotation_format ?? 'NONE') as AnnotationFormat,
         modality:                'RGB' as const,
         description:             values.description,
@@ -305,7 +316,7 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
   const handleClose = () => {
     form.resetFields()
     setCurrentStep(0)
-    setSelectedTaskTypes([])
+    setSelectedTaskType(null)
     setSelectedFormat('NONE')
     setSubmitError(null)
     setImageDir(null)
@@ -340,22 +351,21 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
 
         <Form form={form} layout="vertical">
 
-          {/* ── Step 0: 사용 목적 선택 ── */}
+          {/* ── Step 0: 사용 목적 선택 (단일 선택) ── */}
           <Form.Item
             label={
               <Space>
                 <Text strong>사용 목적 (Task Type)</Text>
-                <Text type="secondary" style={{ fontSize: 12 }}>필수 · 복수 선택 가능</Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>필수 · 1개 선택</Text>
               </Space>
             }
-            name="task_types"
-            rules={[{ required: true, message: '사용 목적을 하나 이상 선택하세요.' }]}
+            name="task_type"
+            rules={[{ required: true, message: '사용 목적을 선택하세요.' }]}
           >
             <Select
-              mode="multiple"
               placeholder="사용 목적을 선택하세요"
-              onChange={(values: TaskType[]) => {
-                setSelectedTaskTypes(values)
+              onChange={(value: TaskType) => {
+                setSelectedTaskType(value)
                 if (currentStep > 0) setCurrentStep(1)
               }}
             >
@@ -373,9 +383,9 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
           <Button
             type="primary"
             block
-            disabled={selectedTaskTypes.length === 0}
+            disabled={selectedTaskType === null}
             onClick={() => {
-              form.validateFields(['task_types']).then(() => setCurrentStep(1)).catch(() => {})
+              form.validateFields(['task_type']).then(() => setCurrentStep(1)).catch(() => {})
             }}
             style={{ marginBottom: 20 }}
           >
@@ -745,9 +755,7 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
               {/* 선택 요약 */}
               <Descriptions size="small" bordered column={1} style={{ marginBottom: 16 }}>
                 <Descriptions.Item label="사용 목적">
-                  <Space wrap size={4}>
-                    {selectedTaskTypes.map(t => <Tag key={t} color="purple">{t}</Tag>)}
-                  </Space>
+                  {selectedTaskType && <Tag color="purple">{selectedTaskType}</Tag>}
                 </Descriptions.Item>
                 <Descriptions.Item label="이미지 폴더">
                   <Text code style={{ fontSize: 11 }}>{imageDir}</Text>
