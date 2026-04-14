@@ -227,3 +227,6 @@ backend/_pipeline_output/
 # 프론트엔드 빌드 캐시/산출물
 frontend/*.tsbuildinfo
 frontend/vite.config.d.ts
+
+hdd1_mnt
+hdd1_mnt/

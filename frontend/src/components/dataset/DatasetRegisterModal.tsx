@@ -406,6 +406,14 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
         duplicate_image_policy: duplicatePolicy,
       }
 
+      // 복사 대상 경로 (안내 메시지용) — detection 등록과 동일한 형식.
+      const displayGroupName = existingGroup?.name
+        ?? resolvedGroupName
+        ?? existingGroupList.find((g) => g.id === resolvedGroupId)?.name
+        ?? '?'
+      const splitDir = (values.split as string).toLowerCase()
+      const destPath = `raw/${displayGroupName}/${splitDir}/${nextVersion}`
+
       const res = await datasetGroupsApi.registerClassification(payload)
       const body = res.data
 
@@ -418,13 +426,15 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
       }
 
       Modal.info({
-        title: 'Classification 데이터셋 등록 접수 완료',
+        title: '데이터셋 등록 접수 완료',
         content: (
           <div>
-            <p>이미지 ingest가 Celery에서 진행 중입니다. 완료까지 시간이 걸릴 수 있습니다.</p>
-            <p style={{ fontSize: 12, color: '#888' }}>
-              Dataset ID: <code>{body.dataset_id}</code>
-              {body.celery_task_id && <> · Task: <code>{body.celery_task_id}</code></>}
+            <p>파일 복사가 진행 중입니다. 완료까지 시간이 걸릴 수 있습니다.</p>
+            <p>데이터셋 목록에서 상태를 확인하세요.</p>
+            <p style={{ marginTop: 8, fontSize: 12, color: '#888' }}>
+              복사 대상: <code>{destPath}</code>
+              <br />
+              <code>ls {destPath}</code> 로 진행 상황을 확인할 수 있습니다.
             </p>
             {body.warnings.length > 0 && (
               <>
