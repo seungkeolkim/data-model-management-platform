@@ -22,6 +22,7 @@ import {
   Steps,
   Descriptions,
   Spin,
+  Checkbox,
 } from 'antd'
 import {
   FolderOpenOutlined,
@@ -31,6 +32,10 @@ import {
   PlusOutlined,
   CheckCircleOutlined,
   SafetyCertificateOutlined,
+  ArrowUpOutlined,
+  ArrowDownOutlined,
+  DeleteOutlined,
+  ReloadOutlined,
 } from '@ant-design/icons'
 import { datasetGroupsApi, fileBrowserApi } from '../../api/dataset'
 import ServerFileBrowser from '../common/ServerFileBrowser'
@@ -148,6 +153,45 @@ function groupAnnotationFilesForDisplay(filePaths: string[]): AnnotationDisplayI
 
 const SPLIT_OPTIONS = ['TRAIN', 'VAL', 'TEST', 'NONE'] as const
 
+// ─── Classification 편집 설정 ──────────────────────────────────────────────
+// 스캔 결과(GT)는 읽기 전용으로 유지하고, 사용자가 최종 등록에 쓸 의도는
+// 별도의 편집 상태(editorHeads)에 둔다. 편집 상태의 class.folderName 은
+// 스캔된 폴더명 그대로(SSOT)이며, 순서·display name·head 제외 여부만 수정된다.
+interface ClassificationEditClass {
+  folderName: string      // 스캔된 원본 폴더명 (변경 불가 — 실제 디스크 경로 참조용)
+  displayName: string     // 등록 시 사용할 class 명칭 (편집 가능)
+}
+
+interface ClassificationEditHead {
+  folderName: string      // 스캔된 원본 head 폴더명 (변경 불가)
+  displayName: string     // 등록 시 사용할 head 명칭 (편집 가능)
+  multiLabel: boolean     // true이면 한 이미지가 여러 class에 속할 수 있음
+  classes: ClassificationEditClass[]  // 순서 = 출력 index
+}
+
+/** 스캔 결과를 편집 상태의 초기값으로 변환. displayName은 폴더명으로 시작. */
+function buildEditHeadsFromScan(scan: ClassificationScanResponse): ClassificationEditHead[] {
+  return scan.heads.map((head) => ({
+    folderName: head.name,
+    displayName: head.name,
+    multiLabel: false,
+    classes: head.classes.map((cls) => ({
+      folderName: cls.name,
+      displayName: cls.name,
+    })),
+  }))
+}
+
+/** 배열 내 요소를 지정 방향으로 한 칸 이동 (새 배열 반환). 범위 밖이면 원본 반환. */
+function moveItem<T>(list: T[], index: number, direction: -1 | 1): T[] {
+  const target = index + direction
+  if (target < 0 || target >= list.length) return list
+  const next = [...list]
+  const [removed] = next.splice(index, 1)
+  next.splice(target, 0, removed)
+  return next
+}
+
 // ─── 컴포넌트 ─────────────────────────────────────────────────────────────────
 
 export default function DatasetRegisterModal({ open, onClose, onSuccess, existingGroup }: Props) {
@@ -170,6 +214,8 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
   const [classificationScanLoading, setClassificationScanLoading] = useState(false)
   const [classificationScanError, setClassificationScanError] = useState<string | null>(null)
   const [classificationRootBrowserOpen, setClassificationRootBrowserOpen] = useState(false)
+  // 사용자 편집용 상태 — 스캔 완료 시 이 상태로 초기화되고, 등록 payload의 기초가 된다.
+  const [editorHeads, setEditorHeads] = useState<ClassificationEditHead[]>([])
 
   // 파일 브라우저 열림 상태
   const [imageBrowserOpen, setImageBrowserOpen] = useState(false)
@@ -221,9 +267,12 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
     setClassificationScanLoading(true)
     setClassificationScanError(null)
     setClassificationScan(null)
+    setEditorHeads([])
     try {
       const res = await fileBrowserApi.classificationScan(rootPath)
       setClassificationScan(res.data)
+      // 스캔 결과를 편집 상태의 초기값으로 복사 — 사용자가 바로 등록해도 동작하도록.
+      setEditorHeads(buildEditHeadsFromScan(res.data))
       if (res.data.heads.length === 0) {
         setClassificationScanError('루트 아래에서 Head 폴더를 찾을 수 없습니다.')
       }
@@ -369,6 +418,7 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
     setClassificationScan(null)
     setClassificationScanError(null)
     setClassificationScanLoading(false)
+    setEditorHeads([])
     setSelectedGroupOption(NEW_GROUP_SENTINEL)
     setFormatValidationResult(null)
     setNextVersion('1.0')
@@ -502,7 +552,7 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
               {/* 스캔 결과 (읽기 전용 트리) */}
               {classificationScan && classificationScan.heads.length > 0 && !classificationScanLoading && (
                 <div style={{ marginBottom: 16 }}>
-                  <Text strong style={{ fontSize: 13 }}>발견된 구조</Text>
+                  <Text strong style={{ fontSize: 13 }}>발견된 구조 <Text type="secondary" style={{ fontSize: 11 }}>(읽기 전용 · 현재 폴더 상태)</Text></Text>
                   <div
                     style={{
                       marginTop: 6,
@@ -543,6 +593,218 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
                         </div>
                       </div>
                     ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 등록 설정 (편집 가능 · 최종 등록 의도) */}
+              {classificationScan && classificationScan.heads.length > 0 && !classificationScanLoading && (
+                <div style={{ marginBottom: 16 }}>
+                  <Space style={{ width: '100%', justifyContent: 'space-between', marginBottom: 6 }}>
+                    <Text strong style={{ fontSize: 13 }}>
+                      등록 설정
+                      <Text type="secondary" style={{ fontSize: 11, marginLeft: 4 }}>
+                        (편집 가능 · 이대로 등록됩니다)
+                      </Text>
+                    </Text>
+                    <Button
+                      size="small"
+                      icon={<ReloadOutlined />}
+                      onClick={() => {
+                        if (classificationScan) {
+                          setEditorHeads(buildEditHeadsFromScan(classificationScan))
+                        }
+                      }}
+                    >
+                      스캔 결과로 초기화
+                    </Button>
+                  </Space>
+
+                  <div
+                    style={{
+                      border: '1px solid #d9d9d9',
+                      borderRadius: 6,
+                      padding: 10,
+                      background: '#fff',
+                      maxHeight: 360,
+                      overflowY: 'auto',
+                    }}
+                  >
+                    {editorHeads.length === 0 ? (
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        등록할 head가 없습니다. 위의 "스캔 결과로 초기화"를 눌러 복원하세요.
+                      </Text>
+                    ) : (
+                      editorHeads.map((head, headIndex) => (
+                        <div
+                          key={head.folderName}
+                          style={{
+                            border: '1px solid #f0f0f0',
+                            borderRadius: 6,
+                            padding: '10px 12px',
+                            marginBottom: 10,
+                            background: '#fafafa',
+                          }}
+                        >
+                          {/* head 헤더: 이름 편집 + multi-label + 제외 */}
+                          <Space
+                            style={{ width: '100%', justifyContent: 'space-between', marginBottom: 8 }}
+                            wrap
+                          >
+                            <Space size={6}>
+                              <Text type="secondary" style={{ fontSize: 11 }}>Head:</Text>
+                              <Input
+                                size="small"
+                                value={head.displayName}
+                                onChange={(e) => {
+                                  const nextName = e.target.value
+                                  setEditorHeads((prev) =>
+                                    prev.map((h, idx) =>
+                                      idx === headIndex ? { ...h, displayName: nextName } : h,
+                                    ),
+                                  )
+                                }}
+                                style={{ width: 200 }}
+                                placeholder="head 이름"
+                              />
+                              <Text type="secondary" style={{ fontSize: 10 }}>
+                                (폴더: {head.folderName})
+                              </Text>
+                            </Space>
+                            <Space size={8}>
+                              <Checkbox
+                                checked={head.multiLabel}
+                                onChange={(e) => {
+                                  const nextValue = e.target.checked
+                                  setEditorHeads((prev) =>
+                                    prev.map((h, idx) =>
+                                      idx === headIndex ? { ...h, multiLabel: nextValue } : h,
+                                    ),
+                                  )
+                                }}
+                              >
+                                <Text style={{ fontSize: 12 }}>Multi-label</Text>
+                              </Checkbox>
+                              <Button
+                                size="small"
+                                type="text"
+                                danger
+                                icon={<DeleteOutlined />}
+                                onClick={() =>
+                                  setEditorHeads((prev) => prev.filter((_, idx) => idx !== headIndex))
+                                }
+                              >
+                                제외
+                              </Button>
+                            </Space>
+                          </Space>
+
+                          {/* class 목록 (순서 = 출력 index) */}
+                          <Text type="secondary" style={{ fontSize: 11 }}>
+                            클래스 (순서 = 출력 index)
+                          </Text>
+                          <div style={{ marginTop: 4 }}>
+                            {head.classes.length === 0 ? (
+                              <Text type="secondary" style={{ fontSize: 12 }}>
+                                class가 모두 제외되었습니다.
+                              </Text>
+                            ) : (
+                              head.classes.map((cls, classIndex) => (
+                                <div
+                                  key={cls.folderName}
+                                  style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: 6,
+                                    padding: '4px 6px',
+                                    borderRadius: 4,
+                                    background: '#fff',
+                                    border: '1px solid #f0f0f0',
+                                    marginBottom: 4,
+                                  }}
+                                >
+                                  <Tag color="blue" style={{ margin: 0, minWidth: 32, textAlign: 'center' }}>
+                                    {classIndex}
+                                  </Tag>
+                                  <Input
+                                    size="small"
+                                    value={cls.displayName}
+                                    onChange={(e) => {
+                                      const nextName = e.target.value
+                                      setEditorHeads((prev) =>
+                                        prev.map((h, idx) =>
+                                          idx === headIndex
+                                            ? {
+                                                ...h,
+                                                classes: h.classes.map((c, ci) =>
+                                                  ci === classIndex ? { ...c, displayName: nextName } : c,
+                                                ),
+                                              }
+                                            : h,
+                                        ),
+                                      )
+                                    }}
+                                    style={{ flex: 1, minWidth: 120 }}
+                                    placeholder="class 이름"
+                                  />
+                                  <Text type="secondary" style={{ fontSize: 10 }}>
+                                    (폴더: {cls.folderName})
+                                  </Text>
+                                  <Button
+                                    size="small"
+                                    type="text"
+                                    icon={<ArrowUpOutlined />}
+                                    disabled={classIndex === 0}
+                                    onClick={() =>
+                                      setEditorHeads((prev) =>
+                                        prev.map((h, idx) =>
+                                          idx === headIndex
+                                            ? { ...h, classes: moveItem(h.classes, classIndex, -1) }
+                                            : h,
+                                        ),
+                                      )
+                                    }
+                                  />
+                                  <Button
+                                    size="small"
+                                    type="text"
+                                    icon={<ArrowDownOutlined />}
+                                    disabled={classIndex === head.classes.length - 1}
+                                    onClick={() =>
+                                      setEditorHeads((prev) =>
+                                        prev.map((h, idx) =>
+                                          idx === headIndex
+                                            ? { ...h, classes: moveItem(h.classes, classIndex, 1) }
+                                            : h,
+                                        ),
+                                      )
+                                    }
+                                  />
+                                  <Button
+                                    size="small"
+                                    type="text"
+                                    danger
+                                    icon={<DeleteOutlined />}
+                                    onClick={() =>
+                                      setEditorHeads((prev) =>
+                                        prev.map((h, idx) =>
+                                          idx === headIndex
+                                            ? {
+                                                ...h,
+                                                classes: h.classes.filter((_, ci) => ci !== classIndex),
+                                              }
+                                            : h,
+                                        ),
+                                      )
+                                    }
+                                  />
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        </div>
+                      ))
+                    )}
                   </div>
                 </div>
               )}
@@ -964,18 +1226,27 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
                     <Descriptions.Item label="데이터셋 루트">
                       <Text code style={{ fontSize: 11 }}>{classificationRootDir}</Text>
                     </Descriptions.Item>
-                    <Descriptions.Item label="스캔 결과">
-                      {classificationScan && (
-                        <Space direction="vertical" size={2}>
-                          {classificationScan.heads.map((head) => (
-                            <Text key={head.path} style={{ fontSize: 12 }}>
-                              <Text strong>{head.name}</Text>
-                              <Text type="secondary"> — class {head.classes.length}개 / 이미지 </Text>
-                              {head.classes.reduce((sum, cls) => sum + cls.image_count, 0).toLocaleString()}장
+                    <Descriptions.Item label="등록 설정">
+                      <Space direction="vertical" size={2}>
+                        {editorHeads.map((head) => {
+                          const scanHead = classificationScan?.heads.find(
+                            (h) => h.name === head.folderName,
+                          )
+                          const imageTotal = head.classes.reduce((sum, cls) => {
+                            const scanCls = scanHead?.classes.find((c) => c.name === cls.folderName)
+                            return sum + (scanCls?.image_count ?? 0)
+                          }, 0)
+                          return (
+                            <Text key={head.folderName} style={{ fontSize: 12 }}>
+                              <Text strong>{head.displayName}</Text>
+                              <Text type="secondary">
+                                {' — class '}{head.classes.length}개 / 이미지 {imageTotal.toLocaleString()}장
+                                {head.multiLabel ? ' · multi-label' : ''}
+                              </Text>
                             </Text>
-                          ))}
-                        </Space>
-                      )}
+                          )
+                        })}
+                      </Space>
                     </Descriptions.Item>
                   </>
                 ) : (
