@@ -17,23 +17,21 @@ import {
   Button,
   Spin,
   Alert,
-  Popover,
   Popconfirm,
-  Select,
   message,
 } from 'antd'
 import {
   ArrowLeftOutlined,
-  InfoCircleOutlined,
-  CheckCircleOutlined,
   DeleteOutlined,
-  FileOutlined,
 } from '@ant-design/icons'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import dayjs from 'dayjs'
 import { datasetGroupsApi, datasetsApi } from '../api/dataset'
 import ServerFileBrowser from '../components/common/ServerFileBrowser'
 import type { AnnotationFormat, DatasetSummary } from '../types/dataset'
+import { resolveDatasetKind } from '../dataset-display-sdk/registry'
+import type { DatasetListCellContext } from '../dataset-display-sdk/types'
+import { useResizableColumnWidths } from '../components/common/ResizableTableColumns'
 
 const { Title, Text } = Typography
 
@@ -67,37 +65,6 @@ const FORMAT_COLOR: Record<string, string> = {
   NONE: 'default',
 }
 
-/**
- * 클래스 매핑 Popover 내용 컴포넌트.
- * ID → 클래스명 테이블을 간결하게 보여준다.
- */
-function ClassMappingContent({ classMapping }: { classMapping: Record<string, string> }) {
-  const entries = Object.entries(classMapping).sort(
-    ([keyA], [keyB]) => Number(keyA) - Number(keyB)
-  )
-
-  return (
-    <div style={{ maxHeight: 300, overflowY: 'auto', minWidth: 180 }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-        <thead>
-          <tr style={{ borderBottom: '1px solid #f0f0f0' }}>
-            <th style={{ textAlign: 'left', padding: '4px 12px 4px 0', color: '#888' }}>ID</th>
-            <th style={{ textAlign: 'left', padding: '4px 0', color: '#888' }}>클래스명</th>
-          </tr>
-        </thead>
-        <tbody>
-          {entries.map(([classId, className]) => (
-            <tr key={classId} style={{ borderBottom: '1px solid #fafafa' }}>
-              <td style={{ padding: '3px 12px 3px 0', fontFamily: 'monospace' }}>{classId}</td>
-              <td style={{ padding: '3px 0' }}>{className}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  )
-}
-
 export default function DatasetDetailPage() {
   const { groupId } = useParams()
   const navigate = useNavigate()
@@ -114,6 +81,24 @@ export default function DatasetDetailPage() {
   const [metaFileTargetDatasetId, setMetaFileTargetDatasetId] = useState<string | null>(null)
   const [metaFileBrowserOpen, setMetaFileBrowserOpen] = useState(false)
   const [replacingMetaFileDatasetId, setReplacingMetaFileDatasetId] = useState<string | null>(null)
+
+  // 데이터셋 목록 테이블의 컬럼별 초기 너비. 헤더 우측 경계 드래그로 조정 가능.
+  // 훅 호출은 early-return 이전이어야 하므로 최상위에 둔다.
+  const {
+    widthByKey: datasetColumnWidths,
+    buildHeaderCellProps: buildDatasetHeaderCellProps,
+    tableComponents: resizableTableComponents,
+  } = useResizableColumnWidths({
+    split: 100,
+    version: 100,
+    status: 110,
+    image_count: 110,
+    class_info: 280,
+    annotation_format: 180,
+    storage_uri: 200,
+    created_at: 120,
+    action: 120,
+  })
 
   const { data: group, isLoading, error } = useQuery({
     queryKey: ['dataset-group', groupId],
@@ -237,13 +222,33 @@ export default function DatasetDetailPage() {
     )
   }
 
-  /* -- 데이터셋 테이블 컬럼 -- */
+  /* -- Display SDK — 그룹 용도(detection/classification/...)별 셀 렌더러 해석 -- */
+  const kindDefinition = resolveDatasetKind(group)
+  const cellContext: DatasetListCellContext = {
+    editingFormatDatasetId: editingFormatId,
+    editingFormatValue,
+    updatingFormatDatasetId,
+    validatingDatasetId,
+    replacingMetaFileDatasetId,
+    onStartEditFormat: startEditingFormat,
+    onChangeEditingFormat: setEditingFormatValue,
+    onConfirmFormatChange: confirmFormatChange,
+    onCancelEditFormat: () => setEditingFormatId(null),
+    onValidateDataset: handleValidateDataset,
+    onOpenMetaFileBrowser: (datasetId: string) => {
+      setMetaFileTargetDatasetId(datasetId)
+      setMetaFileBrowserOpen(true)
+    },
+  }
+
+  /* -- 데이터셋 테이블 컬럼 -- 너비는 resize 훅 state에서 읽는다 */
   const datasetColumns = [
     {
       title: 'Split',
       dataIndex: 'split',
       key: 'split',
-      width: 100,
+      width: datasetColumnWidths.split,
+      onHeaderCell: buildDatasetHeaderCellProps('split'),
       render: (split: string) => (
         <Tag color={SPLIT_COLOR[split] ?? 'default'}>{split}</Tag>
       ),
@@ -252,13 +257,15 @@ export default function DatasetDetailPage() {
       title: '버전',
       dataIndex: 'version',
       key: 'version',
-      width: 100,
+      width: datasetColumnWidths.version,
+      onHeaderCell: buildDatasetHeaderCellProps('version'),
     },
     {
       title: '상태',
       dataIndex: 'status',
       key: 'status',
-      width: 110,
+      width: datasetColumnWidths.status,
+      onHeaderCell: buildDatasetHeaderCellProps('status'),
       render: (status: string) => (
         <Badge status={STATUS_BADGE[status] as any} text={status} />
       ),
@@ -267,7 +274,8 @@ export default function DatasetDetailPage() {
       title: '이미지 수',
       dataIndex: 'image_count',
       key: 'image_count',
-      width: 110,
+      width: datasetColumnWidths.image_count,
+      onHeaderCell: buildDatasetHeaderCellProps('image_count'),
       align: 'right' as const,
       render: (count: number | null) =>
         count != null ? count.toLocaleString() : <Text type="secondary">-</Text>,
@@ -275,127 +283,25 @@ export default function DatasetDetailPage() {
     {
       title: '클래스 정보',
       key: 'class_info',
-      width: 150,
-      render: (_: unknown, record: DatasetSummary) => {
-        const classInfo = record.metadata?.class_info
-        const classCount = record.class_count ?? classInfo?.class_count
-        const classMapping = classInfo?.class_mapping
-
-        // 클래스 정보가 있으면 — 개수 + 상세보기 Popover
-        if (classCount != null && classMapping) {
-          return (
-            <Space size={4}>
-              <Text>{classCount}개</Text>
-              <Popover
-                title={`클래스 매핑 (${classCount}개)`}
-                content={<ClassMappingContent classMapping={classMapping} />}
-                trigger="click"
-                placement="left"
-              >
-                <Button
-                  type="link"
-                  size="small"
-                  icon={<InfoCircleOutlined />}
-                  style={{ padding: 0 }}
-                >
-                  상세보기
-                </Button>
-              </Popover>
-            </Space>
-          )
-        }
-
-        // 클래스 수만 있고 매핑은 없는 경우
-        if (classCount != null) {
-          return <Text>{classCount}개</Text>
-        }
-
-        // 클래스 정보 없음 — 검증 버튼 표시
-        const annotationFormat = record.annotation_format || group.annotation_format
-        const isValidatable = annotationFormat && annotationFormat !== 'NONE'
-
-        if (isValidatable) {
-          return (
-            <Button
-              type="link"
-              size="small"
-              icon={<CheckCircleOutlined />}
-              loading={validatingDatasetId === record.id}
-              onClick={(e) => {
-                e.stopPropagation()
-                handleValidateDataset(record)
-              }}
-            >
-              검증
-            </Button>
-          )
-        }
-
-        return <Text type="secondary">-</Text>
-      },
+      width: datasetColumnWidths.class_info,
+      onHeaderCell: buildDatasetHeaderCellProps('class_info'),
+      render: (_: unknown, record: DatasetSummary) =>
+        kindDefinition.renderClassInfoCell(record, group, cellContext),
     },
     {
       title: '포맷',
       key: 'annotation_format',
-      width: 200,
-      render: (_: unknown, record: DatasetSummary) => {
-        const currentFormat = record.annotation_format ?? 'NONE'
-        const isEditing = editingFormatId === record.id
-
-        if (isEditing) {
-          return (
-            <Space size={4} onClick={(e) => e.stopPropagation()}>
-              <Select
-                size="small"
-                value={editingFormatValue}
-                onChange={(value: AnnotationFormat) => setEditingFormatValue(value)}
-                style={{ width: 110 }}
-                options={[
-                  { value: 'COCO', label: 'COCO' },
-                  { value: 'YOLO', label: 'YOLO' },
-                  { value: 'ATTR_JSON', label: 'ATTR_JSON' },
-                  { value: 'CLS_MANIFEST', label: 'CLS_MANIFEST' },
-                  { value: 'CUSTOM', label: 'CUSTOM' },
-                  { value: 'NONE', label: 'NONE' },
-                ]}
-              />
-              <Button
-                type="primary"
-                size="small"
-                loading={updatingFormatDatasetId === record.id}
-                onClick={() => confirmFormatChange(record.id)}
-              >
-                확인
-              </Button>
-              <Button
-                size="small"
-                onClick={() => setEditingFormatId(null)}
-              >
-                취소
-              </Button>
-            </Space>
-          )
-        }
-
-        return (
-          <Space size={4}>
-            <Tag color={FORMAT_COLOR[currentFormat] ?? 'default'}>{currentFormat}</Tag>
-            <Button
-              type="link"
-              size="small"
-              style={{ padding: 0 }}
-              onClick={(e) => { e.stopPropagation(); startEditingFormat(record) }}
-            >
-              변경
-            </Button>
-          </Space>
-        )
-      },
+      width: datasetColumnWidths.annotation_format,
+      onHeaderCell: buildDatasetHeaderCellProps('annotation_format'),
+      render: (_: unknown, record: DatasetSummary) =>
+        kindDefinition.renderFormatCell(record, group, cellContext),
     },
     {
       title: '저장 경로',
       dataIndex: 'storage_uri',
       key: 'storage_uri',
+      width: datasetColumnWidths.storage_uri,
+      onHeaderCell: buildDatasetHeaderCellProps('storage_uri'),
       ellipsis: true,
       render: (uri: string) => (
         <Text copyable style={{ fontSize: 12 }}>{uri}</Text>
@@ -405,30 +311,18 @@ export default function DatasetDetailPage() {
       title: '등록일',
       dataIndex: 'created_at',
       key: 'created_at',
-      width: 120,
+      width: datasetColumnWidths.created_at,
+      onHeaderCell: buildDatasetHeaderCellProps('created_at'),
       render: (v: string) => dayjs(v).format('YYYY-MM-DD'),
     },
     {
       title: '',
       key: 'action',
-      width: 120,
+      width: datasetColumnWidths.action,
+      onHeaderCell: buildDatasetHeaderCellProps('action'),
       render: (_: unknown, record: DatasetSummary) => (
         <Space size={0}>
-          <Button
-            type="text"
-            size="small"
-            icon={<FileOutlined />}
-            loading={replacingMetaFileDatasetId === record.id}
-            onClick={(e) => {
-              e.stopPropagation()
-              setMetaFileTargetDatasetId(record.id)
-              setMetaFileBrowserOpen(true)
-            }}
-            title={record.annotation_meta_file
-              ? `메타 파일 교체 (현재: ${record.annotation_meta_file})`
-              : '메타 파일 추가'}
-            style={record.annotation_meta_file ? { color: '#1677ff' } : undefined}
-          />
+          {kindDefinition.renderMetaFileAction(record, group, cellContext)}
           <Popconfirm
             title="데이터셋 삭제"
             description={`${record.split}/${record.version}을 삭제하시겠습니까?`}
@@ -533,6 +427,7 @@ export default function DatasetDetailPage() {
       <Title level={5} style={{ marginBottom: 12 }}>
         데이터셋 목록 ({group.datasets.length}건)
       </Title>
+      {/* 컬럼 너비는 헤더 우측 경계 드래그로 조정 가능(useResizableColumnWidths). */}
       <Table<DatasetSummary>
         dataSource={[...group.datasets].sort((a, b) => {
           const splitDiff = (SPLIT_ORDER[a.split] ?? 99) - (SPLIT_ORDER[b.split] ?? 99)
@@ -540,9 +435,12 @@ export default function DatasetDetailPage() {
           return b.version.localeCompare(a.version)
         })}
         columns={datasetColumns}
+        components={resizableTableComponents}
         rowKey="id"
         pagination={false}
         size="middle"
+        // 창이 좁아 컬럼 합보다 컨테이너가 작을 때 테이블이 밖으로 넘치지 않도록 가로 스크롤 허용.
+        scroll={{ x: 'max-content' }}
         onRow={(record) => ({
           onClick: (e: React.MouseEvent) => {
             // 버튼, 링크, Popover 등 인터랙티브 요소 클릭 시 행 네비게이션 무시

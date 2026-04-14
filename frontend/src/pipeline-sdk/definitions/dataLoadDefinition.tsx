@@ -186,7 +186,11 @@ function DataLoadPropertiesComponent({ data }: { nodeId: string; data: DataLoadN
   }, [groupData, data.datasetId])
 
   const classTableData = useMemo(() => {
-    const classMapping = selectedDataset?.metadata?.class_info?.class_mapping
+    // Data Load 노드는 detection 전제(파이프라인이 detection만 지원) → detection class_mapping만 표시
+    const classInfo = selectedDataset?.metadata?.class_info
+    const classMapping = classInfo && 'class_mapping' in classInfo && !('heads' in classInfo)
+      ? classInfo.class_mapping
+      : undefined
     if (!classMapping) return []
     return Object.entries(classMapping)
       .sort(([a], [b]) => Number(a) - Number(b))
