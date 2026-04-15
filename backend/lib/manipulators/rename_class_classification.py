@@ -1,5 +1,5 @@
 """
-rename_classification_class — 특정 Head 내 Class 이름 변경 manipulator (STUB).
+rename_class_classification — 특정 Head 내 Class 이름 변경 manipulator (STUB).
 
 역할:
     지정 head 의 classes 배열 내 이름을 매핑에 따라 변경한다.
@@ -22,12 +22,12 @@ from lib.pipeline.manipulator_base import UnitManipulator
 from lib.pipeline.pipeline_data_models import DatasetMeta
 
 
-class RenameClassificationClass(UnitManipulator):
-    """DB seed name: "rename_classification_class"."""
+class RenameClassClassification(UnitManipulator):
+    """DB seed name: "rename_class_classification"."""
 
     @property
     def name(self) -> str:
-        return "rename_classification_class"
+        return "rename_class_classification"
 
     def transform_annotation(
         self,
@@ -36,5 +36,5 @@ class RenameClassificationClass(UnitManipulator):
         context: dict[str, Any] | None = None,
     ) -> DatasetMeta:
         raise NotImplementedError(
-            "rename_classification_class 는 아직 구현되지 않았습니다 (stub)."
+            "rename_class_classification 는 아직 구현되지 않았습니다 (stub)."
         )

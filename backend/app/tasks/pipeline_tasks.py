@@ -212,6 +212,19 @@ def _execute_pipeline(
         # - CLASSIFICATION: head_schema(list[HeadSchema]) 기반 heads 구조
         if result.output_meta.task_kind == "CLASSIFICATION":
             head_schema = result.output_meta.head_schema or []
+            # head/class 별 이미지 수를 image_records.labels 로부터 재계산 — RAW 와 동일 규약.
+            per_head_class_counts: dict[str, dict[str, int]] = {
+                head.name: {class_name: 0 for class_name in head.classes}
+                for head in head_schema
+            }
+            for record in result.output_meta.image_records:
+                for head_name, class_names in (record.labels or {}).items():
+                    head_bucket = per_head_class_counts.get(head_name)
+                    if head_bucket is None:
+                        continue
+                    for class_name in class_names:
+                        if class_name in head_bucket:
+                            head_bucket[class_name] += 1
             class_info_heads = [
                 {
                     "name": head.name,
@@ -220,6 +233,7 @@ def _execute_pipeline(
                         str(class_idx): class_name
                         for class_idx, class_name in enumerate(head.classes)
                     },
+                    "per_class_image_count": per_head_class_counts[head.name],
                 }
                 for head in head_schema
             ]

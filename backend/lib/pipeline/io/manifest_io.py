@@ -14,11 +14,13 @@ manifest.jsonl 1줄 스키마:
       "labels": {"hardhat_wear": ["helmet"], "visibility": ["seen"]}
     }
 
-head_schema.json 스키마:
-    [
-      {"name": "hardhat_wear", "multi_label": false, "classes": ["helmet", "no_helmet"]},
-      ...
-    ]
+head_schema.json 스키마 (SSOT — objective_n_plan_7th.md):
+    {
+      "heads": [
+        {"name": "hardhat_wear", "multi_label": false, "classes": ["helmet", "no_helmet"]},
+        ...
+      ]
+    }
 
 파싱/저장 원칙:
   - 이 모듈은 파일 I/O 만 수행. DB/FastAPI 의존성 금지.
@@ -65,13 +67,20 @@ def parse_manifest_dir(
     if not schema_path.exists():
         raise FileNotFoundError(f"head_schema.json 이 존재하지 않습니다: {schema_path}")
 
-    # head_schema.json 파싱
+    # head_schema.json 파싱 — 규약: {"heads": [...]} dict 형태 (objective_n_plan_7th.md:142)
     with open(schema_path, "r", encoding="utf-8") as schema_file:
         raw_schema = json.load(schema_file)
-    if not isinstance(raw_schema, list):
-        raise ValueError(f"head_schema.json 루트는 list 여야 합니다: {schema_path}")
+    if not isinstance(raw_schema, dict) or "heads" not in raw_schema:
+        raise ValueError(
+            f"head_schema.json 은 {{\"heads\": [...]}} 형태여야 합니다: {schema_path}"
+        )
+    raw_heads = raw_schema["heads"]
+    if not isinstance(raw_heads, list):
+        raise ValueError(
+            f"head_schema.json 의 'heads' 값은 list 여야 합니다: {schema_path}"
+        )
     head_schema: list[HeadSchema] = []
-    for raw_head in raw_schema:
+    for raw_head in raw_heads:
         if not isinstance(raw_head, dict):
             raise ValueError(f"head_schema 항목이 dict 가 아닙니다: {raw_head!r}")
         try:
@@ -165,14 +174,17 @@ def write_manifest_dir(meta: DatasetMeta, dataset_root: Path) -> None:
         )
 
     schema_path = dataset_root / HEAD_SCHEMA_FILENAME
-    serialized_schema = [
-        {
-            "name": head.name,
-            "multi_label": head.multi_label,
-            "classes": list(head.classes),
-        }
-        for head in meta.head_schema
-    ]
+    # 규약: {"heads": [...]} dict 형태 (RAW 등록 writer 와 동일, objective_n_plan_7th.md:142)
+    serialized_schema = {
+        "heads": [
+            {
+                "name": head.name,
+                "multi_label": head.multi_label,
+                "classes": list(head.classes),
+            }
+            for head in meta.head_schema
+        ]
+    }
     with open(schema_path, "w", encoding="utf-8") as schema_file:
         json.dump(serialized_schema, schema_file, ensure_ascii=False, indent=2)
 

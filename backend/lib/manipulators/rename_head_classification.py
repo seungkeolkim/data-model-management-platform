@@ -1,5 +1,5 @@
 """
-rename_classification_head — Head 이름 변경 manipulator (STUB).
+rename_head_classification — Head 이름 변경 manipulator (STUB).
 
 역할:
     head_schema[*].name 을 매핑에 따라 변경한다.
@@ -21,12 +21,12 @@ from lib.pipeline.manipulator_base import UnitManipulator
 from lib.pipeline.pipeline_data_models import DatasetMeta
 
 
-class RenameClassificationHead(UnitManipulator):
-    """DB seed name: "rename_classification_head"."""
+class RenameHeadClassification(UnitManipulator):
+    """DB seed name: "rename_head_classification"."""
 
     @property
     def name(self) -> str:
-        return "rename_classification_head"
+        return "rename_head_classification"
 
     def transform_annotation(
         self,
@@ -35,5 +35,5 @@ class RenameClassificationHead(UnitManipulator):
         context: dict[str, Any] | None = None,
     ) -> DatasetMeta:
         raise NotImplementedError(
-            "rename_classification_head 는 아직 구현되지 않았습니다 (stub)."
+            "rename_head_classification 는 아직 구현되지 않았습니다 (stub)."
         )

@@ -1,5 +1,5 @@
 """
-remove_images_without_classification_label — 라벨 없는 이미지 제거 manipulator (STUB).
+remove_images_without_label_classification — 라벨 없는 이미지 제거 manipulator (STUB).
 
 역할:
     지정한 head(또는 모든 head)에 대해 label 이 없는(빈 리스트) 이미지를 image_records 에서 제거한다.
@@ -21,12 +21,12 @@ from lib.pipeline.manipulator_base import UnitManipulator
 from lib.pipeline.pipeline_data_models import DatasetMeta
 
 
-class RemoveImagesWithoutClassificationLabel(UnitManipulator):
-    """DB seed name: "remove_images_without_classification_label"."""
+class RemoveImagesWithoutLabelClassification(UnitManipulator):
+    """DB seed name: "remove_images_without_label_classification"."""
 
     @property
     def name(self) -> str:
-        return "remove_images_without_classification_label"
+        return "remove_images_without_label_classification"
 
     def transform_annotation(
         self,
@@ -35,5 +35,5 @@ class RemoveImagesWithoutClassificationLabel(UnitManipulator):
         context: dict[str, Any] | None = None,
     ) -> DatasetMeta:
         raise NotImplementedError(
-            "remove_images_without_classification_label 는 아직 구현되지 않았습니다 (stub)."
+            "remove_images_without_label_classification 는 아직 구현되지 않았습니다 (stub)."
         )
