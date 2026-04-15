@@ -293,6 +293,7 @@ export const dataLoadDefinition: NodeDefinition<'dataLoad'> = {
   },
 
   // source:<id> 토큰을 점유하여 DataLoadNode로 복원.
+  // passthrough 모드(tasks 비어있음)에서는 config.passthrough_source_dataset_id 도 포함.
   matchFromConfig(ctx) {
     const { config, datasetDisplayMap, claimedSourceDatasetIds } = ctx
     const sourceIds = new Set<string>()
@@ -302,6 +303,9 @@ export const dataLoadDefinition: NodeDefinition<'dataLoad'> = {
           sourceIds.add(input.split(':', 2)[1])
         }
       }
+    }
+    if (config.passthrough_source_dataset_id) {
+      sourceIds.add(config.passthrough_source_dataset_id)
     }
     const restored = []
     for (const datasetId of sourceIds) {

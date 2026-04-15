@@ -108,6 +108,18 @@ export function pipelineConfigToGraph(
   // Save 노드 → sink task 연결
   const saveNodeId = nodes.find((n) => n.type === 'save')?.id
   if (saveNodeId) {
+    // Passthrough 모드: tasks 가 비어있으면 DataLoad(passthrough_source_dataset_id) → Save 직결.
+    if (Object.keys(config.tasks).length === 0 && config.passthrough_source_dataset_id) {
+      const dataLoadNodeId = datasetIdToNodeId.get(config.passthrough_source_dataset_id)
+      if (dataLoadNodeId) {
+        edges.push({
+          id: makeEdgeId(),
+          source: dataLoadNodeId,
+          target: saveNodeId,
+          animated: true,
+        })
+      }
+    }
     const referencedTaskKeys = new Set<string>()
     for (const taskConfig of Object.values(config.tasks)) {
       for (const input of taskConfig.inputs) {

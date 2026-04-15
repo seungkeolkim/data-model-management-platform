@@ -108,9 +108,15 @@ class PipelineDagExecutor:
     ) -> 'PipelineResult':
         """파이프라인 실제 실행 로직. run()에서 호출된다."""
         logger.info(
-            "파이프라인 실행 시작: name=%s, tasks=%d",
-            config.name, len(config.tasks),
+            "파이프라인 실행 시작: name=%s, tasks=%d, passthrough=%s",
+            config.name, len(config.tasks), config.is_passthrough,
         )
+
+        # ── Passthrough 모드: tasks 가 비어있으면 소스를 그대로 output 으로 복사 ──
+        if config.is_passthrough:
+            return self._run_passthrough(
+                config, target_version, log_buffer_handler,
+            )
 
         execution_order = config.topological_order()
         terminal_task_name = config.get_terminal_task_name()
@@ -223,7 +229,92 @@ class PipelineDagExecutor:
             output_meta.image_count, len(output_meta.categories), output_format,
         )
 
-        # 태스크 진행 콜백: 이미지 실체화 단계 시작
+        # ── Phase B: 공통 실체화 경로 ──
+        return self._materialize_and_write(
+            config=config,
+            target_version=target_version,
+            output_meta=output_meta,
+            all_source_storage_uris=all_source_storage_uris,
+            output_format=output_format,
+            log_buffer_handler=log_buffer_handler,
+        )
+
+    # -------------------------------------------------------------------------
+    # Passthrough (Load → Save 직결)
+    # -------------------------------------------------------------------------
+
+    def _run_passthrough(
+        self,
+        config: PipelineConfig,
+        target_version: str,
+        log_buffer_handler: '_ProcessingLogBufferHandler',
+    ) -> 'PipelineResult':
+        """
+        Tasks 가 없는 파이프라인 — 소스 메타를 그대로 output 으로 복사한다.
+
+        annotation 변환 없음. 이미지는 기존 Phase B 경로로 lazy-copy 된다.
+        """
+        source_dataset_id = config.passthrough_source_dataset_id
+        assert source_dataset_id is not None, "is_passthrough 체크에서 보장되어야 함"
+
+        logger.info("Passthrough 모드: source=%s", source_dataset_id)
+
+        # Load 단계 진행 콜백 (단일 synthetic task)
+        passthrough_task_name = "__passthrough_load__"
+        load_started_at = datetime.now(timezone.utc).isoformat()
+        if self._on_task_progress:
+            self._on_task_progress(passthrough_task_name, "RUNNING", {
+                "operator": "passthrough_load",
+                "started_at": load_started_at,
+            })
+
+        source_meta = self._load_source_meta(source_dataset_id)
+        all_source_storage_uris = [source_meta.storage_uri]
+
+        # 소스를 output 으로 그대로 사용. Phase B 에서 storage_uri 를 덮어쓴다.
+        output_meta = source_meta
+
+        if self._on_task_progress:
+            self._on_task_progress(passthrough_task_name, "DONE", {
+                "operator": "passthrough_load",
+                "started_at": load_started_at,
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+                "input_images": output_meta.image_count,
+                "output_images": output_meta.image_count,
+            })
+
+        output_format = config.output.annotation_format.upper()
+
+        logger.info(
+            "Phase A 완료 (passthrough): images=%d, task_kind=%s, output_format=%s",
+            output_meta.image_count, output_meta.task_kind, output_format,
+        )
+
+        # ── Phase B: 공통 실체화 경로를 그대로 태운다 ──
+        return self._materialize_and_write(
+            config=config,
+            target_version=target_version,
+            output_meta=output_meta,
+            all_source_storage_uris=all_source_storage_uris,
+            output_format=output_format,
+            log_buffer_handler=log_buffer_handler,
+        )
+
+    def _materialize_and_write(
+        self,
+        config: PipelineConfig,
+        target_version: str,
+        output_meta: DatasetMeta,
+        all_source_storage_uris: list[str],
+        output_format: str,
+        log_buffer_handler: '_ProcessingLogBufferHandler',
+    ) -> 'PipelineResult':
+        """
+        Phase B 공통 경로: 출력 경로 해석 → 이미지 실체화 → annotation 작성 → processing.log.
+
+        _run_pipeline 과 _run_passthrough 가 공유한다.
+        (원래 _run_pipeline 안에 인라인되어 있었으나 passthrough 도 같은 경로가 필요해 분리.)
+        """
         image_materialize_started_at = datetime.now(timezone.utc).isoformat()
         if self._on_task_progress:
             self._on_task_progress("__image_materialize__", "RUNNING", {
@@ -232,11 +323,9 @@ class PipelineDagExecutor:
                 "total_images": output_meta.image_count,
             })
 
-        # ── Phase B: 출력 경로 결정 + 이미지 실체화 + annotation 파일 작성 ──
         output_dataset_type = config.output.dataset_type.upper()
         output_split = config.output.split.upper()
 
-        # storage_uri 생성
         output_storage_uri = self.storage.build_dataset_uri(
             dataset_type=output_dataset_type,
             name=config.name,
@@ -245,10 +334,8 @@ class PipelineDagExecutor:
         )
         output_meta.storage_uri = output_storage_uri
 
-        # 출력 디렉토리 생성
         self.storage.makedirs(output_storage_uri)
 
-        # 이미지 실체화 계획 생성 + 실행
         image_plans = self._build_image_plans(
             output_meta, all_source_storage_uris, output_storage_uri,
         )
@@ -263,7 +350,6 @@ class PipelineDagExecutor:
         image_materializer = ImageMaterializer(self.storage)
         materialize_result = image_materializer.materialize(dataset_plan)
 
-        # 스킵된 이미지가 있으면 output_meta에서 해당 레코드 제거
         if materialize_result.skipped_count > 0:
             skipped_file_set = set(materialize_result.skipped_files)
             original_count = len(output_meta.image_records)
@@ -277,12 +363,10 @@ class PipelineDagExecutor:
                 materialize_result.skipped_count,
             )
 
-        # annotation 파일 작성 (스킵된 이미지가 제거된 output_meta 기반)
         annotation_filenames = self._write_annotations(
             output_meta, output_storage_uri, output_format,
         )
 
-        # data.yaml 생성 — YOLO 출력인 경우, 데이터셋 루트에 배치
         annotation_meta_filename: str | None = None
         if output_format == "YOLO":
             output_root_dir = self.storage.resolve_path(output_storage_uri)
@@ -291,8 +375,9 @@ class PipelineDagExecutor:
             _write_yolo_data_yaml(sorted_category_names, output_root_dir)
             annotation_meta_filename = "data.yaml"
             logger.info("YOLO data.yaml 생성 완료 (데이터셋 루트)")
+        elif output_format == "CLS_MANIFEST":
+            annotation_meta_filename = "head_schema.json"
 
-        # 태스크 진행 콜백: 이미지 실체화 완료
         if self._on_task_progress:
             self._on_task_progress("__image_materialize__", "DONE", {
                 "operator": "image_materialize",
@@ -309,7 +394,6 @@ class PipelineDagExecutor:
             materialize_result.skipped_count, len(annotation_filenames),
         )
 
-        # ── processing.log 파일 작성 ──
         self._write_processing_log(
             output_storage_uri=output_storage_uri,
             config=config,
@@ -432,32 +516,50 @@ class PipelineDagExecutor:
         """
         output_meta의 image_records로부터 이미지 실체화 계획을 생성.
 
-        소스 이미지 경로 결정 방식:
-          1. record.extra에 source_storage_uri + original_file_name이 있으면 (merge 경로)
-             → 원본 파일명으로 소스 경로를 직접 구성
-          2. 없으면 (단일 소스 경로)
-             → source_storage_uris의 첫 번째 URI를 사용
+        Detection 경로:
+          - record.file_name 은 파일명만 (예: "000123.jpg"). images_dirname 을 덧붙여 경로 구성.
+          - merge 경로면 record.extra.source_storage_uri + original_file_name 으로 원본 위치 지정.
+
+        Classification 경로:
+          - record.file_name 은 이미 "images/{sha}.{ext}" 상대경로 규약 (manifest_io).
+          - images_dirname 을 중복 부착하면 "images/images/..." 로 깨지므로 분기한다.
+          - merge 경로는 아직 미구현 (다음 세션).
         """
         plans: list[ImagePlan] = []
+        is_classification = output_meta.task_kind == "CLASSIFICATION"
 
         for record in output_meta.image_records:
-            source_uri = record.extra.get("source_storage_uri")
+            source_uri_override = record.extra.get("source_storage_uri")
             original_file_name = record.extra.get("original_file_name")
 
-            if source_uri and original_file_name:
-                src_uri = f"{source_uri}/{self.images_dirname}/{original_file_name}"
-            elif source_storage_uris:
-                src_uri = (
-                    f"{source_storage_uris[0]}/{self.images_dirname}/{record.file_name}"
-                )
+            if is_classification:
+                # file_name 자체가 "images/{sha}.{ext}" → 그대로 사용.
+                rel_path = record.file_name
+                if source_uri_override:
+                    src_uri = f"{source_uri_override}/{rel_path}"
+                elif source_storage_uris:
+                    src_uri = f"{source_storage_uris[0]}/{rel_path}"
+                else:
+                    logger.warning(
+                        "소스 경로를 결정할 수 없음 (건너뜀): file_name=%s",
+                        record.file_name,
+                    )
+                    continue
+                dst_uri = f"{output_storage_uri}/{rel_path}"
             else:
-                logger.warning(
-                    "소스 경로를 결정할 수 없음 (건너뜀): file_name=%s",
-                    record.file_name,
-                )
-                continue
-
-            dst_uri = f"{output_storage_uri}/{self.images_dirname}/{record.file_name}"
+                if source_uri_override and original_file_name:
+                    src_uri = f"{source_uri_override}/{self.images_dirname}/{original_file_name}"
+                elif source_storage_uris:
+                    src_uri = (
+                        f"{source_storage_uris[0]}/{self.images_dirname}/{record.file_name}"
+                    )
+                else:
+                    logger.warning(
+                        "소스 경로를 결정할 수 없음 (건너뜀): file_name=%s",
+                        record.file_name,
+                    )
+                    continue
+                dst_uri = f"{output_storage_uri}/{self.images_dirname}/{record.file_name}"
 
             # record.extra에 누적된 이미지 변환 명세 추출
             raw_specs = record.extra.pop("image_manipulation_specs", [])

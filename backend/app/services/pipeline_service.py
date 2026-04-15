@@ -92,6 +92,14 @@ class PipelineService:
                     source_dataset_id, task_name, result,
                 )
 
+        # Passthrough 모드(tasks 비어있음)에서도 소스 검증
+        if config.is_passthrough and config.passthrough_source_dataset_id:
+            await self._validate_source_dataset(
+                config.passthrough_source_dataset_id,
+                "__passthrough__",
+                result,
+            )
+
         return result
 
     async def _validate_source_dataset(
@@ -368,10 +376,8 @@ class PipelineService:
 
         소스가 없거나 교집합이 �어 있으면 None을 반환한다.
         """
-        # 모든 태스크에서 소스 데이터셋 ID 수집
-        source_dataset_ids: set[str] = set()
-        for task_config in config.tasks.values():
-            source_dataset_ids.update(task_config.get_source_dataset_ids())
+        # 모든 태스크 + passthrough 에서 소스 데이터셋 ID 수집
+        source_dataset_ids: set[str] = set(config.get_all_source_dataset_ids())
 
         if not source_dataset_ids:
             return None

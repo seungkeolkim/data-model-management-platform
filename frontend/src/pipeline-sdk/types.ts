@@ -97,8 +97,9 @@ export interface ConvertContext {
 export interface ConfigContribution {
   /** tasks[key]로 병합될 항목. 노드가 task를 발생시키지 않으면 빈 객체. */
   tasks?: Record<string, TaskConfig>
-  /** PipelineConfig 루트에 병합될 필드 (SaveNode가 name/output/description을 기여) */
-  root?: Partial<Pick<PipelineConfig, 'name' | 'description' | 'output'>>
+  /** PipelineConfig 루트에 병합될 필드. SaveNode가 name/output/description 을 기여하며,
+   *  Load→Save 직결(tasks 비어있음)일 때 passthrough_source_dataset_id 도 추가한다. */
+  root?: Partial<Pick<PipelineConfig, 'name' | 'description' | 'output' | 'passthrough_source_dataset_id'>>
   /** 다른 노드가 이 노드를 inputs에서 참조할 때 사용할 토큰. 없으면 이 노드는 edge 대상으로 참조 불가. */
   outputRef?: string
 }

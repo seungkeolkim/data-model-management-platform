@@ -29,6 +29,11 @@ export interface PipelineConfig {
   output: OutputConfig
   tasks: Record<string, TaskConfig>
   /**
+   * Load→Save 직결 모드에서 참조할 소스 Dataset.id.
+   * tasks 가 비어있을 때만 의미가 있다.
+   */
+  passthrough_source_dataset_id?: string | null
+  /**
    * DAG 스키마 버전. 현재 SDK는 v1을 생성.
    * 하위 버전 migrator는 도입하지 않음 — 미래 파이프라인 변경 대비 완충용 필드.
    */

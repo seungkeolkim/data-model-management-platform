@@ -114,7 +114,8 @@ VALID_DATASET_TYPES = {"SOURCE", "PROCESSED", "FUSION"}
 VALID_SPLIT_VALUES = {"TRAIN", "VAL", "TEST", "NONE"}
 
 # 허용되는 annotation_format 값
-VALID_ANNOTATION_FORMATS = {"COCO", "YOLO"}
+# CLS_MANIFEST 는 classification(manifest.jsonl + head_schema.json) 전용 포맷.
+VALID_ANNOTATION_FORMATS = {"COCO", "YOLO", "CLS_MANIFEST"}
 
 
 def validate_pipeline_config_static(config: PipelineConfig) -> PipelineValidationResult:
