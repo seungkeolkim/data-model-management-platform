@@ -70,23 +70,24 @@ def render_pipeline_png(
         )
 
         # 소스 데이터셋 노드 (회색 계열, 둥근 모서리)
+        # passthrough(tasks 비어있음) 모드는 passthrough_source_dataset_id 도 포함하므로
+        # get_all_source_dataset_ids() 로 일괄 수집한다.
         source_ids_seen: set[str] = set()
-        for task_config in pipeline_config.tasks.values():
-            for dataset_id in task_config.get_source_dataset_ids():
-                if dataset_id in source_ids_seen:
-                    continue
-                source_ids_seen.add(dataset_id)
-                display_name = source_dataset_names.get(
-                    dataset_id, dataset_id[:8]
-                )
-                dot.node(
-                    f"src_{dataset_id}",
-                    label=display_name,
-                    fillcolor="#E8E8E8",
-                    color="#999999",
-                    shape="box",
-                    style="filled,rounded",
-                )
+        for dataset_id in pipeline_config.get_all_source_dataset_ids():
+            if dataset_id in source_ids_seen:
+                continue
+            source_ids_seen.add(dataset_id)
+            display_name = source_dataset_names.get(
+                dataset_id, dataset_id[:8]
+            )
+            dot.node(
+                f"src_{dataset_id}",
+                label=display_name,
+                fillcolor="#E8E8E8",
+                color="#999999",
+                shape="box",
+                style="filled,rounded",
+            )
 
         # 태스크 노드 (파란 계열)
         for task_name, task_config in pipeline_config.tasks.items():
@@ -141,8 +142,13 @@ def render_pipeline_png(
                 dot.edge(f"task_{dep_task}", f"task_{task_name}")
 
         # 엣지: 최종 태스크 → 출력
-        terminal_task_name = pipeline_config.get_terminal_task_name()
-        dot.edge(f"task_{terminal_task_name}", "output")
+        # passthrough(Load→Save 직결) 의 경우 태스크가 없으므로 소스 → 출력 직결.
+        if pipeline_config.is_passthrough:
+            for source_id in source_ids_seen:
+                dot.edge(f"src_{source_id}", "output", label="passthrough", style="dashed")
+        else:
+            terminal_task_name = pipeline_config.get_terminal_task_name()
+            dot.edge(f"task_{terminal_task_name}", "output")
 
         # PNG 렌더링
         output_path = Path(output_path)
