@@ -164,18 +164,57 @@ async def get_next_version(
 async def list_dataset_groups(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=200),
-    dataset_type: str | None = Query(default=None),
-    search: str | None = Query(default=None),
+    # 다중 선택 필터. FastAPI 는 ?dataset_type=RAW&dataset_type=SOURCE 형식으로
+    # 반복된 동일 키를 list[str] 로 수집한다. 선택하지 않으면 None 이 되어 필터 미적용.
+    dataset_type: list[str] | None = Query(
+        default=None,
+        description="RAW | SOURCE | PROCESSED | FUSION (복수 선택 가능, 각 값은 OR)",
+    ),
+    task_type: list[str] | None = Query(
+        default=None,
+        description="DETECTION | CLASSIFICATION | SEGMENTATION | ZERO_SHOT "
+        "(task_types JSONB 배열 포함 여부, 복수 선택 가능)",
+    ),
+    annotation_format: list[str] | None = Query(
+        default=None,
+        description="COCO | YOLO | ATTR_JSON | CLS_MANIFEST | CUSTOM | NONE "
+        "(복수 선택 가능, 각 값은 OR)",
+    ),
+    search: str | None = Query(default=None, description="그룹명 부분일치"),
+    sort_by: str = Query(
+        default="updated_at",
+        pattern="^(name|dataset_type|task_types|annotation_format|created_at|updated_at|dataset_count|total_image_count)$",
+        description="정렬 기준 컬럼",
+    ),
+    sort_order: str = Query(
+        default="desc",
+        pattern="^(asc|desc)$",
+        description="정렬 방향",
+    ),
     db: AsyncSession = Depends(get_db),
 ):
-    """데이터셋 그룹 목록 조회 (페이지네이션)."""
-    logger.info("그룹 목록 조회", page=page, page_size=page_size, dataset_type=dataset_type, search=search)
+    """데이터셋 그룹 목록 조회 (페이지네이션 + 필터 + 정렬)."""
+    logger.info(
+        "그룹 목록 조회",
+        page=page,
+        page_size=page_size,
+        dataset_type=dataset_type,
+        task_type=task_type,
+        annotation_format=annotation_format,
+        search=search,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
     svc = DatasetGroupService(db)
     groups, total = await svc.list_groups(
         page=page,
         page_size=page_size,
         dataset_type=dataset_type,
+        task_type=task_type,
+        annotation_format=annotation_format,
         search=search,
+        sort_by=sort_by,
+        sort_order=sort_order,
     )
     logger.info("그룹 목록 조회 완료", total=total, returned=len(groups))
     return DatasetGroupListResponse(

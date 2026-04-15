@@ -10,6 +10,9 @@ export const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
+  // FastAPI 의 list[str] 쿼리 파라미터는 ?key=a&key=b (repeat) 형식으로 받는다.
+  // Axios 기본값은 ?key[]=a&key[]=b (bracket) 이므로 indexes:null 로 brackets 제거.
+  paramsSerializer: { indexes: null },
 })
 
 // 요청 인터셉터 (향후 인증 토큰 추가 등)
