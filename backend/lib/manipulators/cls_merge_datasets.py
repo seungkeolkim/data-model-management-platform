@@ -33,7 +33,17 @@ from lib.pipeline.pipeline_data_models import DatasetMeta
 
 
 class MergeDatasetsClassification(UnitManipulator):
-    """DB seed name: "cls_merge_datasets"."""
+    """
+    복수 Classification 소스 데이터셋 병합 Manipulator.
+
+    accepts_multi_input = True 로 표시하여 DAG executor 가 _merge_metas() 를
+    건너뛰고 list[DatasetMeta] 를 직접 전달하도록 한다. detection 의
+    det_merge_datasets 에 대응되는 classification 측 병합 노드.
+
+    DB seed name: "cls_merge_datasets"
+    """
+
+    accepts_multi_input: bool = True
 
     @property
     def name(self) -> str:

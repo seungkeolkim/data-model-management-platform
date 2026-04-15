@@ -13,7 +13,7 @@ import { Typography, Select, Tag, Divider, Modal } from 'antd'
 import { useNodeData, useSetNodeData } from '../hooks/useNodeData'
 import { NodeShell } from '../components/NodeShell'
 import { getCategoryStyle, getManipulatorEmoji } from '../styles'
-import { buildInputsFromIncoming } from './mergeDefinition'
+import { buildInputsFromIncoming, MERGE_OPERATORS } from './mergeDefinition'
 import DynamicParamForm from '@/components/pipeline/DynamicParamForm'
 import type { NodeDefinition, PaletteItem, CreateContext } from '../types'
 import type { OperatorNodeData } from '@/types/pipeline'
@@ -182,8 +182,8 @@ export const operatorDefinition: NodeDefinition<'operator'> = {
   paletteFromManipulators(manipulators: Manipulator[], _ctx: CreateContext): PaletteItem<'operator'>[] {
     const items: PaletteItem<'operator'>[] = []
     for (const m of manipulators) {
-      // det_merge_datasets는 MergeNode 별도 특수 노드로 처리 — 여기서 제외.
-      if (m.name === 'det_merge_datasets') continue
+      // det_/cls_merge_datasets 는 Merge 기본 노드로 별도 처리 — 팔레트에서 제외.
+      if (MERGE_OPERATORS.has(m.name)) continue
       const style = getCategoryStyle(m.category)
       const isFormatConvert = m.category === FORMAT_CONVERT_CATEGORY
       const isUnimplemented = UNIMPLEMENTED_OPERATORS.includes(m.name)
@@ -245,7 +245,8 @@ export const operatorDefinition: NodeDefinition<'operator'> = {
     const restored = []
     for (const [taskKey, taskConfig] of Object.entries(config.tasks)) {
       if (claimedTaskKeys.has(taskKey)) continue
-      if (taskConfig.operator === 'det_merge_datasets') continue
+      // merge operator 들은 MergeDefinition 이 점유함.
+      if (MERGE_OPERATORS.has(taskConfig.operator)) continue
       const manipulatorMeta = manipulatorMap[taskConfig.operator]
       if (!manipulatorMeta) continue // placeholderDefinition이 나중에 점유
 

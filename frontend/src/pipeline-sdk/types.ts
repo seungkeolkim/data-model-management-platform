@@ -184,7 +184,7 @@ export interface NodeDefinition<K extends NodeKind = NodeKind> {
    * Config → 그래프 역변환. 이 definition이 맡을 task / source를 식별하여 복원.
    * - DataLoadDefinition: source:<id> 토큰을 점유
    * - OperatorDefinition: MANIPULATOR_REGISTRY에 등록된 operator task를 점유
-   * - MergeDefinition: operator === 'det_merge_datasets' task를 점유
+   * - MergeDefinition: operator ∈ {det_merge_datasets, cls_merge_datasets} task를 점유
    * - SaveDefinition: PipelineConfig.output/name으로부터 단일 인스턴스 생성
    * - PlaceholderDefinition: 남은(미점유) task를 placeholder로 점유
    */

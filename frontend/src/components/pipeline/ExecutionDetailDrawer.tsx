@@ -36,6 +36,7 @@ const OPERATOR_LABELS: Record<string, string> = {
   det_format_convert_visdrone_to_coco: 'VisDrone→COCO',
   det_format_convert_visdrone_to_yolo: 'VisDrone→YOLO',
   det_merge_datasets: '데이터셋 병합',
+  cls_merge_datasets: 'Classification 데이터셋 병합',
   det_filter_remain_selected_class_names_only_in_annotation: 'Annotation 클래스 필터',
   det_filter_keep_images_containing_class_name: '이미지 유지 필터',
   det_filter_remove_images_containing_class_name: '이미지 제거 필터',

@@ -1,7 +1,11 @@
 /**
  * MergeDefinition — 다중 입력을 받아 단일 출력을 생성하는 병합 노드.
  *
- * operator='det_merge_datasets' 고정. 2개 이상 입력 필수.
+ * 에디터의 taskType 에 따라 operator 가 자동 결정된다:
+ *   DETECTION      → det_merge_datasets
+ *   CLASSIFICATION → cls_merge_datasets
+ * 두 operator 모두 accepts_multi_input=True 로 설정돼 DAG executor 가
+ * list[DatasetMeta] 를 직접 전달한다. 2개 이상 입력 필수.
  */
 import { memo, useMemo } from 'react'
 import { useEdges } from '@xyflow/react'
@@ -16,6 +20,18 @@ const { Text } = Typography
 
 const MERGE_COLOR = '#9254de'
 const MERGE_EMOJI = '🔗'
+
+/** Merge 기본 노드가 점유하는 operator 집합 (palette/matchFromConfig 등에서 공용). */
+export const MERGE_OPERATORS: ReadonlySet<string> = new Set([
+  'det_merge_datasets',
+  'cls_merge_datasets',
+])
+
+/** taskType → merge operator 매핑. 알 수 없는 값은 detection 기본값으로 폴백. */
+function resolveMergeOperator(taskType: string): 'det_merge_datasets' | 'cls_merge_datasets' {
+  if (taskType === 'CLASSIFICATION') return 'cls_merge_datasets'
+  return 'det_merge_datasets'
+}
 
 const MergeNodeComponent = memo(function MergeNodeInner({ id }: NodeProps) {
   const nodeData = useNodeData<'merge'>(id)
@@ -67,9 +83,10 @@ export const mergeDefinition: NodeDefinition<'merge'> = {
     color: MERGE_COLOR,
     emoji: MERGE_EMOJI,
     order: 20,
-    createDefaultData: () => ({
+    createDefaultData: (ctx) => ({
       type: 'merge',
-      operator: 'det_merge_datasets',
+      // taskType 에 맞는 merge operator 를 고른다.
+      operator: resolveMergeOperator(ctx.taskType),
       params: {},
       inputCount: 2,
     }),
@@ -94,7 +111,8 @@ export const mergeDefinition: NodeDefinition<'merge'> = {
     return {
       tasks: {
         [taskKey]: {
-          operator: 'det_merge_datasets',
+          // 노드 생성 시 taskType 으로 결정된 operator 를 그대로 사용.
+          operator: data.operator,
           inputs,
           params: (data.params as Record<string, unknown>) ?? {},
         },
@@ -108,11 +126,12 @@ export const mergeDefinition: NodeDefinition<'merge'> = {
     const restored = []
     for (const [taskKey, taskConfig] of Object.entries(config.tasks)) {
       if (claimedTaskKeys.has(taskKey)) continue
-      if (taskConfig.operator !== 'det_merge_datasets') continue
+      // detection / classification 양쪽 merge operator 모두 Merge 기본 노드로 복원.
+      if (!MERGE_OPERATORS.has(taskConfig.operator)) continue
       const nodeId = taskKey.startsWith('task_') ? taskKey.slice(5) : taskKey
       const data: MergeNodeData = {
         type: 'merge',
-        operator: 'det_merge_datasets',
+        operator: taskConfig.operator as MergeNodeData['operator'],
         params: { ...taskConfig.params },
         inputCount: taskConfig.inputs.length,
       }

@@ -252,13 +252,15 @@ def _validate_merge_minimum_inputs(
     config: PipelineConfig,
     result: PipelineValidationResult,
 ) -> None:
-    """det_merge_datasets operator의 inputs가 2개 이상인지 검증한다."""
+    """도메인별 merge_datasets operator 의 inputs 가 2개 이상인지 검증한다."""
+    # detection / classification 양쪽의 명시적 merge operator 모두 2+ 입력이 필수.
+    merge_operators = {"det_merge_datasets", "cls_merge_datasets"}
     for task_name, task_config in config.tasks.items():
-        if task_config.operator == "det_merge_datasets" and len(task_config.inputs) < 2:
+        if task_config.operator in merge_operators and len(task_config.inputs) < 2:
             result.add_error(
                 code="MERGE_MIN_INPUTS",
                 message=(
-                    f"태스크 '{task_name}'의 det_merge_datasets operator는 "
+                    f"태스크 '{task_name}'의 {task_config.operator} operator는 "
                     f"최소 2개 이상의 입력이 필요합니다. "
                     f"현재 입력 수: {len(task_config.inputs)}"
                 ),

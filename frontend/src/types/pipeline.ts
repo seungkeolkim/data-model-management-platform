@@ -139,10 +139,10 @@ export interface OperatorNodeData {
   [key: string]: unknown
 }
 
-/** Merge 노드: det_merge_datasets, 다중 입력 필수 */
+/** Merge 노드: det_/cls_merge_datasets, 다중 입력 필수. 에디터 taskType 에 따라 operator 결정 */
 export interface MergeNodeData {
   type: 'merge'
-  operator: 'det_merge_datasets'
+  operator: 'det_merge_datasets' | 'cls_merge_datasets'
   params: Record<string, unknown>
   /** 현재 연결된 입력 수 (동적 핸들 관리용) */
   inputCount: number

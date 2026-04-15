@@ -34,6 +34,7 @@ export const MANIPULATOR_EMOJI: Record<string, string> = {
   det_change_compression:    '📐',
   det_mask_region_by_class:  '🎭',
   det_merge_datasets: '🔗',
+  cls_merge_datasets: '🔗',
 }
 
 export function getCategoryStyle(category: string) {

@@ -38,6 +38,7 @@ import {
 import type { DatasetDisplayInfo } from '@/pipeline-sdk'
 import { pipelinesApi, manipulatorsApi } from '@/api/pipeline'
 import { datasetsApi, datasetGroupsApi } from '@/api/dataset'
+import { MERGE_OPERATORS } from '@/pipeline-sdk/definitions/mergeDefinition'
 import type {
   PipelineConfig,
   PipelineNodeData,
@@ -268,7 +269,7 @@ function PipelineEditorContent() {
       // 사용자에게 경고만 표시.
       const unknownOperators: string[] = []
       for (const task of Object.values(config.tasks)) {
-        if (task.operator !== 'det_merge_datasets' && !manipulatorMap[task.operator]) {
+        if (!MERGE_OPERATORS.has(task.operator) && !manipulatorMap[task.operator]) {
           unknownOperators.push(task.operator)
         }
       }
