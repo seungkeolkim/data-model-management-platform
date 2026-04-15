@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
+import app.models.events  # noqa: F401  # ORM 세션 이벤트 리스너 등록 (import 만으로 활성화)
 from app.core.config import settings
 from app.core.database import engine
 

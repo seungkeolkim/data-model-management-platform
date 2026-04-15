@@ -29,8 +29,23 @@ export const datasetGroupsApi = {
   list: (params?: {
     page?: number
     page_size?: number
-    dataset_type?: string
+    // 필터는 다중 선택. 미선택 시 undefined 로 넘기고, 값이 있으면 Axios 가
+    // params-serializer 기본 설정으로 ?key=a&key=b 형태로 반복 직렬화한다.
+    dataset_type?: string[]
+    task_type?: string[]
+    annotation_format?: string[]
     search?: string
+    // 정렬 기준 컬럼. 백엔드 라우터의 pattern 과 반드시 일치해야 한다.
+    sort_by?:
+      | 'name'
+      | 'dataset_type'
+      | 'task_types'
+      | 'annotation_format'
+      | 'created_at'
+      | 'updated_at'
+      | 'dataset_count'
+      | 'total_image_count'
+    sort_order?: 'asc' | 'desc'
   }) =>
     api.get<DatasetGroupListResponse>('/dataset-groups', { params }),
 

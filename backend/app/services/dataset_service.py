@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 
 import structlog
-from sqlalchemy import func, select, update
+from sqlalchemy import Text, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -43,16 +43,68 @@ class DatasetGroupService:
     # 목록 조회
     # -------------------------------------------------------------------------
 
+    # 정렬 가능한 컬럼 화이트리스트. 프론트에서 전달된 sort_by 값을 이 사전에서만 받는다.
+    # dataset_count / total_image_count 는 활성 Dataset 기준 집계값이며
+    # list_groups 내부에서 LEFT JOIN 되는 서브쿼리 컬럼을 런타임에 매핑한다.
+    _SORTABLE_COLUMN_KEYS: tuple[str, ...] = (
+        "name",
+        "dataset_type",
+        "task_types",
+        "annotation_format",
+        "created_at",
+        "updated_at",
+        "dataset_count",
+        "total_image_count",
+    )
+
     async def list_groups(
         self,
         page: int = 1,
         page_size: int = 20,
-        dataset_type: str | None = None,
+        dataset_type: list[str] | None = None,
+        task_type: list[str] | None = None,
+        annotation_format: list[str] | None = None,
         search: str | None = None,
+        sort_by: str = "updated_at",
+        sort_order: str = "desc",
     ) -> tuple[list[DatasetGroup], int]:
-        """데이터셋 그룹 목록 조회 (페이지네이션). 소프트 삭제된 그룹은 제외."""
-        query = (
+        """
+        데이터셋 그룹 목록 조회 (페이지네이션 + 필터 + 정렬).
+
+        필터(전부 다중 선택 가능, 각 필터 내부는 OR / 서로 다른 필터 간은 AND):
+          - dataset_type: RAW / SOURCE / PROCESSED / FUSION 중 복수
+          - task_type: DETECTION / CLASSIFICATION / SEGMENTATION / ZERO_SHOT 중 복수
+            (DatasetGroup.task_types JSONB 배열이 해당 값들 중 하나라도 포함하는지 검사)
+          - annotation_format: COCO / YOLO / CLS_MANIFEST 등 중 복수
+          - search: 그룹명 부분일치 (ilike)
+
+        정렬:
+          - sort_by: _SORTABLE_COLUMN_KEYS 중 하나 (미지정/비허용값이면 updated_at 강제)
+          - sort_order: "asc" | "desc" (그 외 값이면 desc 강제)
+          - dataset_count / total_image_count 는 활성 Dataset 기준 집계.
+            원본 Dataset.image_count 가 NULL 이면 0 으로 간주.
+
+        소프트 삭제된 그룹은 항상 제외한다.
+        """
+        # 활성 Dataset 집계 서브쿼리.
+        # 삭제되지 않은 Dataset 만 카운트/합산해서, 그룹별 데이터셋 개수와 총 이미지 수를 뽑는다.
+        datasets_aggregate_subquery = (
+            select(
+                Dataset.group_id.label("group_id"),
+                func.count(Dataset.id).label("dataset_count"),
+                func.coalesce(func.sum(Dataset.image_count), 0).label("total_image_count"),
+            )
+            .where(Dataset.deleted_at.is_(None))
+            .group_by(Dataset.group_id)
+            .subquery()
+        )
+
+        base_query = (
             select(DatasetGroup)
+            .outerjoin(
+                datasets_aggregate_subquery,
+                datasets_aggregate_subquery.c.group_id == DatasetGroup.id,
+            )
             .where(DatasetGroup.deleted_at.is_(None))
             .options(
                 selectinload(DatasetGroup.datasets.and_(Dataset.deleted_at.is_(None)))
@@ -61,18 +113,71 @@ class DatasetGroupService:
         )
 
         if dataset_type:
-            query = query.where(DatasetGroup.dataset_type == dataset_type.upper())
+            normalized_dataset_types = [value.upper() for value in dataset_type]
+            base_query = base_query.where(
+                DatasetGroup.dataset_type.in_(normalized_dataset_types)
+            )
+        if annotation_format:
+            normalized_annotation_formats = [value.upper() for value in annotation_format]
+            base_query = base_query.where(
+                DatasetGroup.annotation_format.in_(normalized_annotation_formats)
+            )
+        if task_type:
+            # task_types 는 JSONB 배열. ["DETECTION"] 형태로 저장되므로
+            # 선택된 값 각각에 대해 JSONB @> contains 를 만들고 OR 로 합친다.
+            # (예: task_type=[DETECTION,CLASSIFICATION] → 둘 중 하나라도 포함)
+            normalized_task_types = [value.upper() for value in task_type]
+            task_type_clauses = [
+                DatasetGroup.task_types.contains([value])
+                for value in normalized_task_types
+            ]
+            base_query = base_query.where(or_(*task_type_clauses))
         if search:
-            query = query.where(DatasetGroup.name.ilike(f"%{search}%"))
+            base_query = base_query.where(DatasetGroup.name.ilike(f"%{search}%"))
 
-        count_query = select(func.count()).select_from(query.subquery())
+        # 정렬 컬럼 매핑 — 화이트리스트 밖의 값이 들어오면 updated_at 로 폴백.
+        sortable_column_map = {
+            "name": DatasetGroup.name,
+            "dataset_type": DatasetGroup.dataset_type,
+            # task_types 는 JSONB 배열. 일반 연산자로는 정렬이 불가하므로
+            # text 로 캐스팅한 값(예: '["DETECTION"]')을 사전식으로 정렬한다.
+            # CLAUDE.md 규약상 원소 1개짜리 배열이므로 실질적으로 task type
+            # 이름순 정렬과 같아진다.
+            "task_types": func.cast(DatasetGroup.task_types, Text),
+            "annotation_format": DatasetGroup.annotation_format,
+            "created_at": DatasetGroup.created_at,
+            "updated_at": DatasetGroup.updated_at,
+            "dataset_count": func.coalesce(
+                datasets_aggregate_subquery.c.dataset_count, 0
+            ),
+            "total_image_count": func.coalesce(
+                datasets_aggregate_subquery.c.total_image_count, 0
+            ),
+        }
+        sort_column_expression = sortable_column_map.get(
+            sort_by, DatasetGroup.updated_at
+        )
+        if sort_order.lower() == "asc":
+            primary_order = sort_column_expression.asc()
+        else:
+            primary_order = sort_column_expression.desc()
+        # 동률일 때 재현 가능한 순서를 위해 id 를 보조 정렬 키로 둔다.
+        secondary_order = DatasetGroup.id.asc()
+
+        # count 는 필터만 반영하고 정렬/페이지네이션 없이 계산.
+        count_query = select(func.count()).select_from(
+            base_query.order_by(None).subquery()
+        )
         total = await self.db.scalar(count_query) or 0
 
-        query = query.offset((page - 1) * page_size).limit(page_size)
-        query = query.order_by(DatasetGroup.updated_at.desc())
+        paginated_query = (
+            base_query.order_by(primary_order, secondary_order)
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
 
-        result = await self.db.execute(query)
-        groups = list(result.scalars().all())
+        result = await self.db.execute(paginated_query)
+        groups = list(result.scalars().unique().all())
         return groups, total
 
     # -------------------------------------------------------------------------
