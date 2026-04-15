@@ -1,5 +1,5 @@
 """
-remap_class_name — class명 변경 (REMAP).
+det_remap_class_name — class명 변경 (REMAP).
 
 통일포맷: categories(list[str])와 annotation.category_name을 직접 변경한다.
 
@@ -34,14 +34,14 @@ class RemapClassName(UnitManipulator):
     동일한 new_name으로 매핑되는 class들은 자연 병합된다.
     (예: pedestrian→person, walker→person → categories에 person 하나만 남음)
 
-    DB seed name: "remap_class_name"
+    DB seed name: "det_remap_class_name"
     """
 
     REQUIRED_PARAMS = ["mapping"]
 
     @property
     def name(self) -> str:
-        return "remap_class_name"
+        return "det_remap_class_name"
 
     def transform_annotation(
         self,
@@ -67,7 +67,7 @@ class RemapClassName(UnitManipulator):
         """
         if isinstance(input_meta, list):
             raise TypeError(
-                "remap_class_name는 단건 DatasetMeta만 입력 가능합니다."
+                "det_remap_class_name는 단건 DatasetMeta만 입력 가능합니다."
             )
 
         mapping = params.get("mapping", {})
@@ -83,7 +83,7 @@ class RemapClassName(UnitManipulator):
         unmatched_keys = set(mapping.keys()) - existing_names
         if unmatched_keys:
             logger.warning(
-                "remap_class_name: 매핑에 지정되었으나 categories에 존재하지 않는 class 이름: %s (무시됨)",
+                "det_remap_class_name: 매핑에 지정되었으나 categories에 존재하지 않는 class 이름: %s (무시됨)",
                 ", ".join(sorted(unmatched_keys)),
             )
 
@@ -109,7 +109,7 @@ class RemapClassName(UnitManipulator):
                     annotation_renamed_count += 1
 
         logger.info(
-            "remap_class_name 완료: categories %d개 변경 → %d개 (병합 후), "
+            "det_remap_class_name 완료: categories %d개 변경 → %d개 (병합 후), "
             "annotation %d건 변경",
             renamed_count, len(remapped_meta.categories), annotation_renamed_count,
         )

@@ -129,7 +129,7 @@ export interface DataLoadNodeData {
 /** Operator 노드: 범용 단일입력/단일출력 manipulator (convert, filter, sample, remap, augment) */
 export interface OperatorNodeData {
   type: 'operator'
-  operator: string               // MANIPULATOR_REGISTRY 키 (예: "format_convert_to_coco")
+  operator: string               // MANIPULATOR_REGISTRY 키 (예: "det_format_convert_to_coco")
   category: string               // 예: "FORMAT_CONVERT"
   label: string                  // 표시용 이름
   params: Record<string, unknown>
@@ -139,10 +139,10 @@ export interface OperatorNodeData {
   [key: string]: unknown
 }
 
-/** Merge 노드: merge_datasets, 다중 입력 필수 */
+/** Merge 노드: det_merge_datasets, 다중 입력 필수 */
 export interface MergeNodeData {
   type: 'merge'
-  operator: 'merge_datasets'
+  operator: 'det_merge_datasets'
   params: Record<string, unknown>
   /** 현재 연결된 입력 수 (동적 핸들 관리용) */
   inputCount: number

@@ -2,7 +2,7 @@
 파이프라인 실행 CLI 테스트 (DAG 구조).
 
 DB에 등록된 RAW YOLO 데이터셋을 읽어서
-format_convert_to_coco manipulator를 적용하여
+det_format_convert_to_coco manipulator를 적용하여
 SOURCE COCO 데이터셋을 생성한다.
 
 실행:
@@ -107,7 +107,7 @@ def run_yolo_to_coco_pipeline() -> None:
         ),
         tasks={
             "convert_to_coco": TaskConfig(
-                operator="format_convert_to_coco",
+                operator="det_format_convert_to_coco",
                 inputs=[f"source:{source_dataset_id}"],
                 params={},
             ),
@@ -195,7 +195,7 @@ def run_coco_to_yolo_pipeline() -> None:
         ),
         tasks={
             "convert_to_yolo": TaskConfig(
-                operator="format_convert_to_yolo",
+                operator="det_format_convert_to_yolo",
                 inputs=[f"source:{source_dataset_id}"],
                 params={},
             ),

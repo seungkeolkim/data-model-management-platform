@@ -180,7 +180,7 @@ class PipelineDagExecutor:
             # 입력 이미지 수 집계 (진행 추적용)
             input_image_count = sum(m.image_count for m in input_metas)
 
-            # multi-input manipulator(예: merge_datasets)는 list를 직접 받고,
+            # multi-input manipulator(예: det_merge_datasets)는 list를 직접 받고,
             # 그 외 multi-input은 기존 _merge_metas()로 단건 병합 후 전달
             if self._is_multi_input_manipulator(task_config.operator):
                 result_meta = self._apply_manipulator(

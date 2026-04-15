@@ -252,7 +252,7 @@ class TestFormatConvertNoOpWithMapping:
     def test_format_convert_noop_preserves_category_names(
         self, sample_dataset_meta_coco_standard_ids: DatasetMeta,
     ):
-        """format_convert_to_yolo는 no-op: category_name이 그대로 보존."""
+        """det_format_convert_to_yolo는 no-op: category_name이 그대로 보존."""
         converter = FormatConvertToYolo()
         result = converter.transform_annotation(
             sample_dataset_meta_coco_standard_ids, params={},

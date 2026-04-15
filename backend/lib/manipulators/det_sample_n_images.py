@@ -1,5 +1,5 @@
 """
-sample_n_images — N장 랜덤 샘플 추출 (SAMPLE).
+det_sample_n_images — N장 랜덤 샘플 추출 (SAMPLE).
 
 image_records에서 N장을 랜덤으로 추출하여 나머지를 제거한다.
 seed를 지정하면 동일한 결과를 재현할 수 있다.
@@ -34,14 +34,14 @@ class SampleNImages(UnitManipulator):
     총 이미지 수가 N 이하이면 전체를 그대로 유지한다.
     seed를 동일하게 설정하면 동일한 샘플 결과를 재현할 수 있다.
 
-    DB seed name: "sample_n_images"
+    DB seed name: "det_sample_n_images"
     """
 
     REQUIRED_PARAMS = ["n"]
 
     @property
     def name(self) -> str:
-        return "sample_n_images"
+        return "det_sample_n_images"
 
     def transform_annotation(
         self,
@@ -68,7 +68,7 @@ class SampleNImages(UnitManipulator):
         """
         if isinstance(input_meta, list):
             raise TypeError(
-                "sample_n_images는 단건 DatasetMeta만 입력 가능합니다."
+                "det_sample_n_images는 단건 DatasetMeta만 입력 가능합니다."
             )
 
         sample_count = int(params.get("n", 0))
@@ -87,7 +87,7 @@ class SampleNImages(UnitManipulator):
         # 총 이미지 수가 N 이하이면 전체 유지
         if original_image_count <= sample_count:
             logger.info(
-                "sample_n_images: 총 이미지 수(%d)가 요청 수(%d) 이하 — 전체 유지",
+                "det_sample_n_images: 총 이미지 수(%d)가 요청 수(%d) 이하 — 전체 유지",
                 original_image_count, sample_count,
             )
             return filtered_meta
@@ -99,7 +99,7 @@ class SampleNImages(UnitManipulator):
         )
 
         logger.info(
-            "sample_n_images 완료: %d장 → %d장 (seed=%s)",
+            "det_sample_n_images 완료: %d장 → %d장 (seed=%s)",
             original_image_count, sample_count, seed_value,
         )
 

@@ -1,5 +1,5 @@
 """
-merge_datasets Manipulator.
+det_merge_datasets Manipulator.
 
 복수의 DatasetMeta를 하나로 병합한다.
 POST_MERGE scope 전용 — list[DatasetMeta]를 입력받아 단일 DatasetMeta를 반환.
@@ -33,14 +33,14 @@ class MergeDatasets(UnitManipulator):
     accepts_multi_input = True 로 표시하여 DAG executor가
     _merge_metas()를 건너뛰고 list[DatasetMeta]를 직접 전달하도록 한다.
 
-    DB seed name: "merge_datasets"
+    DB seed name: "det_merge_datasets"
     """
 
     accepts_multi_input: bool = True
 
     @property
     def name(self) -> str:
-        return "merge_datasets"
+        return "det_merge_datasets"
 
     def transform_annotation(
         self,
@@ -70,12 +70,12 @@ class MergeDatasets(UnitManipulator):
         """
         if not isinstance(input_meta, list):
             raise TypeError(
-                "merge_datasets는 list[DatasetMeta]를 입력받아야 합니다. "
+                "det_merge_datasets는 list[DatasetMeta]를 입력받아야 합니다. "
                 f"받은 타입: {type(input_meta).__name__}"
             )
         if len(input_meta) < 2:
             raise ValueError(
-                f"merge_datasets는 2개 이상의 소스가 필요합니다. "
+                f"det_merge_datasets는 2개 이상의 소스가 필요합니다. "
                 f"받은 소스 수: {len(input_meta)}"
             )
 

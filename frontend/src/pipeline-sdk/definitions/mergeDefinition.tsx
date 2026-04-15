@@ -1,7 +1,7 @@
 /**
  * MergeDefinition — 다중 입력을 받아 단일 출력을 생성하는 병합 노드.
  *
- * operator='merge_datasets' 고정. 2개 이상 입력 필수.
+ * operator='det_merge_datasets' 고정. 2개 이상 입력 필수.
  */
 import { memo, useMemo } from 'react'
 import { useEdges } from '@xyflow/react'
@@ -69,7 +69,7 @@ export const mergeDefinition: NodeDefinition<'merge'> = {
     order: 20,
     createDefaultData: () => ({
       type: 'merge',
-      operator: 'merge_datasets',
+      operator: 'det_merge_datasets',
       params: {},
       inputCount: 2,
     }),
@@ -94,7 +94,7 @@ export const mergeDefinition: NodeDefinition<'merge'> = {
     return {
       tasks: {
         [taskKey]: {
-          operator: 'merge_datasets',
+          operator: 'det_merge_datasets',
           inputs,
           params: (data.params as Record<string, unknown>) ?? {},
         },
@@ -108,11 +108,11 @@ export const mergeDefinition: NodeDefinition<'merge'> = {
     const restored = []
     for (const [taskKey, taskConfig] of Object.entries(config.tasks)) {
       if (claimedTaskKeys.has(taskKey)) continue
-      if (taskConfig.operator !== 'merge_datasets') continue
+      if (taskConfig.operator !== 'det_merge_datasets') continue
       const nodeId = taskKey.startsWith('task_') ? taskKey.slice(5) : taskKey
       const data: MergeNodeData = {
         type: 'merge',
-        operator: 'merge_datasets',
+        operator: 'det_merge_datasets',
         params: { ...taskConfig.params },
         inputCount: taskConfig.inputs.length,
       }

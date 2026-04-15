@@ -1,5 +1,5 @@
 """
-filter_remain_selected_class_names_only_in_annotation — 지정 class만 남기고 나머지 annotation 제거.
+det_filter_remain_selected_class_names_only_in_annotation — 지정 class만 남기고 나머지 annotation 제거.
 
 이미지 자체는 삭제하지 않는다.
 annotation이 0개가 된 이미지도 image_records에 유지한다 (빈 이미지로 남김).
@@ -33,14 +33,14 @@ class FilterRemainSelectedClassNamesOnlyInAnnotation(UnitManipulator):
     이미지 파일은 건드리지 않는다 (annotation 레벨만 처리).
     annotation이 전부 제거된 이미지도 image_records에 유지한다.
 
-    DB seed name: "filter_remain_selected_class_names_only_in_annotation"
+    DB seed name: "det_filter_remain_selected_class_names_only_in_annotation"
     """
 
     REQUIRED_PARAMS = ["keep_class_names"]
 
     @property
     def name(self) -> str:
-        return "filter_remain_selected_class_names_only_in_annotation"
+        return "det_filter_remain_selected_class_names_only_in_annotation"
 
     def transform_annotation(
         self,
@@ -66,7 +66,7 @@ class FilterRemainSelectedClassNamesOnlyInAnnotation(UnitManipulator):
         """
         if isinstance(input_meta, list):
             raise TypeError(
-                "filter_remain_selected_class_names_only_in_annotation는 단건 DatasetMeta만 입력 가능합니다."
+                "det_filter_remain_selected_class_names_only_in_annotation는 단건 DatasetMeta만 입력 가능합니다."
             )
 
         raw_names = params.get("keep_class_names", "")
@@ -112,7 +112,7 @@ class FilterRemainSelectedClassNamesOnlyInAnnotation(UnitManipulator):
         ]
 
         logger.info(
-            "filter_remain_selected_class_names_only_in_annotation 완료: 유지 class %d개, 제거된 annotation %d개, "
+            "det_filter_remain_selected_class_names_only_in_annotation 완료: 유지 class %d개, 제거된 annotation %d개, "
             "이미지 수 변동 없음 (%d장)",
             len(matched_names), total_removed, len(filtered_meta.image_records),
         )

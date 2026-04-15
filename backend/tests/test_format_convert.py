@@ -1,7 +1,7 @@
 """
 포맷 변환 Manipulator 테스트.
 
-통일포맷 전환 이후 format_convert_to_yolo/coco는 no-op이다.
+통일포맷 전환 이후 det_format_convert_to_yolo/coco는 no-op이다.
 입력을 deep copy하여 그대로 반환하는지만 검증한다.
 IO round-trip 통합 테스트는 별도로 유지.
 """
@@ -40,7 +40,7 @@ class TestFormatConvertToYolo:
     def test_name_matches_db_seed(self):
         """name 속성이 DB seed의 manipulator name과 일치하는지 확인."""
         converter = FormatConvertToYolo()
-        assert converter.name == "format_convert_to_yolo"
+        assert converter.name == "det_format_convert_to_yolo"
 
     def test_noop_returns_identical_data(self, sample_dataset_meta_coco: DatasetMeta):
         """통일포맷에서 no-op: 입력과 동일한 데이터를 반환."""
@@ -102,7 +102,7 @@ class TestFormatConvertToCoco:
     def test_name_matches_db_seed(self):
         """name 속성이 DB seed의 manipulator name과 일치하는지 확인."""
         converter = FormatConvertToCoco()
-        assert converter.name == "format_convert_to_coco"
+        assert converter.name == "det_format_convert_to_coco"
 
     def test_noop_returns_identical_data(self, sample_dataset_meta_yolo: DatasetMeta):
         """통일포맷에서 no-op: 입력과 동일한 데이터를 반환."""

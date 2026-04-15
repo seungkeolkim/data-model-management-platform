@@ -24,12 +24,12 @@ class FormatConvertToYolo(UnitManipulator):
     통일포맷에서는 내부적으로 포맷 구분이 없으므로 아무 변환도 수행하지 않는다.
     출력 포맷은 SaveNode에서 결정된다.
 
-    DB seed name: "format_convert_to_yolo"
+    DB seed name: "det_format_convert_to_yolo"
     """
 
     @property
     def name(self) -> str:
-        return "format_convert_to_yolo"
+        return "det_format_convert_to_yolo"
 
     def transform_annotation(
         self,
@@ -39,11 +39,11 @@ class FormatConvertToYolo(UnitManipulator):
     ) -> DatasetMeta:
         if isinstance(input_meta, list):
             raise TypeError(
-                "format_convert_to_yolo는 PER_SOURCE 전용입니다. "
+                "det_format_convert_to_yolo는 PER_SOURCE 전용입니다. "
                 "단건 DatasetMeta만 입력 가능합니다."
             )
         logger.info(
-            "format_convert_to_yolo: 통일포맷에서 no-op. "
+            "det_format_convert_to_yolo: 통일포맷에서 no-op. "
             "출력 포맷은 Save 노드에서 결정됩니다."
         )
         return copy.deepcopy(input_meta)
@@ -56,12 +56,12 @@ class FormatConvertToCoco(UnitManipulator):
     통일포맷에서는 내부적으로 포맷 구분이 없으므로 아무 변환도 수행하지 않는다.
     출력 포맷은 SaveNode에서 결정된다.
 
-    DB seed name: "format_convert_to_coco"
+    DB seed name: "det_format_convert_to_coco"
     """
 
     @property
     def name(self) -> str:
-        return "format_convert_to_coco"
+        return "det_format_convert_to_coco"
 
     def transform_annotation(
         self,
@@ -71,11 +71,11 @@ class FormatConvertToCoco(UnitManipulator):
     ) -> DatasetMeta:
         if isinstance(input_meta, list):
             raise TypeError(
-                "format_convert_to_coco는 PER_SOURCE 전용입니다. "
+                "det_format_convert_to_coco는 PER_SOURCE 전용입니다. "
                 "단건 DatasetMeta만 입력 가능합니다."
             )
         logger.info(
-            "format_convert_to_coco: 통일포맷에서 no-op. "
+            "det_format_convert_to_coco: 통일포맷에서 no-op. "
             "출력 포맷은 Save 노드에서 결정됩니다."
         )
         return copy.deepcopy(input_meta)
@@ -88,12 +88,12 @@ class FormatConvertVisDroneToCoco(UnitManipulator):
     통일포맷에서는 내부적으로 포맷 구분이 없으므로 아무 변환도 수행하지 않는다.
     출력 포맷은 SaveNode에서 결정된다.
 
-    DB seed name: "format_convert_visdrone_to_coco"
+    DB seed name: "det_format_convert_visdrone_to_coco"
     """
 
     @property
     def name(self) -> str:
-        return "format_convert_visdrone_to_coco"
+        return "det_format_convert_visdrone_to_coco"
 
     def transform_annotation(
         self,
@@ -103,11 +103,11 @@ class FormatConvertVisDroneToCoco(UnitManipulator):
     ) -> DatasetMeta:
         if isinstance(input_meta, list):
             raise TypeError(
-                "format_convert_visdrone_to_coco는 PER_SOURCE 전용입니다. "
+                "det_format_convert_visdrone_to_coco는 PER_SOURCE 전용입니다. "
                 "단건 DatasetMeta만 입력 가능합니다."
             )
         logger.info(
-            "format_convert_visdrone_to_coco: 통일포맷에서 no-op. "
+            "det_format_convert_visdrone_to_coco: 통일포맷에서 no-op. "
             "출력 포맷은 Save 노드에서 결정됩니다."
         )
         return copy.deepcopy(input_meta)
@@ -120,12 +120,12 @@ class FormatConvertVisDroneToYolo(UnitManipulator):
     통일포맷에서는 내부적으로 포맷 구분이 없으므로 아무 변환도 수행하지 않는다.
     출력 포맷은 SaveNode에서 결정된다.
 
-    DB seed name: "format_convert_visdrone_to_yolo"
+    DB seed name: "det_format_convert_visdrone_to_yolo"
     """
 
     @property
     def name(self) -> str:
-        return "format_convert_visdrone_to_yolo"
+        return "det_format_convert_visdrone_to_yolo"
 
     def transform_annotation(
         self,
@@ -135,11 +135,11 @@ class FormatConvertVisDroneToYolo(UnitManipulator):
     ) -> DatasetMeta:
         if isinstance(input_meta, list):
             raise TypeError(
-                "format_convert_visdrone_to_yolo는 PER_SOURCE 전용입니다. "
+                "det_format_convert_visdrone_to_yolo는 PER_SOURCE 전용입니다. "
                 "단건 DatasetMeta만 입력 가능합니다."
             )
         logger.info(
-            "format_convert_visdrone_to_yolo: 통일포맷에서 no-op. "
+            "det_format_convert_visdrone_to_yolo: 통일포맷에서 no-op. "
             "출력 포맷은 Save 노드에서 결정됩니다."
         )
         return copy.deepcopy(input_meta)

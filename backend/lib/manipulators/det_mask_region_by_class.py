@@ -1,5 +1,5 @@
 """
-mask_region_by_class — 이미지 마스킹 (AUGMENT).
+det_mask_region_by_class — 이미지 마스킹 (AUGMENT).
 
 지정한 class의 bbox 영역을 검정색 또는 흰색으로 채워 마스킹한다.
 annotation 자체는 유지하고, 이미지만 변형한다.
@@ -38,14 +38,14 @@ class MaskRegionByClass(UnitManipulator):
     annotation은 그대로 유지하고, 이미지의 해당 영역만 단색으로 채운다.
     실제 이미지 처리는 ImageMaterializer가 Phase B에서 수행한다.
 
-    DB seed name: "mask_region_by_class"
+    DB seed name: "det_mask_region_by_class"
     """
 
     REQUIRED_PARAMS = ["class_names"]
 
     @property
     def name(self) -> str:
-        return "mask_region_by_class"
+        return "det_mask_region_by_class"
 
     def transform_annotation(
         self,
@@ -74,7 +74,7 @@ class MaskRegionByClass(UnitManipulator):
         """
         if isinstance(input_meta, list):
             raise TypeError(
-                "mask_region_by_class는 단건 DatasetMeta만 입력 가능합니다."
+                "det_mask_region_by_class는 단건 DatasetMeta만 입력 가능합니다."
             )
 
         # class_names 파싱
@@ -103,7 +103,7 @@ class MaskRegionByClass(UnitManipulator):
         unmatched_names = target_names - existing_names
         if unmatched_names:
             logger.warning(
-                "mask_region_by_class: categories에 존재하지 않는 class 이름: %s (무시됨)",
+                "det_mask_region_by_class: categories에 존재하지 않는 class 이름: %s (무시됨)",
                 ", ".join(sorted(unmatched_names)),
             )
 
@@ -133,7 +133,7 @@ class MaskRegionByClass(UnitManipulator):
             record.extra["image_manipulation_specs"] = existing_specs
 
         logger.info(
-            "mask_region_by_class 완료: 대상 class %d개, 마스킹 bbox %d개, 이미지 %d장",
+            "det_mask_region_by_class 완료: 대상 class %d개, 마스킹 bbox %d개, 이미지 %d장",
             len(matched_names), total_mask_count, len(masked_meta.image_records),
         )
 

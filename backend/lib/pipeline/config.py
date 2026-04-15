@@ -14,7 +14,7 @@ YAML 구조:
         split: TRAIN
       tasks:
         task_name:
-          operator: format_convert_to_coco
+          operator: det_format_convert_to_coco
           inputs: ["source:<dataset_id>"]
           params: { ... }
 """
@@ -228,7 +228,7 @@ class PipelineConfig(BaseModel):
         if len(terminal_tasks) > 1:
             raise ValueError(
                 f"최종 출력 태스크가 2개 이상입니다: {terminal_tasks}. "
-                "merge_datasets 등으로 하나로 합쳐야 합니다."
+                "det_merge_datasets 등으로 하나로 합쳐야 합니다."
             )
         return terminal_tasks[0]
 
@@ -246,7 +246,7 @@ def load_pipeline_config_from_yaml(yaml_path: str | Path) -> PipelineConfig:
             split: TRAIN
           tasks:
             convert:
-              operator: format_convert_to_coco
+              operator: det_format_convert_to_coco
               inputs: ["source:abc-123"]
               params: {}
 

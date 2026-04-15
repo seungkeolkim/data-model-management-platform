@@ -1,5 +1,5 @@
 """
-rotate_image — 이미지 회전 (AUGMENT).
+det_rotate_image — 이미지 회전 (AUGMENT).
 
 이미지를 지정한 각도(90°, 180°, 270°)만큼 시계 방향으로 회전한다.
 annotation의 bbox 좌표도 함께 회전한다.
@@ -46,14 +46,14 @@ class RotateImage(UnitManipulator):
     이미지 변환 명세(ImageManipulationSpec)를 생성한다.
     실제 이미지 회전은 ImageMaterializer가 Phase B에서 수행한다.
 
-    DB seed name: "rotate_image"
+    DB seed name: "det_rotate_image"
     """
 
     REQUIRED_PARAMS = ["degrees"]
 
     @property
     def name(self) -> str:
-        return "rotate_image"
+        return "det_rotate_image"
 
     def transform_annotation(
         self,
@@ -79,7 +79,7 @@ class RotateImage(UnitManipulator):
         """
         if isinstance(input_meta, list):
             raise TypeError(
-                "rotate_image는 단건 DatasetMeta만 입력 가능합니다."
+                "det_rotate_image는 단건 DatasetMeta만 입력 가능합니다."
             )
 
         degrees = int(params.get("degrees", 180))
@@ -121,7 +121,7 @@ class RotateImage(UnitManipulator):
             record.extra["image_manipulation_specs"] = existing_specs
 
         logger.info(
-            "rotate_image 완료: %d장 이미지 × %d° 회전",
+            "det_rotate_image 완료: %d장 이미지 × %d° 회전",
             len(rotated_meta.image_records), degrees,
         )
 
