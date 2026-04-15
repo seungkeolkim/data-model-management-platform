@@ -1,8 +1,8 @@
 """
-filter_remove_images_containing_class_name — 지정 class 포함 이미지 제거 (IMAGE_FILTER).
+det_filter_remove_images_containing_class_name — 지정 class 포함 이미지 제거 (IMAGE_FILTER).
 
 지정된 class 중 1개라도 annotation에 포함된 이미지를 image_records에서 통째로 제거한다.
-filter_keep_images_containing_class_name의 반대 동작.
+det_filter_keep_images_containing_class_name의 반대 동작.
 
 params:
     class_names: list[str] | str — 제거 대상 class 이름 목록.
@@ -31,14 +31,14 @@ class FilterRemoveImagesContainingClassName(UnitManipulator):
 
     OR 조건: 이미지의 annotation 중 하나라도 지정 class에 해당하면 해당 이미지 전체를 삭제한다.
 
-    DB seed name: "filter_remove_images_containing_class_name"
+    DB seed name: "det_filter_remove_images_containing_class_name"
     """
 
     REQUIRED_PARAMS = ["class_names"]
 
     @property
     def name(self) -> str:
-        return "filter_remove_images_containing_class_name"
+        return "det_filter_remove_images_containing_class_name"
 
     def transform_annotation(
         self,
@@ -64,7 +64,7 @@ class FilterRemoveImagesContainingClassName(UnitManipulator):
         """
         if isinstance(input_meta, list):
             raise TypeError(
-                "filter_remove_images_containing_class_name는 단건 DatasetMeta만 입력 가능합니다."
+                "det_filter_remove_images_containing_class_name는 단건 DatasetMeta만 입력 가능합니다."
             )
 
         raw_names = params.get("class_names", "")
@@ -105,7 +105,7 @@ class FilterRemoveImagesContainingClassName(UnitManipulator):
         removed_image_count = original_image_count - len(filtered_meta.image_records)
 
         logger.info(
-            "filter_remove_images_containing_class_name 완료: 제거 대상 class %d개 (%s), "
+            "det_filter_remove_images_containing_class_name 완료: 제거 대상 class %d개 (%s), "
             "제거된 이미지 %d장, 남은 이미지 %d장",
             len(matched_names),
             ", ".join(sorted(matched_names)),

@@ -31,20 +31,20 @@ const STATUS_TAG: Record<string, { color: string; label: string }> = {
 
 /** operator 이름을 읽기 좋은 한글 라벨로 변환 */
 const OPERATOR_LABELS: Record<string, string> = {
-  format_convert_to_coco: 'COCO 변환',
-  format_convert_to_yolo: 'YOLO 변환',
-  format_convert_visdrone_to_coco: 'VisDrone→COCO',
-  format_convert_visdrone_to_yolo: 'VisDrone→YOLO',
-  merge_datasets: '데이터셋 병합',
-  filter_remain_selected_class_names_only_in_annotation: 'Annotation 클래스 필터',
-  filter_keep_images_containing_class_name: '이미지 유지 필터',
-  filter_remove_images_containing_class_name: '이미지 제거 필터',
-  remap_class_name: '클래스명 변경',
-  rotate_image: '이미지 회전',
-  mask_region_by_class: '클래스 영역 마스킹',
-  sample_n_images: '이미지 샘플링',
-  change_compression: '압축률 변경',
-  shuffle_image_ids: '이미지 ID 셔플',
+  det_format_convert_to_coco: 'COCO 변환',
+  det_format_convert_to_yolo: 'YOLO 변환',
+  det_format_convert_visdrone_to_coco: 'VisDrone→COCO',
+  det_format_convert_visdrone_to_yolo: 'VisDrone→YOLO',
+  det_merge_datasets: '데이터셋 병합',
+  det_filter_remain_selected_class_names_only_in_annotation: 'Annotation 클래스 필터',
+  det_filter_keep_images_containing_class_name: '이미지 유지 필터',
+  det_filter_remove_images_containing_class_name: '이미지 제거 필터',
+  det_remap_class_name: '클래스명 변경',
+  det_rotate_image: '이미지 회전',
+  det_mask_region_by_class: '클래스 영역 마스킹',
+  det_sample_n_images: '이미지 샘플링',
+  det_change_compression: '압축률 변경',
+  det_shuffle_image_ids: '이미지 ID 셔플',
 }
 
 /** task_progress 상태별 색상 */

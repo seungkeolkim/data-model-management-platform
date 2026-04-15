@@ -14,7 +14,7 @@ YAML 구조:
         split: TRAIN
       tasks:
         task_name:
-          operator: format_convert_to_coco
+          operator: det_format_convert_to_coco
           inputs: ["source:<dataset_id>"]
           params: { ... }
 """
@@ -84,13 +84,31 @@ class PipelineConfig(BaseModel):
     name: str = Field(..., description="출력 DatasetGroup 이름")
     description: str | None = None
     output: OutputConfig
-    tasks: dict[str, TaskConfig] = Field(..., min_length=1)
+    # tasks 는 비어있을 수 있다 (DataLoad → Save 직결, passthrough 모드).
+    # 그 경우 passthrough_source_dataset_id 가 반드시 채워져 있어야 한다.
+    tasks: dict[str, TaskConfig] = Field(default_factory=dict)
+    # DataLoad → Save 직결시 사용되는 소스 데이터셋 ID.
+    # tasks 가 비어있을 때만 의미가 있으며, source meta 를 그대로 output 으로 복사한다.
+    passthrough_source_dataset_id: str | None = Field(
+        default=None,
+        description="tasks 가 비어있을 때(= Load→Save 직결 모드) 사용되는 소스 Dataset.id",
+    )
     # DAG schema 버전. 프론트 SDK가 config 생성 시 기입.
     # 하위 호환 migrator는 도입하지 않음(YAGNI). 미래 변경 대비 완충 필드.
     schema_version: int | None = Field(
         default=None,
         description="프론트 SDK가 기입한 DAG 스키마 버전",
     )
+
+    @model_validator(mode="after")
+    def _validate_tasks_or_passthrough(self) -> PipelineConfig:
+        """tasks 가 비어있으면 passthrough_source_dataset_id 가 반드시 있어야 한다."""
+        if not self.tasks and not self.passthrough_source_dataset_id:
+            raise ValueError(
+                "tasks 가 비어있을 경우 passthrough_source_dataset_id 가 필요합니다 "
+                "(Load→Save 직결 모드)."
+            )
+        return self
 
     @model_validator(mode="after")
     def _validate_task_references(self) -> PipelineConfig:
@@ -167,15 +185,26 @@ class PipelineConfig(BaseModel):
         return order
 
     def get_all_source_dataset_ids(self) -> list[str]:
-        """파이프라인 전체에서 참조하는 모든 source dataset_id를 중복 제거하여 반환."""
+        """파이프라인 전체에서 참조하는 모든 source dataset_id를 중복 제거하여 반환.
+
+        passthrough 모드(tasks 비어있음)의 경우 passthrough_source_dataset_id 도 포함한다.
+        """
         seen: set[str] = set()
         result: list[str] = []
+        if self.passthrough_source_dataset_id:
+            seen.add(self.passthrough_source_dataset_id)
+            result.append(self.passthrough_source_dataset_id)
         for task_config in self.tasks.values():
             for dataset_id in task_config.get_source_dataset_ids():
                 if dataset_id not in seen:
                     seen.add(dataset_id)
                     result.append(dataset_id)
         return result
+
+    @property
+    def is_passthrough(self) -> bool:
+        """Load→Save 직결 모드 (tasks 비어있음) 여부."""
+        return len(self.tasks) == 0
 
     def get_terminal_task_name(self) -> str:
         """
@@ -199,7 +228,7 @@ class PipelineConfig(BaseModel):
         if len(terminal_tasks) > 1:
             raise ValueError(
                 f"최종 출력 태스크가 2개 이상입니다: {terminal_tasks}. "
-                "merge_datasets 등으로 하나로 합쳐야 합니다."
+                "det_merge_datasets 등으로 하나로 합쳐야 합니다."
             )
         return terminal_tasks[0]
 
@@ -217,7 +246,7 @@ def load_pipeline_config_from_yaml(yaml_path: str | Path) -> PipelineConfig:
             split: TRAIN
           tasks:
             convert:
-              operator: format_convert_to_coco
+              operator: det_format_convert_to_coco
               inputs: ["source:abc-123"]
               params: {}
 

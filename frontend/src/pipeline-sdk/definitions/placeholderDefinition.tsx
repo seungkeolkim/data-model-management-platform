@@ -111,9 +111,9 @@ export const placeholderDefinition: NodeDefinition<'placeholder'> = {
     const restored = []
     for (const [taskKey, taskConfig] of Object.entries(config.tasks)) {
       if (claimedTaskKeys.has(taskKey)) continue
-      // manipulator registry에 없고 merge_datasets도 아닌 경우
+      // manipulator registry에 없고 det_merge_datasets도 아닌 경우
       const isKnown =
-        taskConfig.operator === 'merge_datasets' || !!manipulatorMap[taskConfig.operator]
+        taskConfig.operator === 'det_merge_datasets' || !!manipulatorMap[taskConfig.operator]
       if (isKnown) continue
       const nodeId = taskKey.startsWith('task_') ? taskKey.slice(5) : taskKey
       const data: PlaceholderNodeData = {

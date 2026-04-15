@@ -50,8 +50,10 @@ export function graphToPipelineConfig(
   if (!rootParts.name || !rootParts.output) {
     throw new Error('Save 노드가 없습니다.')
   }
-  if (Object.keys(tasks).length === 0) {
-    throw new Error('최소 1개 이상의 처리 노드가 필요합니다.')
+  // tasks 가 비어있어도 허용 — Load→Save 직결(passthrough) 모드.
+  // 이 경우 Save 노드가 passthrough_source_dataset_id 를 root 에 기여해야 한다.
+  if (Object.keys(tasks).length === 0 && !rootParts.passthrough_source_dataset_id) {
+    throw new Error('DataLoad 노드와 Save 노드를 직접 연결하거나 처리 노드를 추가해 주세요.')
   }
 
   return {
@@ -59,6 +61,7 @@ export function graphToPipelineConfig(
     description: rootParts.description,
     output: rootParts.output,
     tasks,
+    passthrough_source_dataset_id: rootParts.passthrough_source_dataset_id ?? null,
     // schema_version은 백엔드 Pydantic 모델에도 선언되어 있으면 그대로 전달된다.
     schema_version: CURRENT_SCHEMA_VERSION,
   } as PipelineConfig

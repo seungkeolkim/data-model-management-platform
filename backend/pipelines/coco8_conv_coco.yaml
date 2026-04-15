@@ -7,6 +7,6 @@ pipeline:
     split: TRAIN
   tasks:
     convert_to_coco:
-      operator: format_convert_to_coco
+      operator: det_format_convert_to_coco
       inputs: ["source:5c9e1a85-5e2d-46ce-af84-6c2e27517229"]
       params: {}

@@ -20,20 +20,20 @@ export const DEFAULT_CATEGORY_STYLE = { color: '#8c8c8c', emoji: '⚙️', label
 
 /** manipulator name 당 고유 이모지. 카테고리 이모지와 구분하여 한눈에 노드를 식별한다. */
 export const MANIPULATOR_EMOJI: Record<string, string> = {
-  filter_remain_selected_class_names_only_in_annotation: '🏷️',
-  filter_keep_images_containing_class_name:   '✅',
-  filter_remove_images_containing_class_name: '🚫',
-  format_convert_to_coco:          '🅾️',
-  format_convert_to_yolo:          '🅨',
-  format_convert_visdrone_to_coco: '🛩️',
-  format_convert_visdrone_to_yolo: '✈️',
-  sample_n_images:    '🎯',
-  shuffle_image_ids:  '🔀',
-  remap_class_name:   '🏷️',
-  rotate_image:          '↩️',
-  change_compression:    '📐',
-  mask_region_by_class:  '🎭',
-  merge_datasets: '🔗',
+  det_filter_remain_selected_class_names_only_in_annotation: '🏷️',
+  det_filter_keep_images_containing_class_name:   '✅',
+  det_filter_remove_images_containing_class_name: '🚫',
+  det_format_convert_to_coco:          '🅾️',
+  det_format_convert_to_yolo:          '🅨',
+  det_format_convert_visdrone_to_coco: '🛩️',
+  det_format_convert_visdrone_to_yolo: '✈️',
+  det_sample_n_images:    '🎯',
+  det_shuffle_image_ids:  '🔀',
+  det_remap_class_name:   '🏷️',
+  det_rotate_image:          '↩️',
+  det_change_compression:    '📐',
+  det_mask_region_by_class:  '🎭',
+  det_merge_datasets: '🔗',
 }
 
 export function getCategoryStyle(category: string) {

@@ -268,7 +268,7 @@ function PipelineEditorContent() {
       // 사용자에게 경고만 표시.
       const unknownOperators: string[] = []
       for (const task of Object.values(config.tasks)) {
-        if (task.operator !== 'merge_datasets' && !manipulatorMap[task.operator]) {
+        if (task.operator !== 'det_merge_datasets' && !manipulatorMap[task.operator]) {
           unknownOperators.push(task.operator)
         }
       }

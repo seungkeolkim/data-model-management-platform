@@ -253,6 +253,12 @@ def _execute_classification_register(
         class_info_heads = []
         for head in heads_input:
             counts = result.head_class_counts[head.name]
+            # per_class_image_count 는 frontend 규약상 class_name → count 매핑 (dict).
+            # ingest 는 class 순서별 list[int] 로 반환하므로 여기서 dict 로 변환한다.
+            per_class_image_count = {
+                class_name: counts[class_idx]
+                for class_idx, class_name in enumerate(head.classes)
+            }
             class_info_heads.append({
                 "name": head.name,
                 "multi_label": head.multi_label,
@@ -261,7 +267,7 @@ def _execute_classification_register(
                     str(idx): class_name
                     for idx, class_name in enumerate(head.classes)
                 },
-                "per_class_image_count": counts,
+                "per_class_image_count": per_class_image_count,
             })
 
         # SKIP 정책으로 제외된 이미지 상세 — metadata와 process.log 양쪽에 보존.

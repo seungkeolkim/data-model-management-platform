@@ -203,25 +203,59 @@ def _execute_pipeline(
         output_dataset.status = "READY"
         output_dataset.storage_uri = result.output_storage_uri
         output_dataset.image_count = result.image_count
-        output_dataset.class_count = len(result.output_meta.categories)
         output_dataset.annotation_files = result.annotation_filenames
         output_dataset.annotation_meta_file = result.annotation_meta_filename
-
-        # annotation_format 확정 (OutputConfig에서 지정한 포맷)
         output_dataset.annotation_format = result.output_format
 
-        # metadata 채우기: 클래스 매핑 정보 (파이프라인이 생성한 데이터는 시스템이 전부 알고 있음)
-        # 통일포맷: categories는 list[str]이므로 index를 key로 사용
-        class_mapping = {
-            str(idx): name
-            for idx, name in enumerate(result.output_meta.categories)
-        }
-        output_dataset.metadata_ = {
-            "class_info": {
-                "class_count": len(result.output_meta.categories),
-                "class_mapping": class_mapping,
-            },
-        }
+        # task_kind 에 따라 class_count/metadata 작성 방식이 다르다.
+        # - DETECTION: categories(list[str]) 기반 class_mapping
+        # - CLASSIFICATION: head_schema(list[HeadSchema]) 기반 heads 구조
+        if result.output_meta.task_kind == "CLASSIFICATION":
+            head_schema = result.output_meta.head_schema or []
+            # head/class 별 이미지 수를 image_records.labels 로부터 재계산 — RAW 와 동일 규약.
+            per_head_class_counts: dict[str, dict[str, int]] = {
+                head.name: {class_name: 0 for class_name in head.classes}
+                for head in head_schema
+            }
+            for record in result.output_meta.image_records:
+                for head_name, class_names in (record.labels or {}).items():
+                    head_bucket = per_head_class_counts.get(head_name)
+                    if head_bucket is None:
+                        continue
+                    for class_name in class_names:
+                        if class_name in head_bucket:
+                            head_bucket[class_name] += 1
+            class_info_heads = [
+                {
+                    "name": head.name,
+                    "multi_label": head.multi_label,
+                    "class_mapping": {
+                        str(class_idx): class_name
+                        for class_idx, class_name in enumerate(head.classes)
+                    },
+                    "per_class_image_count": per_head_class_counts[head.name],
+                }
+                for head in head_schema
+            ]
+            # classification 은 단일 int class_count 가 의미 없어 NULL 유지 (RAW 등록과 동일 규약).
+            output_dataset.class_count = None
+            output_dataset.metadata_ = {
+                "class_info": {
+                    "heads": class_info_heads,
+                },
+            }
+        else:
+            output_dataset.class_count = len(result.output_meta.categories)
+            class_mapping = {
+                str(idx): name
+                for idx, name in enumerate(result.output_meta.categories)
+            }
+            output_dataset.metadata_ = {
+                "class_info": {
+                    "class_count": len(result.output_meta.categories),
+                    "class_mapping": class_mapping,
+                },
+            }
 
         # ── 5. PipelineExecution 완료 ──
         execution.status = "DONE"

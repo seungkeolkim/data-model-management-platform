@@ -27,7 +27,7 @@ def _make_config(
     if tasks is None:
         tasks = {
             "convert": {
-                "operator": "format_convert_to_coco",
+                "operator": "det_format_convert_to_coco",
                 "inputs": ["source:00000000-0000-0000-0000-000000000001"],
                 "params": {},
             }
@@ -182,7 +182,7 @@ class TestValidateOperatorsRegistered:
         """MANIPULATOR_REGISTRY에 등록된 operator는 오류가 없어야 한다."""
         config = _make_config(tasks={
             "convert": {
-                "operator": "format_convert_to_coco",
+                "operator": "det_format_convert_to_coco",
                 "inputs": ["source:00000000-0000-0000-0000-000000000001"],
                 "params": {},
             }
@@ -218,8 +218,8 @@ class TestValidateOperatorsRegistered:
         unknown_error = next(
             issue for issue in result.issues if issue.code == "UNKNOWN_OPERATOR"
         )
-        assert "format_convert_to_coco" in unknown_error.message
-        assert "merge_datasets" in unknown_error.message
+        assert "det_format_convert_to_coco" in unknown_error.message
+        assert "det_merge_datasets" in unknown_error.message
 
     def test_error_field_points_to_correct_task(self):
         """오류의 field가 문제 태스크를 정확히 가리켜야 한다."""
@@ -238,28 +238,28 @@ class TestValidateOperatorsRegistered:
 
 
 # =============================================================================
-# merge_datasets 최소 입력 수 검증
+# det_merge_datasets 최소 입력 수 검증
 # =============================================================================
 
 
 class TestValidateMergeMinimumInputs:
-    """merge_datasets의 최소 입력 수 검증을 테스트한다."""
+    """det_merge_datasets의 최소 입력 수 검증을 테스트한다."""
 
     def test_merge_with_two_inputs_passes(self):
-        """merge_datasets에 2개 입력이면 오류가 없어야 한다."""
+        """det_merge_datasets에 2개 입력이면 오류가 없어야 한다."""
         config = _make_config(tasks={
             "convert_a": {
-                "operator": "format_convert_to_coco",
+                "operator": "det_format_convert_to_coco",
                 "inputs": ["source:00000000-0000-0000-0000-000000000001"],
                 "params": {},
             },
             "convert_b": {
-                "operator": "format_convert_to_coco",
+                "operator": "det_format_convert_to_coco",
                 "inputs": ["source:00000000-0000-0000-0000-000000000002"],
                 "params": {},
             },
             "merge": {
-                "operator": "merge_datasets",
+                "operator": "det_merge_datasets",
                 "inputs": ["convert_a", "convert_b"],
                 "params": {},
             },
@@ -269,15 +269,15 @@ class TestValidateMergeMinimumInputs:
         assert "MERGE_MIN_INPUTS" not in error_codes
 
     def test_merge_with_one_input_detected(self):
-        """merge_datasets에 1개 입력이면 MERGE_MIN_INPUTS 오류가 발생해야 한다."""
+        """det_merge_datasets에 1개 입력이면 MERGE_MIN_INPUTS 오류가 발생해야 한다."""
         config = _make_config(tasks={
             "convert_a": {
-                "operator": "format_convert_to_coco",
+                "operator": "det_format_convert_to_coco",
                 "inputs": ["source:00000000-0000-0000-0000-000000000001"],
                 "params": {},
             },
             "merge": {
-                "operator": "merge_datasets",
+                "operator": "det_merge_datasets",
                 "inputs": ["convert_a"],
                 "params": {},
             },
@@ -300,7 +300,7 @@ class TestValidateSingleInputOperators:
         """단일 입력 operator에 1개 입력이면 경고가 없어야 한다."""
         config = _make_config(tasks={
             "convert": {
-                "operator": "format_convert_to_coco",
+                "operator": "det_format_convert_to_coco",
                 "inputs": ["source:00000000-0000-0000-0000-000000000001"],
                 "params": {},
             }
@@ -316,18 +316,18 @@ class TestValidateSingleInputOperators:
         """단일 입력 operator에 다중 입력이면 MULTI_INPUT_WITHOUT_MERGE 경고가 발생해야 한다."""
         config = _make_config(tasks={
             "convert_a": {
-                "operator": "format_convert_to_coco",
+                "operator": "det_format_convert_to_coco",
                 "inputs": ["source:00000000-0000-0000-0000-000000000001"],
                 "params": {},
             },
             "convert_b": {
-                "operator": "format_convert_to_coco",
+                "operator": "det_format_convert_to_coco",
                 "inputs": ["source:00000000-0000-0000-0000-000000000002"],
                 "params": {},
             },
-            # format_convert_to_yolo는 단일 입력 전용인데 2개 입력
+            # det_format_convert_to_yolo는 단일 입력 전용인데 2개 입력
             "bad_multi": {
-                "operator": "format_convert_to_yolo",
+                "operator": "det_format_convert_to_yolo",
                 "inputs": ["convert_a", "convert_b"],
                 "params": {},
             },
@@ -342,20 +342,20 @@ class TestValidateSingleInputOperators:
         assert "MULTI_INPUT_WITHOUT_MERGE" in warning_codes
 
     def test_multi_input_operator_with_multi_inputs_no_warning(self):
-        """multi-input 전용 operator(merge_datasets)에 다중 입력이면 경고가 없어야 한다."""
+        """multi-input 전용 operator(det_merge_datasets)에 다중 입력이면 경고가 없어야 한다."""
         config = _make_config(tasks={
             "convert_a": {
-                "operator": "format_convert_to_coco",
+                "operator": "det_format_convert_to_coco",
                 "inputs": ["source:00000000-0000-0000-0000-000000000001"],
                 "params": {},
             },
             "convert_b": {
-                "operator": "format_convert_to_coco",
+                "operator": "det_format_convert_to_coco",
                 "inputs": ["source:00000000-0000-0000-0000-000000000002"],
                 "params": {},
             },
             "merge": {
-                "operator": "merge_datasets",
+                "operator": "det_merge_datasets",
                 "inputs": ["convert_a", "convert_b"],
                 "params": {},
             },
@@ -406,17 +406,17 @@ class TestComplexValidationScenarios:
             split="VAL",
             tasks={
                 "convert_a": {
-                    "operator": "format_convert_to_coco",
+                    "operator": "det_format_convert_to_coco",
                     "inputs": ["source:00000000-0000-0000-0000-000000000001"],
                     "params": {},
                 },
                 "convert_b": {
-                    "operator": "format_convert_to_coco",
+                    "operator": "det_format_convert_to_coco",
                     "inputs": ["source:00000000-0000-0000-0000-000000000002"],
                     "params": {},
                 },
                 "merge": {
-                    "operator": "merge_datasets",
+                    "operator": "det_merge_datasets",
                     "inputs": ["convert_a", "convert_b"],
                     "params": {},
                 },

@@ -1,5 +1,5 @@
 """
-merge_datasets Manipulator 단위 테스트.
+det_merge_datasets Manipulator 단위 테스트.
 
 통일포맷 전환 후:
   - categories는 list[str] (이름 기반, ID 없음)
@@ -19,7 +19,7 @@ import hashlib
 
 import pytest
 
-from lib.manipulators.merge_datasets import (
+from lib.manipulators.det_merge_datasets import (
     MergeDatasets,
     _build_dataset_hash_table,
     _detect_file_name_collisions,
@@ -463,5 +463,5 @@ class TestMergeDatasetsErrors:
         assert MergeDatasets.accepts_multi_input is True
 
     def test_name_property(self):
-        """name 속성이 'merge_datasets'."""
-        assert MergeDatasets().name == "merge_datasets"
+        """name 속성이 'det_merge_datasets'."""
+        assert MergeDatasets().name == "det_merge_datasets"

@@ -97,8 +97,9 @@ export interface ConvertContext {
 export interface ConfigContribution {
   /** tasks[key]로 병합될 항목. 노드가 task를 발생시키지 않으면 빈 객체. */
   tasks?: Record<string, TaskConfig>
-  /** PipelineConfig 루트에 병합될 필드 (SaveNode가 name/output/description을 기여) */
-  root?: Partial<Pick<PipelineConfig, 'name' | 'description' | 'output'>>
+  /** PipelineConfig 루트에 병합될 필드. SaveNode가 name/output/description 을 기여하며,
+   *  Load→Save 직결(tasks 비어있음)일 때 passthrough_source_dataset_id 도 추가한다. */
+  root?: Partial<Pick<PipelineConfig, 'name' | 'description' | 'output' | 'passthrough_source_dataset_id'>>
   /** 다른 노드가 이 노드를 inputs에서 참조할 때 사용할 토큰. 없으면 이 노드는 edge 대상으로 참조 불가. */
   outputRef?: string
 }
@@ -183,7 +184,7 @@ export interface NodeDefinition<K extends NodeKind = NodeKind> {
    * Config → 그래프 역변환. 이 definition이 맡을 task / source를 식별하여 복원.
    * - DataLoadDefinition: source:<id> 토큰을 점유
    * - OperatorDefinition: MANIPULATOR_REGISTRY에 등록된 operator task를 점유
-   * - MergeDefinition: operator === 'merge_datasets' task를 점유
+   * - MergeDefinition: operator === 'det_merge_datasets' task를 점유
    * - SaveDefinition: PipelineConfig.output/name으로부터 단일 인스턴스 생성
    * - PlaceholderDefinition: 남은(미점유) task를 placeholder로 점유
    */

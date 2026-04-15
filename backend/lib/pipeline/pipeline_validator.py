@@ -114,7 +114,8 @@ VALID_DATASET_TYPES = {"SOURCE", "PROCESSED", "FUSION"}
 VALID_SPLIT_VALUES = {"TRAIN", "VAL", "TEST", "NONE"}
 
 # 허용되는 annotation_format 값
-VALID_ANNOTATION_FORMATS = {"COCO", "YOLO"}
+# CLS_MANIFEST 는 classification(manifest.jsonl + head_schema.json) 전용 포맷.
+VALID_ANNOTATION_FORMATS = {"COCO", "YOLO", "CLS_MANIFEST"}
 
 
 def validate_pipeline_config_static(config: PipelineConfig) -> PipelineValidationResult:
@@ -126,7 +127,7 @@ def validate_pipeline_config_static(config: PipelineConfig) -> PipelineValidatio
       2. output.split 유효성
       3. output.annotation_format 유효성
       4. 각 태스크의 operator가 MANIPULATOR_REGISTRY에 등록되어 있는지
-      5. merge_datasets operator의 inputs가 2개 이상인지
+      5. det_merge_datasets operator의 inputs가 2개 이상인지
       6. 단일 입력 전용 operator에 다중 입력이 주어지지 않았는지
 
     Args:
@@ -149,7 +150,7 @@ def validate_pipeline_config_static(config: PipelineConfig) -> PipelineValidatio
     # (4) operator 등록 여부
     _validate_operators_registered(config, result)
 
-    # (5) merge_datasets 최소 입력 수
+    # (5) det_merge_datasets 최소 입력 수
     _validate_merge_minimum_inputs(config, result)
 
     # (6) 단일 입력 전용 operator에 다중 입력 금지
@@ -251,13 +252,13 @@ def _validate_merge_minimum_inputs(
     config: PipelineConfig,
     result: PipelineValidationResult,
 ) -> None:
-    """merge_datasets operator의 inputs가 2개 이상인지 검증한다."""
+    """det_merge_datasets operator의 inputs가 2개 이상인지 검증한다."""
     for task_name, task_config in config.tasks.items():
-        if task_config.operator == "merge_datasets" and len(task_config.inputs) < 2:
+        if task_config.operator == "det_merge_datasets" and len(task_config.inputs) < 2:
             result.add_error(
                 code="MERGE_MIN_INPUTS",
                 message=(
-                    f"태스크 '{task_name}'의 merge_datasets operator는 "
+                    f"태스크 '{task_name}'의 det_merge_datasets operator는 "
                     f"최소 2개 이상의 입력이 필요합니다. "
                     f"현재 입력 수: {len(task_config.inputs)}"
                 ),
@@ -322,7 +323,7 @@ def _validate_single_input_operators(
                     f"태스크 '{task_name}'의 operator '{task_config.operator}'는 "
                     f"다중 입력 전용이 아닌데 {len(task_config.inputs)}개의 입력이 주어졌습니다. "
                     f"입력들이 자동으로 단순 병합됩니다. "
-                    f"명시적인 merge_datasets 사용을 권장합니다."
+                    f"명시적인 det_merge_datasets 사용을 권장합니다."
                 ),
                 issue_field=f"tasks.{task_name}.inputs",
             )

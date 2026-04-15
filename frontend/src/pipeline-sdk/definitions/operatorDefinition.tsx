@@ -24,7 +24,7 @@ const { Text } = Typography
 /** 포맷 변환 노드는 통일포맷 자동 처리로 대체되어 비활성 */
 const FORMAT_CONVERT_CATEGORY = 'FORMAT_CONVERT'
 /** 백엔드 코드 미구현 manipulator (DB seed만 존재) */
-const UNIMPLEMENTED_OPERATORS = ['change_compression', 'shuffle_image_ids']
+const UNIMPLEMENTED_OPERATORS = ['det_change_compression', 'det_shuffle_image_ids']
 
 /** description("버튼 텍스트 (도움말)") 패턴에서 앞부분만 추출 */
 function extractShortLabel(desc: string): string {
@@ -182,8 +182,8 @@ export const operatorDefinition: NodeDefinition<'operator'> = {
   paletteFromManipulators(manipulators: Manipulator[], _ctx: CreateContext): PaletteItem<'operator'>[] {
     const items: PaletteItem<'operator'>[] = []
     for (const m of manipulators) {
-      // merge_datasets는 MergeNode 별도 특수 노드로 처리 — 여기서 제외.
-      if (m.name === 'merge_datasets') continue
+      // det_merge_datasets는 MergeNode 별도 특수 노드로 처리 — 여기서 제외.
+      if (m.name === 'det_merge_datasets') continue
       const style = getCategoryStyle(m.category)
       const isFormatConvert = m.category === FORMAT_CONVERT_CATEGORY
       const isUnimplemented = UNIMPLEMENTED_OPERATORS.includes(m.name)
@@ -245,7 +245,7 @@ export const operatorDefinition: NodeDefinition<'operator'> = {
     const restored = []
     for (const [taskKey, taskConfig] of Object.entries(config.tasks)) {
       if (claimedTaskKeys.has(taskKey)) continue
-      if (taskConfig.operator === 'merge_datasets') continue
+      if (taskConfig.operator === 'det_merge_datasets') continue
       const manipulatorMeta = manipulatorMap[taskConfig.operator]
       if (!manipulatorMeta) continue // placeholderDefinition이 나중에 점유
 

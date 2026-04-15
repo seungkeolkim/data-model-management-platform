@@ -43,7 +43,7 @@ class TestPipelineConfigBasic:
             output=OutputConfig(dataset_type="SOURCE", annotation_format="COCO", split="TRAIN"),
             tasks={
                 "convert": TaskConfig(
-                    operator="format_convert_to_coco",
+                    operator="det_format_convert_to_coco",
                     inputs=["source:abc-123"],
                     params={},
                 ),
@@ -61,11 +61,11 @@ class TestPipelineConfigBasic:
             output={"annotation_format": "COCO"},
             tasks={
                 "step_1": TaskConfig(
-                    operator="format_convert_to_coco",
+                    operator="det_format_convert_to_coco",
                     inputs=["source:aaa"],
                 ),
                 "step_2": TaskConfig(
-                    operator="remap_class_name",
+                    operator="det_remap_class_name",
                     inputs=["step_1"],
                     params={"mapping": {"van": "car"}},
                 ),
@@ -386,7 +386,7 @@ class TestYamlParsing:
                 split: TRAIN
               tasks:
                 convert:
-                  operator: format_convert_to_coco
+                  operator: det_format_convert_to_coco
                   inputs: ["source:abc-123"]
                   params:
                     category_names:
@@ -404,7 +404,7 @@ class TestYamlParsing:
         assert config.output.annotation_format == "COCO"
         assert config.output.split == "TRAIN"
         assert "convert" in config.tasks
-        assert config.tasks["convert"].operator == "format_convert_to_coco"
+        assert config.tasks["convert"].operator == "det_format_convert_to_coco"
         assert config.tasks["convert"].params["category_names"] == ["person", "car"]
 
     def test_multi_task_yaml(self, tmp_path: Path):
@@ -418,15 +418,15 @@ class TestYamlParsing:
                 split: TRAIN
               tasks:
                 prep_a:
-                  operator: format_convert_to_coco
+                  operator: det_format_convert_to_coco
                   inputs: ["source:dataset-a"]
                   params: {}
                 prep_b:
-                  operator: format_convert_to_coco
+                  operator: det_format_convert_to_coco
                   inputs: ["source:dataset-b"]
                   params: {}
                 merge_all:
-                  operator: merge_datasets
+                  operator: det_merge_datasets
                   inputs: [prep_a, prep_b]
                   params: {}
         """)
@@ -463,7 +463,7 @@ class TestYamlParsing:
                 split: TRAIN
               tasks:
                 convert_to_coco:
-                  operator: format_convert_to_coco
+                  operator: det_format_convert_to_coco
                   inputs: ["source:550e8400-e29b-41d4-a716-446655440000"]
                   params:
                     category_names:
@@ -473,7 +473,7 @@ class TestYamlParsing:
                       - truck
                       - bus
                 remap_classes:
-                  operator: remap_class_name
+                  operator: det_remap_class_name
                   inputs: [convert_to_coco]
                   params:
                     mapping:

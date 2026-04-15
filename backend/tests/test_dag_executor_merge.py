@@ -1,5 +1,5 @@
 """
-DAG Executor + merge_datasets 통합 테스트.
+DAG Executor + det_merge_datasets 통합 테스트.
 
 통일포맷 전환 후:
   - annotation_format 검증 삭제 (_validate_input_formats 삭제됨)
@@ -7,7 +7,7 @@ DAG Executor + merge_datasets 통합 테스트.
   - cross-format merge가 자연스럽게 지원됨
 
 테스트 영역:
-  1. executor가 merge_datasets operator일 때 _merge_metas()를 건너뛰고 list 전달
+  1. executor가 det_merge_datasets operator일 때 _merge_metas()를 건너뛰고 list 전달
   2. _build_image_plans: extra에 source 정보 있을 때 올바른 경로 생성
   3. _is_multi_input_manipulator 동작 확인
 """
@@ -137,13 +137,13 @@ def _make_source_meta(
 class TestIsMultiInputManipulator:
     """_is_multi_input_manipulator() 동작 확인."""
 
-    def test_merge_datasets_is_multi_input(self):
+    def test_det_merge_datasets_is_multi_input(self):
         executor = PipelineDagExecutor(MockStorage())
-        assert executor._is_multi_input_manipulator("merge_datasets") is True
+        assert executor._is_multi_input_manipulator("det_merge_datasets") is True
 
     def test_format_convert_is_not_multi_input(self):
         executor = PipelineDagExecutor(MockStorage())
-        assert executor._is_multi_input_manipulator("format_convert_to_coco") is False
+        assert executor._is_multi_input_manipulator("det_format_convert_to_coco") is False
 
     def test_unknown_operator_is_not_multi_input(self):
         executor = PipelineDagExecutor(MockStorage())
@@ -272,16 +272,16 @@ class TestBuildImagePlans:
 
 
 # ─────────────────────────────────────────────────────────────────
-# 3. DAG 실행 통합 테스트 (merge_datasets bypass)
+# 3. DAG 실행 통합 테스트 (det_merge_datasets bypass)
 # ─────────────────────────────────────────────────────────────────
 
 
 class TestDagExecutorMergeBypass:
-    """merge_datasets operator일 때 executor가 list를 직접 전달하는지 확인."""
+    """det_merge_datasets operator일 때 executor가 list를 직접 전달하는지 확인."""
 
-    def test_merge_datasets_receives_list_not_single_meta(self):
+    def test_det_merge_datasets_receives_list_not_single_meta(self):
         """
-        merge_datasets task의 inputs가 2개일 때,
+        det_merge_datasets task의 inputs가 2개일 때,
         _merge_metas()를 건너뛰고 list[DatasetMeta]가 manipulator에 전달된다.
 
         검증: 결과의 file_name_mapping이 존재 → MergeDatasets가 list를 받아 처리했다는 증거.
@@ -307,7 +307,7 @@ class TestDagExecutorMergeBypass:
             output={"dataset_type": "FUSION", "annotation_format": "COCO", "split": "TRAIN"},
             tasks={
                 "merge": {
-                    "operator": "merge_datasets",
+                    "operator": "det_merge_datasets",
                     "inputs": ["source:ds-a", "source:ds-b"],
                     "params": {},
                 },
@@ -377,7 +377,7 @@ class TestDagExecutorMergeBypass:
             output={"dataset_type": "FUSION", "annotation_format": "COCO", "split": "TRAIN"},
             tasks={
                 "merge": {
-                    "operator": "merge_datasets",
+                    "operator": "det_merge_datasets",
                     "inputs": ["source:ds-a", "source:ds-b"],
                     "params": {},
                 },
