@@ -1,5 +1,5 @@
 """
-cls_sample_n_images — Classification 데이터셋 이미지 N장 샘플링 (STUB).
+sample_n_images_classification — Classification 데이터셋 이미지 N장 샘플링 (STUB).
 
 역할:
     image_records 에서 N 장을 샘플링하여 출력 DatasetMeta 에 남긴다.
@@ -28,12 +28,12 @@ from lib.pipeline.manipulator_base import UnitManipulator
 from lib.pipeline.pipeline_data_models import DatasetMeta
 
 
-class ClsSampleNImages(UnitManipulator):
-    """DB seed name: "cls_sample_n_images"."""
+class SampleNImagesClassification(UnitManipulator):
+    """DB seed name: "sample_n_images_classification"."""
 
     @property
     def name(self) -> str:
-        return "cls_sample_n_images"
+        return "sample_n_images_classification"
 
     def transform_annotation(
         self,
@@ -42,5 +42,5 @@ class ClsSampleNImages(UnitManipulator):
         context: dict[str, Any] | None = None,
     ) -> DatasetMeta:
         raise NotImplementedError(
-            "cls_sample_n_images 는 아직 구현되지 않았습니다 (stub)."
+            "sample_n_images_classification 는 아직 구현되지 않았습니다 (stub)."
         )

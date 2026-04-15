@@ -1,5 +1,5 @@
 """
-cls_reorder_heads — Head 순서 변경 manipulator (STUB).
+reorder_heads_classification — Head 순서 변경 manipulator (STUB).
 
 역할:
     head_schema 배열의 순서를 사용자가 지정한 순서대로 재정렬한다.
@@ -21,12 +21,12 @@ from lib.pipeline.manipulator_base import UnitManipulator
 from lib.pipeline.pipeline_data_models import DatasetMeta
 
 
-class ClsReorderHeads(UnitManipulator):
-    """DB seed name: "cls_reorder_heads"."""
+class ReorderHeadsClassification(UnitManipulator):
+    """DB seed name: "reorder_heads_classification"."""
 
     @property
     def name(self) -> str:
-        return "cls_reorder_heads"
+        return "reorder_heads_classification"
 
     def transform_annotation(
         self,
@@ -35,5 +35,5 @@ class ClsReorderHeads(UnitManipulator):
         context: dict[str, Any] | None = None,
     ) -> DatasetMeta:
         raise NotImplementedError(
-            "cls_reorder_heads 는 아직 구현되지 않았습니다 (stub)."
+            "reorder_heads_classification 는 아직 구현되지 않았습니다 (stub)."
         )
