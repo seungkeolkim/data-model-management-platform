@@ -1,5 +1,5 @@
 """
-merge_datasets_classification — 복수 Classification 데이터셋 병합 manipulator (STUB).
+cls_merge_datasets — 복수 Classification 데이터셋 병합 manipulator (STUB).
 
 역할:
     여러 classification DatasetMeta (head_schema + labels + SHA 기반 images/{sha}.{ext}) 를
@@ -10,7 +10,7 @@ merge_datasets_classification — 복수 Classification 데이터셋 병합 mani
     1. head_schema 정합성 검증
        - 동일 head 이름은 multi_label 값이 동일해야 함.
        - 동일 head 의 classes 는 prefix 보존 원칙(기존 순서 변경/삭제 금지). 신규 class 는 append.
-       - 이름 충돌이 있으면 호출자가 rename_head_classification / rename_class_classification 으로
+       - 이름 충돌이 있으면 호출자가 cls_rename_head / cls_rename_class 으로
          사전 정리해야 한다. 이 manipulator 는 충돌 시 명시적 에러.
     2. 이미지 dedup
        - 동일 SHA 가 여러 소스에 등장하면 1개만 유지. labels 는 (head 별) union (multi_label=true)
@@ -32,12 +32,12 @@ from lib.pipeline.manipulator_base import UnitManipulator
 from lib.pipeline.pipeline_data_models import DatasetMeta
 
 
-class MergeDatasetsClassification(UnitManipulator):
-    """DB seed name: "merge_datasets_classification"."""
+class ClsMergeDatasets(UnitManipulator):
+    """DB seed name: "cls_merge_datasets"."""
 
     @property
     def name(self) -> str:
-        return "merge_datasets_classification"
+        return "cls_merge_datasets"
 
     def transform_annotation(
         self,
@@ -46,5 +46,5 @@ class MergeDatasetsClassification(UnitManipulator):
         context: dict[str, Any] | None = None,
     ) -> DatasetMeta:
         raise NotImplementedError(
-            "merge_datasets_classification 는 아직 구현되지 않았습니다 (stub)."
+            "cls_merge_datasets 는 아직 구현되지 않았습니다 (stub)."
         )

@@ -1,5 +1,5 @@
 """
-filter_by_class_classification — 특정 Head 의 특정 Class 포함/제외 필터 (STUB).
+cls_filter_by_class — 특정 Head 의 특정 Class 포함/제외 필터 (STUB).
 
 역할:
     지정 head 의 특정 class 를 포함하거나 제외하는 필터.
@@ -24,12 +24,12 @@ from lib.pipeline.manipulator_base import UnitManipulator
 from lib.pipeline.pipeline_data_models import DatasetMeta
 
 
-class FilterByClassClassification(UnitManipulator):
-    """DB seed name: "filter_by_class_classification"."""
+class ClsFilterByClass(UnitManipulator):
+    """DB seed name: "cls_filter_by_class"."""
 
     @property
     def name(self) -> str:
-        return "filter_by_class_classification"
+        return "cls_filter_by_class"
 
     def transform_annotation(
         self,
@@ -38,5 +38,5 @@ class FilterByClassClassification(UnitManipulator):
         context: dict[str, Any] | None = None,
     ) -> DatasetMeta:
         raise NotImplementedError(
-            "filter_by_class_classification 는 아직 구현되지 않았습니다 (stub)."
+            "cls_filter_by_class 는 아직 구현되지 않았습니다 (stub)."
         )

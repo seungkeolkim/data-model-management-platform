@@ -38,7 +38,7 @@ class HeadSchema:
         multi_label: 한 이미지가 해당 head 내 여러 class 를 동시에 가질 수 있는지 여부.
         classes: class 이름 배열. 이 순서가 학습 모델 output index 의 SSOT 이며,
                  merge/reorder 규칙은 이 순서를 절대 불변으로 취급한다.
-                 (예외: reorder_classes_classification manipulator 로 명시적 reorder 시에만 변경)
+                 (예외: cls_reorder_classes manipulator 로 명시적 reorder 시에만 변경)
     """
     name: str
     multi_label: bool

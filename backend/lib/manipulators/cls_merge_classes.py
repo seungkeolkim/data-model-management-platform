@@ -1,5 +1,5 @@
 """
-merge_classes_classification — 같은 Head 내 여러 Class 를 하나로 통합 (STUB).
+cls_merge_classes — 같은 Head 내 여러 Class 를 하나로 통합 (STUB).
 
 역할:
     지정 head 의 여러 원본 class 를 하나의 target class 로 병합한다.
@@ -25,12 +25,12 @@ from lib.pipeline.manipulator_base import UnitManipulator
 from lib.pipeline.pipeline_data_models import DatasetMeta
 
 
-class MergeClassesClassification(UnitManipulator):
-    """DB seed name: "merge_classes_classification"."""
+class ClsMergeClasses(UnitManipulator):
+    """DB seed name: "cls_merge_classes"."""
 
     @property
     def name(self) -> str:
-        return "merge_classes_classification"
+        return "cls_merge_classes"
 
     def transform_annotation(
         self,
@@ -39,5 +39,5 @@ class MergeClassesClassification(UnitManipulator):
         context: dict[str, Any] | None = None,
     ) -> DatasetMeta:
         raise NotImplementedError(
-            "merge_classes_classification 는 아직 구현되지 않았습니다 (stub)."
+            "cls_merge_classes 는 아직 구현되지 않았습니다 (stub)."
         )
