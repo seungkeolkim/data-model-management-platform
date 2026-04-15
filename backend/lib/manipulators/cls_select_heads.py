@@ -1,5 +1,5 @@
 """
-select_heads_classification — Classification 전용 Head 선택 manipulator.
+cls_select_heads — Classification 전용 Head 선택 manipulator.
 
 역할:
     head_schema 에서 사용자가 지정한 head 만 유지하고 나머지는 제거한다.
@@ -25,11 +25,11 @@ logger = logging.getLogger(__name__)
 
 
 class SelectHeadsClassification(UnitManipulator):
-    """DB seed name: "select_heads_classification"."""
+    """DB seed name: "cls_select_heads"."""
 
     @property
     def name(self) -> str:
-        return "select_heads_classification"
+        return "cls_select_heads"
 
     def transform_annotation(
         self,
@@ -39,11 +39,11 @@ class SelectHeadsClassification(UnitManipulator):
     ) -> DatasetMeta:
         if isinstance(input_meta, list):
             raise ValueError(
-                "select_heads_classification 는 단일 입력만 지원합니다 (list 입력 불가)."
+                "cls_select_heads 는 단일 입력만 지원합니다 (list 입력 불가)."
             )
         if input_meta.head_schema is None:
             raise ValueError(
-                "select_heads_classification 는 classification DatasetMeta 에만 사용합니다 "
+                "cls_select_heads 는 classification DatasetMeta 에만 사용합니다 "
                 "(head_schema 가 None 입니다)."
             )
 
@@ -53,7 +53,7 @@ class SelectHeadsClassification(UnitManipulator):
         if not keep_set:
             # 빈 입력 = passthrough. head_schema/labels 그대로 복제.
             logger.info(
-                "select_heads_classification: keep_head_names 비어있음 → 모든 head 유지 (passthrough)"
+                "cls_select_heads: keep_head_names 비어있음 → 모든 head 유지 (passthrough)"
             )
             new_head_schema = [
                 HeadSchema(name=head.name, multi_label=head.multi_label, classes=list(head.classes))
@@ -63,7 +63,7 @@ class SelectHeadsClassification(UnitManipulator):
             missing_names = keep_set - set(existing_head_names)
             if missing_names:
                 logger.warning(
-                    "select_heads_classification: 존재하지 않는 head 는 무시 — missing=%s, existing=%s",
+                    "cls_select_heads: 존재하지 않는 head 는 무시 — missing=%s, existing=%s",
                     sorted(missing_names), existing_head_names,
                 )
             new_head_schema = [
@@ -73,7 +73,7 @@ class SelectHeadsClassification(UnitManipulator):
             ]
             if not new_head_schema:
                 raise ValueError(
-                    f"select_heads_classification: keep_head_names 와 매칭되는 head 가 없습니다. "
+                    f"cls_select_heads: keep_head_names 와 매칭되는 head 가 없습니다. "
                     f"keep={sorted(keep_set)}, existing={existing_head_names}"
                 )
 
