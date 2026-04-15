@@ -6,6 +6,9 @@ from __future__ import annotations
 
 from celery import Celery
 
+# ORM 세션 이벤트 리스너 등록 — Celery worker 프로세스에서도 반드시 로드되어야
+# Dataset 변경 시 DatasetGroup.updated_at 이 갱신된다 (register / pipeline 태스크).
+import app.models.events  # noqa: F401
 from app.core.config import settings
 
 celery_app = Celery(

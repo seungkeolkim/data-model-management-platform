@@ -146,6 +146,7 @@ export default function DatasetListPage() {
     image_count: 110,
     status: 100,
     created_at: 120,
+    updated_at: 120,
     action: 180,
   })
 
@@ -261,7 +262,34 @@ export default function DatasetListPage() {
     }
   }
 
+  // 사용 목적(task type)별 태그 색상. DETECTION / CLASSIFICATION 구분이 한눈에 보이도록
+  // 서로 대비되는 톤을 사용하고, 그 외는 기본 보라색으로 폴백한다.
+  const TASK_TYPE_TAG_COLOR: Record<string, string> = {
+    DETECTION: 'geekblue',
+    CLASSIFICATION: 'magenta',
+    SEGMENTATION: 'cyan',
+    ZERO_SHOT: 'gold',
+  }
+
   const columns = [
+    {
+      title: '사용 목적',
+      key: 'task_types',
+      width: groupColumnWidths.task_types,
+      onHeaderCell: buildGroupHeaderCellProps('task_types'),
+      sorter: true,
+      sortOrder: buildSortOrderForColumn('task_types'),
+      render: (_: unknown, record: DatasetGroup) => (
+        <Space wrap size={4}>
+          {(record.task_types ?? []).map(t => (
+            <Tag key={t} color={TASK_TYPE_TAG_COLOR[t] ?? 'purple'} style={{ margin: 0 }}>
+              {t}
+            </Tag>
+          ))}
+          {!record.task_types?.length && <Text type="secondary">-</Text>}
+        </Space>
+      ),
+    },
     {
       title: '그룹명',
       dataIndex: 'name',
@@ -295,22 +323,6 @@ export default function DatasetListPage() {
         }
         return <Tag color={color[v] ?? 'default'}>{v}</Tag>
       },
-    },
-    {
-      title: '사용 목적',
-      key: 'task_types',
-      width: groupColumnWidths.task_types,
-      onHeaderCell: buildGroupHeaderCellProps('task_types'),
-      sorter: true,
-      sortOrder: buildSortOrderForColumn('task_types'),
-      render: (_: unknown, record: DatasetGroup) => (
-        <Space wrap size={4}>
-          {(record.task_types ?? []).map(t => (
-            <Tag key={t} color="purple" style={{ margin: 0 }}>{t}</Tag>
-          ))}
-          {!record.task_types?.length && <Text type="secondary">-</Text>}
-        </Space>
-      ),
     },
     {
       title: '포맷',
@@ -400,6 +412,17 @@ export default function DatasetListPage() {
       sorter: true,
       sortOrder: buildSortOrderForColumn('created_at'),
       render: (v: string) => dayjs(v).format('YYYY-MM-DD'),
+    },
+    {
+      title: '최종 수정일',
+      dataIndex: 'updated_at',
+      key: 'updated_at',
+      width: groupColumnWidths.updated_at,
+      onHeaderCell: buildGroupHeaderCellProps('updated_at'),
+      sorter: true,
+      sortOrder: buildSortOrderForColumn('updated_at'),
+      // 등록일과 달리 같은 날 여러 번 수정되는 경우가 많으므로 시:분까지 표시.
+      render: (v: string) => (v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '-'),
     },
     {
       title: '',
