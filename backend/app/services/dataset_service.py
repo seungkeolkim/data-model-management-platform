@@ -1016,6 +1016,10 @@ class DatasetGroupService:
     # 통일포맷 전환 후 캐시 구조 변경 (v1: category_id 기반 → v2: category_name 기반)
     SAMPLE_INDEX_SCHEMA_VERSION = 2
 
+    # Classification (CLS_MANIFEST) 전용 캐시 — 구조가 달라 별도 파일로 분리.
+    CLASSIFICATION_SAMPLE_INDEX_FILENAME = "classification_sample_index.json"
+    CLASSIFICATION_SAMPLE_INDEX_SCHEMA_VERSION = 1
+
     def _load_dataset_meta(self, dataset: Dataset) -> "DatasetMeta | None":
         """
         데이터셋의 annotation 파일을 파싱하여 DatasetMeta로 반환.
@@ -1294,6 +1298,400 @@ class DatasetGroupService:
             "image_width_max": max(widths) if widths else None,
             "image_height_min": min(heights) if heights else None,
             "image_height_max": max(heights) if heights else None,
+        }
+
+
+    # =========================================================================
+    # Classification (CLS_MANIFEST) 전용 뷰어/EDA
+    # =========================================================================
+    # manifest.jsonl + head_schema.json을 읽어 간단한 디스크 캐시를 만든다.
+    # sample_index.json과 파일을 분리해 둔 이유는 스키마가 근본적으로 달라(bbox→head별 label)
+    # 버전 관리를 독립적으로 하고 detection 캐시가 오염되지 않도록 하기 위함.
+
+    def _get_classification_sample_index_path(self, dataset: Dataset) -> Path:
+        """classification_sample_index.json의 절대경로."""
+        return (
+            self.storage.resolve_path(dataset.storage_uri)
+            / self.CLASSIFICATION_SAMPLE_INDEX_FILENAME
+        )
+
+    def _get_or_create_classification_sample_index(
+        self, dataset: Dataset,
+    ) -> dict | None:
+        """
+        Classification 데이터셋의 manifest.jsonl / head_schema.json을 읽어 인덱스 생성.
+
+        캐시 구조 (schema_version=1):
+            {
+              "schema_version": 1,
+              "heads": [{"name":..., "multi_label":..., "classes":[...]}],
+              "images": [
+                {
+                  "sha": "...",
+                  "stored_filename": "{sha}.{ext}",
+                  "original_filename": "img_0001.jpg",
+                  "labels": {"head1": ["class_a"], "head2": []},
+                  "width": 640,
+                  "height": 480
+                },
+                ...
+              ]
+            }
+
+        이미지 width/height는 PIL로 한 번 읽어 캐시에 남긴다 (EDA 해상도 분포용).
+        """
+        index_path = self._get_classification_sample_index_path(dataset)
+
+        # 기존 캐시 사용
+        if index_path.exists():
+            try:
+                cached = json.loads(index_path.read_text(encoding="utf-8"))
+                if (
+                    cached.get("schema_version")
+                    == self.CLASSIFICATION_SAMPLE_INDEX_SCHEMA_VERSION
+                ):
+                    return cached
+                logger.info(
+                    "classification_sample_index.json 스키마 버전 불일치 — 재생성",
+                    dataset_id=dataset.id,
+                    cached_version=cached.get("schema_version"),
+                    expected_version=self.CLASSIFICATION_SAMPLE_INDEX_SCHEMA_VERSION,
+                )
+            except Exception as read_error:
+                logger.warning(
+                    "classification_sample_index.json 읽기 실패 — 재생성",
+                    dataset_id=dataset.id,
+                    error=str(read_error),
+                )
+
+        # 캐시 없음 → manifest + head_schema 파싱
+        dataset_root = self.storage.resolve_path(dataset.storage_uri)
+
+        # head_schema.json: 보통 dataset.annotation_meta_file 에 저장돼 있지만
+        # 안전하게 고정 경로도 fallback으로 확인한다.
+        head_schema_path: Path | None = None
+        if dataset.annotation_meta_file:
+            candidate = dataset_root / dataset.annotation_meta_file
+            if candidate.exists():
+                head_schema_path = candidate
+        if head_schema_path is None:
+            fallback = dataset_root / "head_schema.json"
+            if fallback.exists():
+                head_schema_path = fallback
+        if head_schema_path is None:
+            logger.warning(
+                "head_schema.json을 찾을 수 없음",
+                dataset_id=dataset.id,
+                storage_uri=dataset.storage_uri,
+            )
+            return None
+
+        # manifest.jsonl
+        manifest_path: Path | None = None
+        if dataset.annotation_files:
+            candidate = dataset_root / dataset.annotation_files[0]
+            if candidate.exists():
+                manifest_path = candidate
+        if manifest_path is None:
+            fallback = dataset_root / "manifest.jsonl"
+            if fallback.exists():
+                manifest_path = fallback
+        if manifest_path is None:
+            logger.warning(
+                "manifest.jsonl을 찾을 수 없음",
+                dataset_id=dataset.id,
+                storage_uri=dataset.storage_uri,
+            )
+            return None
+
+        try:
+            head_schema = json.loads(head_schema_path.read_text(encoding="utf-8"))
+        except Exception as schema_error:
+            logger.warning(
+                "head_schema.json 파싱 실패",
+                dataset_id=dataset.id,
+                error=str(schema_error),
+            )
+            return None
+
+        images_dir_abs = dataset_root / "images"
+
+        # 이미지 크기는 PIL로 한 번 읽어 캐시에 반영.
+        # 이미지가 수십만 장이면 시간이 걸릴 수 있으므로 실패/누락을 허용한다.
+        try:
+            from PIL import Image as pil_image
+        except ImportError:
+            pil_image = None  # type: ignore[assignment]
+            logger.warning("Pillow가 없어 이미지 크기 정보를 수집하지 못합니다.")
+
+        images: list[dict] = []
+        try:
+            with manifest_path.open("r", encoding="utf-8") as manifest_file:
+                for raw_line in manifest_file:
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    sha = entry.get("sha") or ""
+                    stored_rel = entry.get("filename") or ""
+                    # "images/{sha}.ext" 형태 — 파일명만 추출해 저장해 두면 이후 URL 구성에 편리.
+                    stored_filename = Path(stored_rel).name if stored_rel else ""
+
+                    width = height = None
+                    if pil_image is not None and stored_filename:
+                        image_abs = images_dir_abs / stored_filename
+                        if image_abs.exists():
+                            try:
+                                with pil_image.open(image_abs) as img:
+                                    width, height = img.width, img.height
+                            except Exception:
+                                pass
+
+                    images.append({
+                        "sha": sha,
+                        "stored_filename": stored_filename,
+                        "original_filename": entry.get("original_filename") or stored_filename,
+                        "labels": entry.get("labels") or {},
+                        "width": width,
+                        "height": height,
+                    })
+        except Exception as manifest_error:
+            logger.warning(
+                "manifest.jsonl 파싱 실패",
+                dataset_id=dataset.id,
+                error=str(manifest_error),
+            )
+            return None
+
+        classification_index = {
+            "schema_version": self.CLASSIFICATION_SAMPLE_INDEX_SCHEMA_VERSION,
+            "heads": head_schema.get("heads") or [],
+            "images": images,
+        }
+
+        try:
+            index_path.write_text(
+                json.dumps(classification_index, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            logger.info(
+                "classification_sample_index.json 생성 완료",
+                dataset_id=dataset.id,
+                image_count=len(images),
+            )
+        except Exception as write_error:
+            logger.warning(
+                "classification_sample_index.json 저장 실패 — 캐시 없이 계속 진행",
+                dataset_id=dataset.id,
+                error=str(write_error),
+            )
+
+        return classification_index
+
+    def get_classification_sample_list(
+        self,
+        dataset: Dataset,
+        page: int = 1,
+        page_size: int = 50,
+        head_filters: dict[str, list[str]] | None = None,
+    ) -> dict:
+        """Classification 샘플 뷰어용 이미지 목록 반환.
+
+        head_filters: {head_name: [class_name, ...]} — 같은 head 내 class는 OR,
+        서로 다른 head 간에는 AND로 결합한다. 페이지네이션 이전에 적용되므로
+        프론트엔드가 페이지를 넘기며 필터가 깨지는 문제를 피할 수 있다.
+        """
+        classification_index = self._get_or_create_classification_sample_index(dataset)
+        if classification_index is None:
+            return {
+                "items": [],
+                "total": 0,
+                "page": page,
+                "page_size": page_size,
+                "heads": [],
+            }
+
+        all_images = classification_index["images"]
+
+        # head_filters 적용 — 빈 dict/None이면 통과
+        if head_filters:
+            filtered_images = []
+            for entry in all_images:
+                labels = entry.get("labels") or {}
+                # 모든 head 조건이 충족되어야 한다(AND)
+                if all(
+                    any(cls in (labels.get(head_name) or []) for cls in class_names)
+                    for head_name, class_names in head_filters.items()
+                ):
+                    filtered_images.append(entry)
+            all_images = filtered_images
+
+        total = len(all_images)
+
+        # 이미지 서빙 URL base. detection과 동일하게 {storage_uri}/images/ 아래 서빙.
+        image_url_base = self.storage.get_image_serve_url(
+            f"{dataset.storage_uri}/images"
+        )
+
+        start_index = (page - 1) * page_size
+        end_index = min(start_index + page_size, total)
+        page_images = all_images[start_index:end_index]
+
+        items = []
+        for entry in page_images:
+            stored_filename = entry.get("stored_filename") or ""
+            items.append({
+                "sha": entry.get("sha") or "",
+                "file_name": entry.get("original_filename") or stored_filename,
+                "image_url": f"{image_url_base}/{stored_filename}" if stored_filename else "",
+                "width": entry.get("width"),
+                "height": entry.get("height"),
+                "labels": entry.get("labels") or {},
+            })
+
+        return {
+            "items": items,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "heads": classification_index.get("heads") or [],
+        }
+
+    def get_classification_eda_stats(self, dataset: Dataset) -> dict:
+        """Classification 데이터셋의 EDA 통계 계산.
+
+        - per_head_distribution: head별 class 분포 + labeled/unlabeled 수
+        - head_cooccurrence: 서로 다른 head 쌍별 (class × class) joint count 행렬
+        - multi_label_positive_ratio: multi_label head의 class별 positive ratio
+        - 이미지 해상도 min/max
+        """
+        classification_index = self._get_or_create_classification_sample_index(dataset)
+        if classification_index is None:
+            return {
+                "total_images": dataset.image_count or 0,
+                "per_head_distribution": [],
+                "head_cooccurrence": [],
+                "multi_label_positive_ratio": [],
+            }
+
+        heads: list[dict] = classification_index.get("heads") or []
+        all_images: list[dict] = classification_index.get("images") or []
+
+        # 1) 해상도 min/max
+        widths = [img["width"] for img in all_images if img.get("width") is not None]
+        heights = [img["height"] for img in all_images if img.get("height") is not None]
+
+        # 2) head별 class 분포 + labeled/unlabeled
+        per_head_distribution: list[dict] = []
+        for head in heads:
+            head_name = head.get("name") or ""
+            multi_label = bool(head.get("multi_label"))
+            class_list: list[str] = list(head.get("classes") or [])
+            class_to_count: dict[str, int] = {class_name: 0 for class_name in class_list}
+
+            labeled = 0
+            unlabeled = 0
+            for img in all_images:
+                labels_for_head = (img.get("labels") or {}).get(head_name) or []
+                if not labels_for_head:
+                    unlabeled += 1
+                    continue
+                labeled += 1
+                # multi-label이면 이미지가 여러 class를 가질 수 있다 — 각 class에 +1
+                for class_name in labels_for_head:
+                    if class_name in class_to_count:
+                        class_to_count[class_name] += 1
+
+            per_head_distribution.append({
+                "head_name": head_name,
+                "multi_label": multi_label,
+                "labeled_image_count": labeled,
+                "unlabeled_image_count": unlabeled,
+                "classes": [
+                    {"class_name": class_name, "image_count": class_to_count[class_name]}
+                    for class_name in class_list
+                ],
+            })
+
+        # 3) head 쌍별 co-occurrence. head가 1개면 건너뛴다.
+        head_cooccurrence: list[dict] = []
+        for a_index in range(len(heads)):
+            head_a = heads[a_index]
+            head_a_name = head_a.get("name") or ""
+            classes_a: list[str] = list(head_a.get("classes") or [])
+            class_a_index: dict[str, int] = {name: i for i, name in enumerate(classes_a)}
+
+            for b_index in range(a_index + 1, len(heads)):
+                head_b = heads[b_index]
+                head_b_name = head_b.get("name") or ""
+                classes_b: list[str] = list(head_b.get("classes") or [])
+                class_b_index: dict[str, int] = {name: i for i, name in enumerate(classes_b)}
+
+                a_counts = [0] * len(classes_a)
+                b_counts = [0] * len(classes_b)
+                joint_counts = [[0] * len(classes_b) for _ in range(len(classes_a))]
+
+                for img in all_images:
+                    labels = img.get("labels") or {}
+                    labels_a = [c for c in (labels.get(head_a_name) or []) if c in class_a_index]
+                    labels_b = [c for c in (labels.get(head_b_name) or []) if c in class_b_index]
+                    if not labels_a and not labels_b:
+                        continue
+                    for class_name in labels_a:
+                        a_counts[class_a_index[class_name]] += 1
+                    for class_name in labels_b:
+                        b_counts[class_b_index[class_name]] += 1
+                    # 교차 카운트는 두 head 모두 라벨이 있을 때만 증가
+                    if labels_a and labels_b:
+                        for class_a_name in labels_a:
+                            for class_b_name in labels_b:
+                                joint_counts[class_a_index[class_a_name]][
+                                    class_b_index[class_b_name]
+                                ] += 1
+
+                head_cooccurrence.append({
+                    "head_a": head_a_name,
+                    "head_b": head_b_name,
+                    "classes_a": classes_a,
+                    "classes_b": classes_b,
+                    "a_counts": a_counts,
+                    "b_counts": b_counts,
+                    "joint_counts": joint_counts,
+                })
+
+        # 4) multi-label head의 positive ratio
+        # 분모는 해당 head에 라벨이 하나라도 있는 이미지 수로 한정 (unlabeled는 제외).
+        # 이유: "이 attribute가 라벨링됐을 때" 중 positive 비율이 imbalance 지표로 의미가 있음.
+        multi_label_positive_ratio: list[dict] = []
+        for dist in per_head_distribution:
+            if not dist["multi_label"]:
+                continue
+            labeled = dist["labeled_image_count"]
+            for class_entry in dist["classes"]:
+                positive_count = class_entry["image_count"]
+                negative_count = max(labeled - positive_count, 0)
+                denom = labeled
+                positive_ratio = (positive_count / denom) if denom > 0 else 0.0
+                multi_label_positive_ratio.append({
+                    "head_name": dist["head_name"],
+                    "class_name": class_entry["class_name"],
+                    "positive_count": positive_count,
+                    "negative_count": negative_count,
+                    "positive_ratio": round(positive_ratio, 4),
+                })
+
+        return {
+            "total_images": len(all_images),
+            "image_width_min": min(widths) if widths else None,
+            "image_width_max": max(widths) if widths else None,
+            "image_height_min": min(heights) if heights else None,
+            "image_height_max": max(heights) if heights else None,
+            "per_head_distribution": per_head_distribution,
+            "head_cooccurrence": head_cooccurrence,
+            "multi_label_positive_ratio": multi_label_positive_ratio,
         }
 
 

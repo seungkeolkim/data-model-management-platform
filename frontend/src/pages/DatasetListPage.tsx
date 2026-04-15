@@ -32,6 +32,7 @@ import dayjs from 'dayjs'
 import { datasetGroupsApi } from '../api/dataset'
 import DatasetRegisterModal from '../components/dataset/DatasetRegisterModal'
 import type { DatasetGroup, DatasetSummary } from '../types/dataset'
+import { useResizableColumnWidths } from '../components/common/ResizableTableColumns'
 
 const { Title, Text } = Typography
 
@@ -49,6 +50,55 @@ const SPLIT_COLOR: Record<string, string> = {
   NONE: 'default',
 }
 
+// 그룹 목록 Split 컬럼에서 split별 표시 순서. 등록 순서와 무관하게 항상 동일.
+const SPLIT_ORDER: Record<string, number> = {
+  TRAIN: 0,
+  VAL: 1,
+  TEST: 2,
+  NONE: 3,
+}
+
+/**
+ * "{major}.{minor}" 형식의 버전 문자열을 숫자 튜플로 파싱.
+ * 파싱 실패 시 [-1, -1]로 취급해 정상 버전에 밀리도록 한다.
+ */
+function parseVersionTuple(version: string): [number, number] {
+  const [majorRaw, minorRaw] = (version ?? '').split('.')
+  const major = Number.parseInt(majorRaw, 10)
+  const minor = Number.parseInt(minorRaw, 10)
+  return [
+    Number.isFinite(major) ? major : -1,
+    Number.isFinite(minor) ? minor : -1,
+  ]
+}
+
+/**
+ * split(TRAIN/VAL/TEST/NONE)별로 가장 최신 버전의 Dataset 한 개씩을 골라
+ * SPLIT_ORDER 순서대로 정렬해 반환한다.
+ * 같은 split에 여러 version이 존재해도 태그가 중복되지 않도록 하기 위한 도우미.
+ */
+function pickLatestDatasetPerSplit(datasets: DatasetSummary[]): DatasetSummary[] {
+  const latestBySplit = new Map<string, DatasetSummary>()
+  for (const dataset of datasets) {
+    const current = latestBySplit.get(dataset.split)
+    if (!current) {
+      latestBySplit.set(dataset.split, dataset)
+      continue
+    }
+    const [currentMajor, currentMinor] = parseVersionTuple(current.version)
+    const [nextMajor, nextMinor] = parseVersionTuple(dataset.version)
+    const isNewer =
+      nextMajor > currentMajor ||
+      (nextMajor === currentMajor && nextMinor > currentMinor)
+    if (isNewer) {
+      latestBySplit.set(dataset.split, dataset)
+    }
+  }
+  return Array.from(latestBySplit.values()).sort(
+    (a, b) => (SPLIT_ORDER[a.split] ?? 99) - (SPLIT_ORDER[b.split] ?? 99),
+  )
+}
+
 export default function DatasetListPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
@@ -60,6 +110,23 @@ export default function DatasetListPage() {
   const [modalOpen, setModalOpen] = useState(false)
   const [selectedGroup, setSelectedGroup] = useState<DatasetGroup | null>(null)
   const [deletingGroupId, setDeletingGroupId] = useState<string | null>(null)
+
+  // 그룹 목록 테이블의 컬럼별 초기 너비. 헤더 우측 경계 드래그로 조정 가능.
+  const {
+    widthByKey: groupColumnWidths,
+    buildHeaderCellProps: buildGroupHeaderCellProps,
+    tableComponents: resizableTableComponents,
+  } = useResizableColumnWidths({
+    name: 280,
+    dataset_type: 110,
+    task_types: 130,
+    annotation_format: 85,
+    splits: 160,
+    image_count: 110,
+    status: 100,
+    created_at: 120,
+    action: 180,
+  })
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['dataset-groups', page, pageSize, search],
@@ -99,6 +166,8 @@ export default function DatasetListPage() {
       title: '그룹명',
       dataIndex: 'name',
       key: 'name',
+      width: groupColumnWidths.name,
+      onHeaderCell: buildGroupHeaderCellProps('name'),
       render: (name: string, record: DatasetGroup) => (
         <Space>
           <FolderOpenOutlined style={{ color: '#1677ff' }} />
@@ -113,7 +182,8 @@ export default function DatasetListPage() {
       title: '데이터 유형',
       dataIndex: 'dataset_type',
       key: 'dataset_type',
-      width: 110,
+      width: groupColumnWidths.dataset_type,
+      onHeaderCell: buildGroupHeaderCellProps('dataset_type'),
       render: (v: string) => {
         const color: Record<string, string> = {
           RAW: 'default', SOURCE: 'blue', PROCESSED: 'green', FUSION: 'volcano',
@@ -124,7 +194,8 @@ export default function DatasetListPage() {
     {
       title: '사용 목적',
       key: 'task_types',
-      width: 200,
+      width: groupColumnWidths.task_types,
+      onHeaderCell: buildGroupHeaderCellProps('task_types'),
       render: (_: unknown, record: DatasetGroup) => (
         <Space wrap size={4}>
           {(record.task_types ?? []).map(t => (
@@ -138,7 +209,8 @@ export default function DatasetListPage() {
       title: '포맷',
       dataIndex: 'annotation_format',
       key: 'annotation_format',
-      width: 110,
+      width: groupColumnWidths.annotation_format,
+      onHeaderCell: buildGroupHeaderCellProps('annotation_format'),
       render: (v: string) => {
         const color: Record<string, string> = {
           COCO: 'green', YOLO: 'orange', ATTR_JSON: 'cyan',
@@ -150,34 +222,41 @@ export default function DatasetListPage() {
     {
       title: 'Split',
       key: 'splits',
-      width: 220,
-      render: (_: unknown, record: DatasetGroup) => (
-        <Space wrap size={4}>
-          {record.datasets.map(d => (
-            <Tooltip
-              key={d.id}
-              title={
-                <span>
-                  버전: {d.version}<br />
-                  이미지: {d.image_count?.toLocaleString() ?? '-'}장<br />
-                  포맷: {d.annotation_format ?? 'NONE'}<br />
-                  상태: {d.status}
-                </span>
-              }
-            >
-              <Tag color={SPLIT_COLOR[d.split] ?? 'default'}>
-                {d.split}
-              </Tag>
-            </Tooltip>
-          ))}
-          {record.datasets.length === 0 && <Text type="secondary" style={{ fontSize: 12 }}>없음</Text>}
-        </Space>
-      ),
+      width: groupColumnWidths.splits,
+      onHeaderCell: buildGroupHeaderCellProps('splits'),
+      render: (_: unknown, record: DatasetGroup) => {
+        // split(TRAIN/VAL/TEST/NONE)별로 가장 최신 버전 1개씩만 추려 보여준다.
+        // 같은 split에 여러 version이 있어도 tag가 중복으로 뜨지 않도록 함.
+        const latestBySplit = pickLatestDatasetPerSplit(record.datasets)
+        return (
+          <Space wrap size={4}>
+            {latestBySplit.map(dataset => (
+              <Tooltip
+                key={dataset.id}
+                title={
+                  <span>
+                    버전: {dataset.version}<br />
+                    이미지: {dataset.image_count?.toLocaleString() ?? '-'}장<br />
+                    포맷: {dataset.annotation_format ?? 'NONE'}<br />
+                    상태: {dataset.status}
+                  </span>
+                }
+              >
+                <Tag color={SPLIT_COLOR[dataset.split] ?? 'default'}>
+                  {dataset.split}
+                </Tag>
+              </Tooltip>
+            ))}
+            {latestBySplit.length === 0 && <Text type="secondary" style={{ fontSize: 12 }}>없음</Text>}
+          </Space>
+        )
+      },
     },
     {
       title: '총 이미지',
       key: 'image_count',
-      width: 110,
+      width: groupColumnWidths.image_count,
+      onHeaderCell: buildGroupHeaderCellProps('image_count'),
       align: 'right' as const,
       render: (_: unknown, record: DatasetGroup) => {
         const total = record.datasets.reduce((s, d) => s + (d.image_count ?? 0), 0)
@@ -187,7 +266,8 @@ export default function DatasetListPage() {
     {
       title: '상태',
       key: 'status',
-      width: 100,
+      width: groupColumnWidths.status,
+      onHeaderCell: buildGroupHeaderCellProps('status'),
       render: (_: unknown, record: DatasetGroup) => {
         const statuses = [...new Set(record.datasets.map(d => d.status))]
         if (statuses.length === 0) return <Badge status="default" text="없음" />
@@ -202,13 +282,15 @@ export default function DatasetListPage() {
       title: '등록일',
       dataIndex: 'created_at',
       key: 'created_at',
-      width: 120,
+      width: groupColumnWidths.created_at,
+      onHeaderCell: buildGroupHeaderCellProps('created_at'),
       render: (v: string) => dayjs(v).format('YYYY-MM-DD'),
     },
     {
       title: '',
       key: 'action',
-      width: 180,
+      width: groupColumnWidths.action,
+      onHeaderCell: buildGroupHeaderCellProps('action'),
       render: (_: unknown, record: DatasetGroup) => (
         <Space>
           <Button
@@ -297,10 +379,13 @@ export default function DatasetListPage() {
         />
       )}
 
-      {/* 테이블 */}
+      {/* 테이블 — 컬럼 너비는 헤더 우측 경계 드래그로 조정 가능,
+          좁은 창에서는 가로 스크롤로 대응(그룹명 컬럼이 쪼개지는 문제 방지). */}
       <Table
         dataSource={data?.items ?? []}
         columns={columns}
+        components={resizableTableComponents}
+        scroll={{ x: 'max-content' }}
         rowKey="id"
         loading={isLoading}
         pagination={{
