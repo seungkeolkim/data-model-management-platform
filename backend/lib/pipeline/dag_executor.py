@@ -31,6 +31,7 @@ from lib.manipulators import MANIPULATOR_REGISTRY
 from lib.pipeline.config import PipelineConfig, TaskConfig
 from lib.pipeline.image_materializer import ImageMaterializer
 from lib.pipeline.io.coco_io import parse_coco_json, write_coco_json
+from lib.pipeline.io.manifest_io import parse_manifest_dir, write_manifest_dir
 from lib.pipeline.io.yolo_io import parse_yolo_dir, write_yolo_dir
 from lib.pipeline.pipeline_data_models import (
     Annotation, DatasetMeta, DatasetPlan, ImageManipulationSpec, ImagePlan, ImageRecord,
@@ -503,6 +504,18 @@ class PipelineDagExecutor:
             logger.info("YOLO annotation 작성 완료: file_count=%d", len(label_files))
             return label_files
 
+        elif output_format == "CLS_MANIFEST":
+            # Classification 전용: manifest.jsonl + head_schema.json 은 데이터셋 루트에 둔다.
+            # annotations_dir 은 detection 규약이므로 사용하지 않는다.
+            dataset_root = self.storage.resolve_path(output_storage_uri)
+            write_manifest_dir(output_meta, dataset_root)
+            logger.info(
+                "CLS_MANIFEST 작성 완료: manifest.jsonl + head_schema.json @ %s",
+                dataset_root,
+            )
+            # DB annotation_files 필드는 manifest.jsonl 하나만 기록한다.
+            return ["manifest.jsonl"]
+
         else:
             raise ValueError(f"지원하지 않는 출력 포맷: {output_format}")
 
@@ -650,6 +663,17 @@ def load_source_meta_from_storage(
     if format_upper == "COCO":
         json_path = annotations_dir / annotation_files[0]
         meta = parse_coco_json(json_path, dataset_id=dataset_id, storage_uri=storage_uri)
+        return meta
+
+    elif format_upper == "CLS_MANIFEST":
+        # Classification: manifest.jsonl + head_schema.json 은 데이터셋 루트에 있다.
+        # annotation_files / annotation_meta_file 파라미터는 사용하지 않는다.
+        dataset_root = storage.resolve_path(storage_uri)
+        meta = parse_manifest_dir(
+            dataset_root=dataset_root,
+            dataset_id=dataset_id,
+            storage_uri=storage_uri,
+        )
         return meta
 
     elif format_upper == "YOLO":

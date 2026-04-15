@@ -9,6 +9,7 @@ import { memo, useMemo } from 'react'
 import type { NodeProps } from '@xyflow/react'
 import { Select, Typography, Tag, Divider } from 'antd'
 import { useQuery } from '@tanstack/react-query'
+import { useSearchParams } from 'react-router-dom'
 import { datasetsForPipelineApi } from '@/api/pipeline'
 import { useNodeData, useSetNodeData } from '../hooks/useNodeData'
 import { NodeShell } from '../components/NodeShell'
@@ -21,9 +22,15 @@ const { Text } = Typography
 const DL_COLOR = '#52c41a'
 const DL_EMOJI = '📂'
 
-function isDetectionGroup(group: DatasetGroup): boolean {
-  if (!group.task_types || group.task_types.length === 0) return true
-  return group.task_types.includes('DETECTION')
+/**
+ * 파이프라인 에디터의 taskType 과 호환되는 그룹인지 판정한다.
+ * task_types 가 비어있으면 과거 데이터(레거시) 호환을 위해 DETECTION 으로 간주한다.
+ */
+function isCompatibleGroup(group: DatasetGroup, taskType: string): boolean {
+  if (!group.task_types || group.task_types.length === 0) {
+    return taskType === 'DETECTION'
+  }
+  return group.task_types.includes(taskType as never)
 }
 function readyDatasets(datasets: DatasetSummary[]): DatasetSummary[] {
   return datasets.filter((ds) => ds.status === 'READY')
@@ -32,6 +39,8 @@ function readyDatasets(datasets: DatasetSummary[]): DatasetSummary[] {
 const DataLoadNodeComponent = memo(function DataLoadNodeInner({ id }: NodeProps) {
   const nodeData = useNodeData<'dataLoad'>(id)
   const setNodeData = useSetNodeData()
+  const [searchParams] = useSearchParams()
+  const taskType = searchParams.get('taskType') ?? 'DETECTION'
 
   const { data: groupsResponse, isLoading: groupsLoading } = useQuery({
     queryKey: ['dataset-groups-for-pipeline'],
@@ -41,10 +50,11 @@ const DataLoadNodeComponent = memo(function DataLoadNodeInner({ id }: NodeProps)
 
   const availableGroups = useMemo(() => {
     const groups = groupsResponse?.items ?? []
+    // 현재 에디터 taskType 에 맞는 그룹만 노출. 그룹이 비어 있어도 (READY 데이터셋 없음) 숨긴다.
     return groups.filter(
-      (g) => isDetectionGroup(g) && readyDatasets(g.datasets).length > 0,
+      (g) => isCompatibleGroup(g, taskType) && readyDatasets(g.datasets).length > 0,
     )
-  }, [groupsResponse])
+  }, [groupsResponse, taskType])
 
   const selectedGroup = useMemo(
     () => availableGroups.find((g) => g.id === nodeData?.groupId) ?? null,

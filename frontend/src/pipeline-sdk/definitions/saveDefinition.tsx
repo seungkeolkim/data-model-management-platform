@@ -6,6 +6,7 @@
 import { memo } from 'react'
 import type { NodeProps } from '@xyflow/react'
 import { Input, Select, Tag, Typography, Divider } from 'antd'
+import { useSearchParams } from 'react-router-dom'
 import { useNodeData, useSetNodeData } from '../hooks/useNodeData'
 import { NodeShell } from '../components/NodeShell'
 import type { NodeDefinition } from '../types'
@@ -27,14 +28,34 @@ const SPLIT_OPTIONS = [
   { value: 'TEST', label: 'TEST' },
   { value: 'NONE', label: 'NONE' },
 ]
-const FORMAT_OPTIONS = [
+
+// 현재 에디터의 taskType 에 따라 annotation_format 선택지가 달라진다.
+// DETECTION  : COCO / YOLO  (기존 그대로)
+// CLASSIFICATION: CLS_MANIFEST 만 허용 (manifest.jsonl + head_schema.json 규약)
+const DETECTION_FORMAT_OPTIONS = [
   { value: 'COCO', label: 'COCO' },
   { value: 'YOLO', label: 'YOLO' },
 ]
+const CLASSIFICATION_FORMAT_OPTIONS = [
+  { value: 'CLS_MANIFEST', label: 'CLS_MANIFEST' },
+]
+
+function getFormatOptionsForTaskType(taskType: string) {
+  if (taskType === 'CLASSIFICATION') return CLASSIFICATION_FORMAT_OPTIONS
+  return DETECTION_FORMAT_OPTIONS
+}
+
+function getDefaultFormatForTaskType(taskType: string): string {
+  if (taskType === 'CLASSIFICATION') return 'CLS_MANIFEST'
+  return 'COCO'
+}
 
 const SaveNodeComponent = memo(function SaveNodeInner({ id }: NodeProps) {
   const nodeData = useNodeData<'save'>(id)
   const setNodeData = useSetNodeData()
+  const [searchParams] = useSearchParams()
+  const taskType = searchParams.get('taskType') ?? 'DETECTION'
+  const formatOptions = getFormatOptionsForTaskType(taskType)
   if (!nodeData) return null
 
   const updateField = <K extends keyof SaveNodeData>(key: K, value: SaveNodeData[K]) => {
@@ -85,8 +106,8 @@ const SaveNodeComponent = memo(function SaveNodeInner({ id }: NodeProps) {
           <Text style={{ fontSize: 11, color: '#8c8c8c' }}>어노테이션 포맷</Text>
           <Select
             size="small"
-            value={nodeData.annotationFormat ?? 'COCO'}
-            options={FORMAT_OPTIONS}
+            value={nodeData.annotationFormat ?? getDefaultFormatForTaskType(taskType)}
+            options={formatOptions}
             style={{ width: '100%' }}
             onChange={(val) => updateField('annotationFormat', val)}
           />
@@ -116,12 +137,13 @@ export const saveDefinition: NodeDefinition<'save'> = {
     color: SAVE_COLOR,
     emoji: SAVE_EMOJI,
     order: 30,
-    createDefaultData: () => ({
+    createDefaultData: (ctx) => ({
       type: 'save',
       name: '',
       description: '',
       datasetType: 'PROCESSED',
-      annotationFormat: 'COCO',
+      // taskType 에 따라 기본 포맷이 달라진다 — classification 은 CLS_MANIFEST 고정.
+      annotationFormat: getDefaultFormatForTaskType(ctx.taskType),
       split: 'NONE',
     }),
   },

@@ -70,7 +70,7 @@ const TASK_TYPE_OPTIONS: {
     description: '이미지 분류 데이터 변형 (단일/다중 head 포함)',
     icon: <PictureOutlined style={{ fontSize: 28 }} />,
     color: '#13c2c2',
-    ready: false,
+    ready: true,
   },
   {
     key: 'ZERO_SHOT',
