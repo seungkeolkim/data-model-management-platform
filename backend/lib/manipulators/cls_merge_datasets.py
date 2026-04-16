@@ -466,14 +466,25 @@ def _resolve_label_conflict(
         is_multi = head_is_multi[head_name]
 
         # 각 occurrence 가 해당 head 에 대해 가진 labels 수집.
+        # fill_empty 로 merged_head_schema 에 추가된 head 라면, 원본 스키마에 이 head 가
+        # 없었던 입력은 "unknown 기여" 로 간주해 판정에서 제외한다. 포함시키면 `[]`
+        # (explicit-empty) 로 간주돼 다른 입력의 실제 라벨과 distinct 하게 잡히고,
+        # single-label head 는 무조건 single_label_mismatch 로 폐기되는 문제가 생긴다.
         per_input_labels: list[tuple[int, list[str]]] = []
         for occ in occurrences:
+            input_index = occ["input_index"]
+            if head_name not in original_classes_per_input[input_index]:
+                continue
             record_labels = occ["record"].labels or {}
             per_input_labels.append(
-                (occ["input_index"], list(record_labels.get(head_name, [])))
+                (input_index, list(record_labels.get(head_name, [])))
             )
 
-        # head 가 해당 입력의 원본 schema 에 없었던 경우 → unknown 취급.
+        # 모든 입력이 이 head 를 갖고 있지 않음 → fill_empty 취지대로 빈 라벨.
+        if not per_input_labels:
+            merged_labels[head_name] = []
+            continue
+
         # 라벨이 모두 동일하면 그냥 그 값 사용.
         distinct_label_sets = {tuple(sorted(labels)) for _, labels in per_input_labels}
         if len(distinct_label_sets) == 1:
