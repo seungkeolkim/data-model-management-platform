@@ -23,8 +23,17 @@ const { Text } = Typography
 
 /** 포맷 변환 노드는 통일포맷 자동 처리로 대체되어 비활성 */
 const FORMAT_CONVERT_CATEGORY = 'FORMAT_CONVERT'
-/** 백엔드 코드 미구현 manipulator (DB seed만 존재) */
-const UNIMPLEMENTED_OPERATORS = ['det_change_compression', 'det_shuffle_image_ids']
+/** 백엔드 코드 미구현 manipulator (DB seed만 존재, transform_annotation 이 stub). */
+const UNIMPLEMENTED_OPERATORS = [
+  // detection
+  'det_change_compression',
+  'det_shuffle_image_ids',
+  // classification (stub 상태 — NotImplementedError 던짐)
+  'cls_filter_by_class',
+  'cls_merge_classes',
+  'cls_remove_images_without_label',
+  'cls_sample_n_images',
+]
 
 /** description("버튼 텍스트 (도움말)") 패턴에서 앞부분만 추출 */
 function extractShortLabel(desc: string): string {
