@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 import structlog
 from sqlalchemy import func, select
@@ -82,6 +83,8 @@ class PipelineService:
           1. source dataset_id가 DB에 존재하는지
           2. source dataset의 상태가 READY인지
           3. source dataset에 annotation 파일이 등록되어 있는지
+          4. cls_merge_datasets 태스크 입력들의 head_schema 호환성
+             (objective_n_plan_7th.md §2-11-2 표의 9종 충돌을 검사)
         """
         result = PipelineValidationResult()
 
@@ -99,6 +102,12 @@ class PipelineService:
                 "__passthrough__",
                 result,
             )
+
+        # (4) cls_merge_datasets 호환성 검사.
+        #     소스 데이터셋 존재성이 먼저 보장돼야 head_schema 를 로드할 수 있으므로,
+        #     앞선 소스 검증이 에러를 낸 상태에서는 compatibility 는 건너뛴다.
+        if result.is_valid:
+            await self._validate_cls_merge_compatibility(config, result)
 
         return result
 
@@ -172,6 +181,109 @@ class PipelineService:
                 ),
                 issue_field=f"tasks.{task_name}.inputs",
             )
+
+    # -------------------------------------------------------------------------
+    # cls_merge_datasets 호환성 검증 (§2-11-2)
+    # -------------------------------------------------------------------------
+
+    async def _validate_cls_merge_compatibility(
+        self,
+        config: PipelineConfig,
+        result: PipelineValidationResult,
+    ) -> None:
+        """
+        config 내 cls_merge_datasets 태스크마다 입력들의 head_schema 를 preview 로 계산해
+        `check_merge_schema_compatibility` 로 검증한다.
+
+        FE 는 노드 단위로 정적 검증을 선행하지만, API 우회(FE 미사용) 요청에 대비해
+        BE 도 동일 규칙을 수행한다. 두 경로 모두 `lib/pipeline/cls_merge_compat.py` 의
+        동일 함수를 호출해 규칙 드리프트를 막는다.
+
+        head_schema 는 DatasetGroup 에 저장되어 있으므로 preview_head_schema_at_task 를
+        재사용해 각 입력 시점의 최종 head_schema 를 얻는다. 입력 중 하나라도 preview 가
+        실패하면 해당 head_schema 만 None 으로 처리해 호환성 함수가 TASK_KIND_MISMATCH 로
+        보고하게 한다 (일부 실패 시에도 나머지 이슈가 누락되지 않도록).
+        """
+        # 지연 import — lib 초기화 순서 문제 회피.
+        from lib.pipeline.cls_merge_compat import (
+            check_merge_schema_compatibility,
+        )
+        from lib.pipeline.schema_preview import (
+            SchemaPreviewError,
+            build_stub_source_meta,
+            preview_head_schema_at_task,
+        )
+
+        cls_merge_tasks = [
+            (task_name, task_config)
+            for task_name, task_config in config.tasks.items()
+            if task_config.operator == "cls_merge_datasets"
+        ]
+        if not cls_merge_tasks:
+            return
+
+        # cls_merge 태스크가 하나라도 있으면 source head_schema 를 미리 로드해둔다.
+        source_meta_by_dataset_id: dict[str, Any] = {}
+        for dataset_id in config.get_all_source_dataset_ids():
+            dataset_row = await self.db.execute(
+                select(Dataset)
+                .options(selectinload(Dataset.group))
+                .where(Dataset.id == dataset_id, Dataset.deleted_at.is_(None))
+            )
+            dataset_obj = dataset_row.scalar_one_or_none()
+            if dataset_obj is None:
+                # 앞선 _validate_source_dataset 에서 이미 에러로 잡혔을 것이므로 건너뛴다.
+                continue
+            group_head_schema = (
+                dataset_obj.group.head_schema if dataset_obj.group else None
+            )
+            source_meta_by_dataset_id[dataset_id] = build_stub_source_meta(
+                dataset_id=dataset_id,
+                head_schema_json=group_head_schema,
+            )
+
+        for task_name, task_config in cls_merge_tasks:
+            input_head_schemas: list[Any] = []
+            for ref in task_config.inputs:
+                if ref.startswith("source:"):
+                    source_dataset_id = ref.split(":", 1)[1]
+                    source_meta = source_meta_by_dataset_id.get(source_dataset_id)
+                    input_head_schemas.append(
+                        getattr(source_meta, "head_schema", None)
+                    )
+                    continue
+
+                # task ref: 해당 task 출력의 head_schema 를 preview 로 계산.
+                try:
+                    upstream_meta = preview_head_schema_at_task(
+                        config=config,  # type: ignore[arg-type]  # PipelineConfig 는 duck-typed 로 PartialPipelineConfig 와 호환
+                        target_task_name=ref,
+                        source_meta_by_dataset_id=source_meta_by_dataset_id,
+                    )
+                    input_head_schemas.append(upstream_meta.head_schema)
+                except SchemaPreviewError as preview_error:
+                    # 상류 계산 실패는 별도 경고로 남기고 head_schema=None 으로 취급.
+                    result.add_warning(
+                        code="MERGE_UPSTREAM_PREVIEW_FAILED",
+                        message=(
+                            f"태스크 '{task_name}'의 입력 '{ref}' 의 head_schema 를 "
+                            f"계산하지 못해 호환성 검사를 건너뜁니다: "
+                            f"[{preview_error.code}] {preview_error.message}"
+                        ),
+                        issue_field=f"tasks.{task_name}.inputs",
+                    )
+                    input_head_schemas.append(None)
+
+            issues = check_merge_schema_compatibility(
+                input_head_schemas,
+                task_config.params,
+            )
+            for issue in issues:
+                result.add_error(
+                    code=f"MERGE_{issue.code}",
+                    message=issue.message,
+                    issue_field=f"tasks.{task_name}.{issue.field_suffix}",
+                )
 
     # -------------------------------------------------------------------------
     # 파이프라인 제출
