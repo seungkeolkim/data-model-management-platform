@@ -19,7 +19,13 @@ export type { DatasetDisplayInfo } from './engine/configToGraph'
 export { validateGraphStructure } from './engine/clientValidation'
 export { distributeIssuesToNodes } from './engine/issueMapping'
 export { showDisabledModal } from './definitions/operatorDefinition'
-export { CATEGORY_STYLE, DEFAULT_CATEGORY_STYLE, getCategoryStyle, getManipulatorEmoji } from './styles'
+export {
+  CATEGORY_STYLE,
+  CATEGORY_ITEM_ORDER,
+  DEFAULT_CATEGORY_STYLE,
+  getCategoryStyle,
+  getManipulatorEmoji,
+} from './styles'
 
 // bootstrap — side-effect 등록. 이 파일을 import하면 registry가 채워진다.
 import './bootstrap'
