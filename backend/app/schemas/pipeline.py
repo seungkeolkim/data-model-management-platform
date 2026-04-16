@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 # 파이프라인 설정 스키마 — lib.pipeline.config에서 re-export
 from lib.pipeline.config import (  # noqa: F401
     OutputConfig,
+    PartialPipelineConfig,
     PipelineConfig,
     TaskConfig,
     load_pipeline_config_from_yaml,
@@ -118,11 +119,14 @@ class SchemaPreviewRequest(BaseModel):
     """
     특정 노드 시점의 head_schema 를 요청한다.
 
+    Save 노드가 없는 부분 그래프에서도 프리뷰할 수 있도록
+    PartialPipelineConfig 를 받는다. (output 필드 nullable)
+
     target_ref:
         - "task_{nodeId}" : operator/merge 노드의 출력
         - "source:{dataset_id}" : dataLoad 노드의 출력 (= 소스 자체의 head_schema)
     """
-    config: PipelineConfig
+    config: PartialPipelineConfig
     target_ref: str = Field(..., description="task_<nodeId> 또는 source:<dataset_id>")
 
 

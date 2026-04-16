@@ -19,7 +19,7 @@ from app.models.all_models import (
     PipelineExecution,
 )
 from app.schemas.pipeline import PipelineSubmitResponse
-from lib.pipeline.config import PipelineConfig
+from lib.pipeline.config import PartialPipelineConfig, PipelineConfig
 from lib.pipeline.pipeline_validator import (
     PipelineValidationResult,
     validate_pipeline_config_static,
@@ -317,7 +317,7 @@ class PipelineService:
 
     async def preview_head_schema(
         self,
-        config: PipelineConfig,
+        config: PartialPipelineConfig,
         target_ref: str,
     ) -> dict:
         """

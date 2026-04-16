@@ -21,7 +21,7 @@ import logging
 from typing import Any
 
 from lib.manipulators import MANIPULATOR_REGISTRY
-from lib.pipeline.config import PipelineConfig
+from lib.pipeline.config import PartialPipelineConfig
 from lib.pipeline.pipeline_data_models import DatasetMeta, HeadSchema
 
 logger = logging.getLogger(__name__)
@@ -72,7 +72,7 @@ def build_stub_source_meta(
 
 
 def preview_head_schema_at_task(
-    config: PipelineConfig,
+    config: PartialPipelineConfig,
     target_task_name: str,
     source_meta_by_dataset_id: dict[str, DatasetMeta],
 ) -> DatasetMeta:
