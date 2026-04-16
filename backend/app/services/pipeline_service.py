@@ -312,6 +312,122 @@ class PipelineService:
         return items, total
 
     # -------------------------------------------------------------------------
+    # Schema 프리뷰
+    # -------------------------------------------------------------------------
+
+    async def preview_head_schema(
+        self,
+        config: PipelineConfig,
+        target_ref: str,
+    ) -> dict:
+        """
+        지정 노드 시점의 head_schema 를 계산해 dict 로 반환.
+
+        target_ref 규약:
+            - "task_{nodeId}"  : operator/merge 노드 출력
+            - "source:{dataset_id}" : dataLoad 노드 출력 (소스 head_schema 그대로)
+
+        반환 dict 구조:
+            {
+              "task_kind": "classification" | "detection" | "unknown",
+              "head_schema": {"heads": [...]} | None,
+              "error_code": str | None,
+              "error_message": str | None,
+            }
+        """
+        # 지연 import — FastAPI 앱 기동 시 lib 모듈 초기화 순서 문제 회피.
+        from lib.pipeline.schema_preview import (
+            SchemaPreviewError,
+            build_stub_source_meta,
+            head_schema_to_list,
+            preview_head_schema_at_task,
+        )
+
+        # 1) 파이프라인에서 참조하는 모든 source dataset 의 head_schema 를 DB 에서 로드.
+        source_dataset_ids = config.get_all_source_dataset_ids()
+        source_meta_by_dataset_id: dict[str, object] = {}
+        for dataset_id in source_dataset_ids:
+            dataset_row = await self.db.execute(
+                select(Dataset)
+                .options(selectinload(Dataset.group))
+                .where(Dataset.id == dataset_id, Dataset.deleted_at.is_(None))
+            )
+            dataset_obj = dataset_row.scalar_one_or_none()
+            if dataset_obj is None:
+                return {
+                    "task_kind": "unknown",
+                    "head_schema": None,
+                    "error_code": "SOURCE_NOT_FOUND",
+                    "error_message": (
+                        f"source dataset_id='{dataset_id}' 를 DB 에서 찾을 수 없습니다."
+                    ),
+                }
+            # head_schema 는 DatasetGroup 에 위치 (SSOT). Dataset 은 group 에서 상속.
+            group_head_schema = (
+                dataset_obj.group.head_schema if dataset_obj.group else None
+            )
+            source_meta_by_dataset_id[dataset_id] = build_stub_source_meta(
+                dataset_id=dataset_id,
+                head_schema_json=group_head_schema,
+            )
+
+        # 2) 모든 소스가 detection (head_schema 없음) 이면 프리뷰 대상이 아님.
+        any_classification = any(
+            getattr(meta, "head_schema", None) is not None
+            for meta in source_meta_by_dataset_id.values()
+        )
+        if not any_classification:
+            return {
+                "task_kind": "detection",
+                "head_schema": None,
+                "error_code": None,
+                "error_message": None,
+            }
+
+        # 3) target_ref 분기.
+        if target_ref.startswith("source:"):
+            source_dataset_id = target_ref.split(":", 1)[1]
+            source_meta = source_meta_by_dataset_id.get(source_dataset_id)
+            if source_meta is None:
+                return {
+                    "task_kind": "unknown",
+                    "head_schema": None,
+                    "error_code": "TARGET_NOT_FOUND",
+                    "error_message": (
+                        f"target_ref='{target_ref}' 의 source 를 config 에서 찾지 못했습니다."
+                    ),
+                }
+            head_schema = getattr(source_meta, "head_schema", None)
+            return {
+                "task_kind": "classification" if head_schema is not None else "detection",
+                "head_schema": head_schema_to_list(head_schema),
+                "error_code": None,
+                "error_message": None,
+            }
+
+        # task_{...} 형식.
+        try:
+            result_meta = preview_head_schema_at_task(
+                config=config,
+                target_task_name=target_ref,
+                source_meta_by_dataset_id=source_meta_by_dataset_id,  # type: ignore[arg-type]
+            )
+        except SchemaPreviewError as preview_error:
+            return {
+                "task_kind": "classification",
+                "head_schema": None,
+                "error_code": preview_error.code,
+                "error_message": preview_error.message,
+            }
+
+        return {
+            "task_kind": "classification" if result_meta.head_schema is not None else "detection",
+            "head_schema": head_schema_to_list(result_meta.head_schema),
+            "error_code": None,
+            "error_message": None,
+        }
+
+    # -------------------------------------------------------------------------
     # 내부 헬퍼
     # -------------------------------------------------------------------------
 
