@@ -1,13 +1,13 @@
 """
-cls_select_heads — Classification 전용 Head 선택 manipulator.
+cls_select_heads — Classification 전용 Head 제거 manipulator.
 
 역할:
-    head_schema 에서 사용자가 지정한 head 만 유지하고 나머지는 제거한다.
-    image_records[*].labels 에서도 선택되지 않은 head 키를 제거한다.
+    head_schema 에서 사용자가 지정한 head 를 제거한다.
+    image_records[*].labels 에서도 제거 대상 head 키를 삭제한다.
 
 params:
-    keep_head_names:
-        list[str] 또는 줄바꿈 구분 str. 비어있거나 None 이면 모든 head 유지(= passthrough).
+    remove_head_names:
+        list[str] 또는 줄바꿈 구분 str. 비어있거나 None 이면 아무것도 제거하지 않음(= passthrough).
         지정된 head 이름 중 실제 존재하지 않는 것은 무시한다 (에러 내지 않고 로그만).
 
 이미지 바이너리 불변 → sha/file_name 유지 → lazy copy.
@@ -26,6 +26,8 @@ logger = logging.getLogger(__name__)
 
 class SelectHeadsClassification(UnitManipulator):
     """DB seed name: "cls_select_heads"."""
+
+    REQUIRED_PARAMS = ["remove_head_names"]
 
     @property
     def name(self) -> str:
@@ -47,34 +49,42 @@ class SelectHeadsClassification(UnitManipulator):
                 "(head_schema 가 None 입니다)."
             )
 
-        keep_set = self._parse_keep_set(params.get("keep_head_names"))
+        remove_set = self._parse_remove_set(params.get("remove_head_names"))
         existing_head_names = [head.name for head in input_meta.head_schema]
 
-        if not keep_set:
+        if not remove_set:
             # 빈 입력 = passthrough. head_schema/labels 그대로 복제.
             logger.info(
-                "cls_select_heads: keep_head_names 비어있음 → 모든 head 유지 (passthrough)"
+                "cls_select_heads: remove_head_names 비어있음 → 모든 head 유지 (passthrough)"
             )
             new_head_schema = [
-                HeadSchema(name=head.name, multi_label=head.multi_label, classes=list(head.classes))
+                HeadSchema(
+                    name=head.name,
+                    multi_label=head.multi_label,
+                    classes=list(head.classes),
+                )
                 for head in input_meta.head_schema
             ]
         else:
-            missing_names = keep_set - set(existing_head_names)
+            missing_names = remove_set - set(existing_head_names)
             if missing_names:
                 logger.warning(
                     "cls_select_heads: 존재하지 않는 head 는 무시 — missing=%s, existing=%s",
                     sorted(missing_names), existing_head_names,
                 )
             new_head_schema = [
-                HeadSchema(name=head.name, multi_label=head.multi_label, classes=list(head.classes))
+                HeadSchema(
+                    name=head.name,
+                    multi_label=head.multi_label,
+                    classes=list(head.classes),
+                )
                 for head in input_meta.head_schema
-                if head.name in keep_set
+                if head.name not in remove_set
             ]
             if not new_head_schema:
                 raise ValueError(
-                    f"cls_select_heads: keep_head_names 와 매칭되는 head 가 없습니다. "
-                    f"keep={sorted(keep_set)}, existing={existing_head_names}"
+                    f"cls_select_heads: 모든 head 가 제거되어 결과가 비어있습니다. "
+                    f"remove={sorted(remove_set)}, existing={existing_head_names}"
                 )
 
         kept_head_names = {head.name for head in new_head_schema}
@@ -103,8 +113,8 @@ class SelectHeadsClassification(UnitManipulator):
         )
 
     @staticmethod
-    def _parse_keep_set(raw_value: Any) -> set[str]:
-        """params.keep_head_names 를 list/str/None 어느 쪽으로 들어와도 set[str] 로 정규화한다."""
+    def _parse_remove_set(raw_value: Any) -> set[str]:
+        """params.remove_head_names 를 list/str/None 어느 쪽으로 들어와도 set[str] 로 정규화."""
         if raw_value is None:
             return set()
         if isinstance(raw_value, str):
@@ -112,5 +122,5 @@ class SelectHeadsClassification(UnitManipulator):
         if isinstance(raw_value, (list, tuple)):
             return {str(item).strip() for item in raw_value if str(item).strip()}
         raise ValueError(
-            f"keep_head_names 는 list 또는 str 이어야 합니다: {type(raw_value).__name__}"
+            f"remove_head_names 는 list 또는 str 이어야 합니다: {type(raw_value).__name__}"
         )
