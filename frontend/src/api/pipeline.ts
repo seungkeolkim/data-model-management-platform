@@ -35,6 +35,26 @@ export const pipelinesApi = {
   /** 실행 이력 목록 */
   list: (params?: { page?: number; page_size?: number }) =>
     api.get<PipelineListResponse>('/pipelines', { params }),
+
+  /** 특정 노드 시점의 head_schema 프리뷰 */
+  previewSchema: (config: PipelineConfig, targetRef: string) =>
+    api.post<SchemaPreviewResponse>('/pipelines/preview-schema', {
+      config,
+      target_ref: targetRef,
+    }),
+}
+
+export interface SchemaPreviewHead {
+  name: string
+  multi_label: boolean
+  classes: string[]
+}
+
+export interface SchemaPreviewResponse {
+  task_kind: 'classification' | 'detection' | 'unknown'
+  head_schema: SchemaPreviewHead[] | null
+  error_code: string | null
+  error_message: string | null
 }
 
 // =============================================================================
