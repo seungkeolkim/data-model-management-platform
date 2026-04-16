@@ -10,7 +10,11 @@ export { useNodeData, useSetNodeData } from './hooks/useNodeData'
 export { NodeShell } from './components/NodeShell'
 export { buildPaletteItems } from './palette'
 export { buildNodeTypesFromRegistry } from './nodeTypes'
-export { graphToPipelineConfig, CURRENT_SCHEMA_VERSION } from './engine/graphToConfig'
+export {
+  graphToPipelineConfig,
+  graphToPartialPipelineConfig,
+  CURRENT_SCHEMA_VERSION,
+} from './engine/graphToConfig'
 export {
   pipelineConfigToGraph,
   extractSourceDatasetIdsFromConfig,

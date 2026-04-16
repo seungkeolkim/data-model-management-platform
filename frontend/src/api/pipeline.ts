@@ -8,6 +8,7 @@
 import api from './index'
 import type {
   PipelineConfig,
+  PartialPipelineConfig,
   PipelineValidationResponse,
   PipelineSubmitResponse,
   PipelineExecutionResponse,
@@ -36,8 +37,8 @@ export const pipelinesApi = {
   list: (params?: { page?: number; page_size?: number }) =>
     api.get<PipelineListResponse>('/pipelines', { params }),
 
-  /** 특정 노드 시점의 head_schema 프리뷰 */
-  previewSchema: (config: PipelineConfig, targetRef: string) =>
+  /** 특정 노드 시점의 head_schema 프리뷰 (Save 없는 partial config 허용) */
+  previewSchema: (config: PartialPipelineConfig, targetRef: string) =>
     api.post<SchemaPreviewResponse>('/pipelines/preview-schema', {
       config,
       target_ref: targetRef,

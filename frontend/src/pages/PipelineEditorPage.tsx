@@ -31,6 +31,7 @@ import { usePipelineEditorStore } from '@/stores/pipelineEditorStore'
 import {
   validateGraphStructure,
   graphToPipelineConfig,
+  graphToPartialPipelineConfig,
   pipelineConfigToGraph,
   extractSourceDatasetIdsFromConfig,
   buildNodeTypesFromRegistry,
@@ -146,11 +147,11 @@ function PipelineEditorContent() {
     [setNodes, setNodeData, setSelectedNode],
   )
 
-  // JSON 프리뷰 업데이트
+  // JSON 프리뷰 업데이트 — Save 없이도 DataLoad 기반 partial config 표시
   useMemo(() => {
     if (!isJsonPreviewOpen) return
     try {
-      const config = graphToPipelineConfig(nodes, edges, nodeDataMap)
+      const config = graphToPartialPipelineConfig(nodes, edges, nodeDataMap)
       setJsonPreviewContent(JSON.stringify(config, null, 2))
       setJsonPreviewError(null)
     } catch (err) {

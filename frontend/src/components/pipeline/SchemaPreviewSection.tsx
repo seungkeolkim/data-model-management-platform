@@ -19,9 +19,9 @@ import { Typography, Divider, Tag, Alert, Spin, Empty } from 'antd'
 import { useQuery } from '@tanstack/react-query'
 
 import { usePipelineEditorStore } from '@/stores/pipelineEditorStore'
-import { graphToPipelineConfig } from '@/pipeline-sdk'
+import { graphToPartialPipelineConfig } from '@/pipeline-sdk'
 import { pipelinesApi, type SchemaPreviewResponse } from '@/api/pipeline'
-import type { PipelineNode, PipelineEdge, PipelineNodeData } from '@/types/pipeline'
+import type { PipelineNode, PipelineEdge, PipelineNodeData, PartialPipelineConfig } from '@/types/pipeline'
 
 const { Text } = Typography
 
@@ -54,14 +54,14 @@ function resolveTargetRef(
   return { ref: null, reason: '이 노드는 schema 프리뷰를 지원하지 않습니다.' }
 }
 
-/** graph → config 직렬화. 실패 시 사유 반환. */
-function tryBuildConfig(
+/** graph → partial config 직렬화. Save 없이도 동작. 실패 시 사유 반환. */
+function tryBuildPartialConfig(
   nodes: PipelineNode[],
   edges: PipelineEdge[],
   nodeDataMap: Record<string, PipelineNodeData>,
-): { ok: true; config: ReturnType<typeof graphToPipelineConfig> } | { ok: false; reason: string } {
+): { ok: true; config: PartialPipelineConfig } | { ok: false; reason: string } {
   try {
-    const config = graphToPipelineConfig(nodes, edges, nodeDataMap)
+    const config = graphToPartialPipelineConfig(nodes, edges, nodeDataMap)
     return { ok: true, config }
   } catch (err) {
     return { ok: false, reason: (err as Error).message }
@@ -82,7 +82,7 @@ export default function SchemaPreviewSection({ selectedNodeId, nodeData }: Props
   const target = resolveTargetRef(selectedNodeId, nodeData)
 
   const buildResult = useMemo(
-    () => (target.ref ? tryBuildConfig(nodes, edges, nodeDataMap) : null),
+    () => (target.ref ? tryBuildPartialConfig(nodes, edges, nodeDataMap) : null),
     [nodes, edges, nodeDataMap, target.ref],
   )
 
