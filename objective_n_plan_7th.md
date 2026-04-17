@@ -1,9 +1,9 @@
 # 데이터 관리 & 학습 자동화 플랫폼 — 7차 설계서
 
 > **작업지시서 v7.4** | image-level `unknown` 라벨 규약 확정 — `null` = unknown, `[]` = explicit empty (§2-12 확정)
-> 기준일: 2026-04-16
+> 기준일: 2026-04-17
 > 이전 설계서: `docs_history/objective_n_plan_6th.md`
-> 통합 핸드오프: `docs_for_claude/018-image-level-unknown-semantics-handoff.md` (이전 017은 `docs_history/handoffs/`)
+> 통합 핸드오프: `docs_for_claude/019-null-unknown-convention-handoff.md` (이전 018은 `docs_history/handoffs/`)
 > 노드 SDK 규약: `docs/pipeline-node-sdk-guide.md` (2026-04-15 재작성본)
 
 6차 설계서의 §7-1 최우선 액션(노드 SDK화 + 가이드)이 완료되어 baseline에 편입됐다.
@@ -418,15 +418,14 @@ per-class unknown 이 필수가 되는 시점(Step 4 auto-labeling)에 `labels` 
 
 ## 5. 남은 작업 (우선순위 순)
 
-018 핸드오프 §3과 동일. 여기서는 요약만 둔다.
+019 핸드오프 §3과 동일. 여기서는 요약만 둔다.
 
 1. ~~Classification 데이터 입력~~ ✅ **완료 (2026-04-14)**
 2. ~~Display / UI 분화 (상세 뷰어 + 목록 필터/정렬)~~ ✅ **완료 (2026-04-15)**
 3. ~~Classification DAG 에디터 + Celery runner + passthrough 실행 경로~~ ✅ **완료 (2026-04-15 post-session)**
 4. ~~`cls_merge_datasets` 실구현 + 호환성 검증 공유화~~ ✅ **완료 (2026-04-16)**
 5. ~~Image-level `unknown` 라벨 규약 확정~~ ✅ **완료 (2026-04-17)** — `null` = unknown, `[]` = explicit empty (§2-12 확정)
-6. **`null` 규약 코드 반영** [1순위 — 진행 중]
-   - ingest.py `[]` → `None`, manifest_io.py writer assert, cls_merge_datasets 단순화, cls_rename_class / cls_reorder_classes `None` guard
+6. ~~`null` 규약 코드 반영~~ ✅ **완료 (2026-04-17)** — 9개 파일, 192건 테스트 통과
    - 기존 classification 데이터셋 삭제 후 재등록 (사용자 수행)
 7. **`cls_merge_classes` 실구현 + multi→single 강등 노드 신설**
    - 강등 노드 이름: `cls_demote_head_to_single_label` 후보 (018 §3-3)
