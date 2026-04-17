@@ -112,16 +112,16 @@ class RenameHeadClassification(UnitManipulator):
             for head in input_meta.head_schema
         ]
 
-        # image_records 의 labels 키 rename.
+        # image_records 의 labels 키 rename. None(unknown) 은 그대로 유지. §2-12.
         new_records: list[ImageRecord] = []
         rename_count = 0
         for record in input_meta.image_records:
-            new_labels: dict[str, list[str]] = {}
+            new_labels: dict[str, list[str] | None] = {}
             for head_name, class_names in (record.labels or {}).items():
                 renamed = mapping.get(head_name, head_name)
                 if renamed != head_name:
                     rename_count += 1
-                new_labels[renamed] = list(class_names)
+                new_labels[renamed] = list(class_names) if class_names is not None else None
             new_records.append(
                 replace(
                     record,

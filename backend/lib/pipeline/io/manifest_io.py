@@ -6,12 +6,12 @@ CLS_MANIFEST 포맷 파서 및 라이터.
     manifest.jsonl            # 이미지 1장당 1줄. 메타/라벨 기록.
     head_schema.json          # head 정의 (SSOT — classes 순서가 output index 와 일치)
 
-manifest.jsonl 1줄 스키마:
+manifest.jsonl 1줄 스키마 (§2-12 확정: null=unknown, []=explicit empty):
     {
       "sha": "ab12...",
       "filename": "images/ab12....jpg",
       "original_filename": "img_0001.jpg",
-      "labels": {"hardhat_wear": ["helmet"], "visibility": ["seen"]}
+      "labels": {"hardhat_wear": ["helmet"], "visibility": null}
     }
 
 head_schema.json 스키마 (SSOT — objective_n_plan_7th.md):
@@ -122,13 +122,13 @@ def parse_manifest_dir(
                 raise ValueError(
                     f"manifest.jsonl {line_number}행 labels 는 dict 여야 합니다: {labels_value!r}"
                 )
-            # single-label head 도 list 로 통일해 내부 표현을 단일화한다.
-            normalized_labels: dict[str, list[str]] = {}
+            # null=unknown(None), []=explicit empty, [class,...]=known labels. §2-12 확정 규약.
+            normalized_labels: dict[str, list[str] | None] = {}
             for head_name, label_value in labels_value.items():
-                if isinstance(label_value, list):
+                if label_value is None:
+                    normalized_labels[head_name] = None
+                elif isinstance(label_value, list):
                     normalized_labels[head_name] = [str(item) for item in label_value]
-                elif label_value is None:
-                    normalized_labels[head_name] = []
                 else:
                     normalized_labels[head_name] = [str(label_value)]
 
@@ -188,6 +188,11 @@ def write_manifest_dir(meta: DatasetMeta, dataset_root: Path) -> None:
     with open(schema_path, "w", encoding="utf-8") as schema_file:
         json.dump(serialized_schema, schema_file, ensure_ascii=False, indent=2)
 
+    # single-label head 이름 집합 — writer assert 용.
+    single_label_head_names = {
+        head.name for head in meta.head_schema if not head.multi_label
+    }
+
     manifest_path = dataset_root / MANIFEST_FILENAME
     with open(manifest_path, "w", encoding="utf-8") as manifest_file:
         for record in meta.image_records:
@@ -197,11 +202,24 @@ def write_manifest_dir(meta: DatasetMeta, dataset_root: Path) -> None:
                     f"image_record.sha 가 None 입니다 (file_name={record.file_name}). "
                     "classification manipulator 는 sha 를 유지해야 합니다."
                 )
+
+            record_labels = record.labels or {}
+
+            # §2-12 writer strict assert: single-label head 는 null 또는 [class 1개]만 허용.
+            for head_name in single_label_head_names:
+                label_value = record_labels.get(head_name)
+                if label_value is not None and len(label_value) != 1:
+                    raise ValueError(
+                        f"single-label head '{head_name}': labels 는 null(unknown) "
+                        f"또는 [class 1개] 여야 합니다, got {label_value!r} "
+                        f"(sha={record.sha}, file_name={record.file_name})"
+                    )
+
             line_obj = {
                 "sha": record.sha,
                 "filename": record.file_name,
                 "original_filename": (record.extra or {}).get("original_filename"),
-                "labels": record.labels or {},
+                "labels": record_labels,
             }
             manifest_file.write(json.dumps(line_obj, ensure_ascii=False))
             manifest_file.write("\n")

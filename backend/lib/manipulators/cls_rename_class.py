@@ -130,26 +130,27 @@ class RenameClassClassification(UnitManipulator):
         label_rename_count = 0
         for record in input_meta.image_records:
             source_labels = record.labels or {}
-            if target_head_name in source_labels:
-                original_class_names = source_labels[target_head_name]
+            head_label_value = source_labels.get(target_head_name)
+            if head_label_value is not None and target_head_name in source_labels:
+                # known labels — class 이름 rename 수행.
                 new_class_names: list[str] = []
-                for class_name in original_class_names:
+                for class_name in head_label_value:
                     renamed = mapping.get(class_name, class_name)
                     if renamed != class_name:
                         label_rename_count += 1
                     new_class_names.append(renamed)
-                new_labels = {
+                new_labels: dict[str, list[str] | None] = {
                     head_name: (
                         new_class_names
                         if head_name == target_head_name
-                        else list(class_names)
+                        else (list(class_names) if class_names is not None else None)
                     )
                     for head_name, class_names in source_labels.items()
                 }
             else:
-                # 대상 head 에 대한 label 이 없는 이미지는 labels 를 얕게 복제만.
+                # 대상 head 가 없거나 None(unknown) — labels 를 얕게 복제만.
                 new_labels = {
-                    head_name: list(class_names)
+                    head_name: (list(class_names) if class_names is not None else None)
                     for head_name, class_names in source_labels.items()
                 }
             new_records.append(

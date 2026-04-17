@@ -12,7 +12,7 @@
 통일포맷 (Classification):
   - DatasetMeta.head_schema 가 None 이 아니면 classification 데이터셋으로 간주한다.
   - head_schema(list[HeadSchema])가 SSOT — classes 순서가 학습 output index 와 1:1 대응된다.
-  - image_record.labels: dict[head_name, list[class_name]] — single-label head 도 리스트로 통일.
+  - image_record.labels: dict[head_name, list[class_name] | None] — null=unknown, []=explicit empty (§2-12).
   - image_record.sha: SHA-1 hex — 중복 제거 키. 파일명은 "images/{sha}.{ext}" 규약.
   - 이미지 바이너리가 변경되지 않는 manipulator(선택/rename/reorder/filter 등)는 sha/file_name 을 유지한다.
     바이너리 변경 연산(crop/augment 등)은 나중 도입 시 sha 재계산 + file_name 갱신을 수행해야 한다.
@@ -74,7 +74,9 @@ class ImageRecord:
     Classification 경로:
         file_name      — "images/{sha}.{ext}" 규약 (storage 내 상대경로)
         sha            — SHA-1 hex (파일 바이너리 기반). merge 시 dedup 키.
-        labels         — {head_name: [class_name, ...]}. 단일 label head 도 리스트로 통일.
+        labels         — {head_name: list[class_name] | None}.
+                         null=unknown (학습 제외), []=explicit empty (전부 neg). §2-12 확정 규약.
+                         single-label head: null 또는 [class 1개]만 허용.
         annotations    — 비움 (detection 전용)
     """
     image_id: int | str
@@ -84,7 +86,7 @@ class ImageRecord:
     annotations: list[Annotation] = field(default_factory=list)
     # ── Classification 전용 ──
     sha: str | None = None
-    labels: dict[str, list[str]] | None = None
+    labels: dict[str, list[str] | None] | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
 

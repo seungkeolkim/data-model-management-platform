@@ -119,12 +119,13 @@ class ReorderClassesClassification(UnitManipulator):
             for head in input_meta.head_schema
         ]
 
-        # labels 는 dict[head → list[class]] 순서 무관 → 얕게 복제만.
+        # labels 는 dict[head → list[class] | None] 순서 무관 → 얕게 복제만.
+        # None(unknown) 은 그대로 유지. §2-12 확정 규약.
         new_records: list[ImageRecord] = [
             replace(
                 record,
                 labels={
-                    head_name: list(class_names)
+                    head_name: (list(class_names) if class_names is not None else None)
                     for head_name, class_names in (record.labels or {}).items()
                 },
                 extra=dict(record.extra) if record.extra else {},

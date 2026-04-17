@@ -318,7 +318,7 @@ class MergeDatasetsClassification(UnitManipulator):
 
         for sha, occurrences in occurrences_by_sha.items():
             if len(occurrences) == 1:
-                # 단일 소스: 라벨 병합 불필요, head 누락만 빈 리스트로 채움.
+                # 단일 소스: 라벨 병합 불필요, head 누락만 None(unknown) 으로 채움 (§2-12).
                 only = occurrences[0]
                 record = only["record"]
                 merged_labels = _align_labels_to_merged_heads(
@@ -402,20 +402,24 @@ class MergeDatasetsClassification(UnitManipulator):
 class _MergeOutcome:
     dropped: bool
     drop_reason: str
-    merged_labels: dict[str, list[str]]
+    merged_labels: dict[str, list[str] | None]
 
 
 def _align_labels_to_merged_heads(
-    source_labels: dict[str, list[str]],
+    source_labels: dict[str, list[str] | None],
     merged_head_names: list[str],
-) -> dict[str, list[str]]:
+) -> dict[str, list[str] | None]:
     """
-    단일 소스의 라벨을 최종 head 순서에 맞춰 정렬하고, 누락된 head 는 빈 리스트로 채운다.
-    fill_empty 옵션 적용 결과에 해당.
+    단일 소스의 라벨을 최종 head 순서에 맞춰 정렬하고, 누락된 head 는 None(unknown) 으로 채운다.
+    fill_empty 옵션 적용 결과에 해당. §2-12 확정 규약.
     """
-    result: dict[str, list[str]] = {}
+    result: dict[str, list[str] | None] = {}
     for head_name in merged_head_names:
-        result[head_name] = list(source_labels.get(head_name, []))
+        if head_name in source_labels:
+            value = source_labels[head_name]
+            result[head_name] = list(value) if value is not None else None
+        else:
+            result[head_name] = None
     return result
 
 
@@ -456,33 +460,31 @@ def _resolve_label_conflict(
     """
     동일 SHA 에 여러 occurrence 가 있을 때 각 head 별로 라벨을 병합한다.
 
-    규칙은 §2-11-5 참고.
+    규칙은 §2-11-5 + §2-12 확정 규약 참고.
+    labels[head] = None 은 unknown(판단 안 함)으로 충돌 판정에서 제외한다.
     """
     drop_image_mode = on_label_conflict != LABEL_CONFLICT_MERGE_IF_COMPATIBLE
 
-    merged_labels: dict[str, list[str]] = {}
+    merged_labels: dict[str, list[str] | None] = {}
     for head in merged_head_schema:
         head_name = head.name
         is_multi = head_is_multi[head_name]
 
         # 각 occurrence 가 해당 head 에 대해 가진 labels 수집.
-        # fill_empty 로 merged_head_schema 에 추가된 head 라면, 원본 스키마에 이 head 가
-        # 없었던 입력은 "unknown 기여" 로 간주해 판정에서 제외한다. 포함시키면 `[]`
-        # (explicit-empty) 로 간주돼 다른 입력의 실제 라벨과 distinct 하게 잡히고,
-        # single-label head 는 무조건 single_label_mismatch 로 폐기되는 문제가 생긴다.
+        # labels[head] = None(unknown) 인 occurrence 는 판정에서 제외한다.
         per_input_labels: list[tuple[int, list[str]]] = []
         for occ in occurrences:
             input_index = occ["input_index"]
-            if head_name not in original_classes_per_input[input_index]:
-                continue
             record_labels = occ["record"].labels or {}
-            per_input_labels.append(
-                (input_index, list(record_labels.get(head_name, [])))
-            )
+            label_value = record_labels.get(head_name)
+            if label_value is None:
+                # unknown — 이 입력은 해당 head 에 대해 판단 안 함. 충돌 판정 제외.
+                continue
+            per_input_labels.append((input_index, list(label_value)))
 
-        # 모든 입력이 이 head 를 갖고 있지 않음 → fill_empty 취지대로 빈 라벨.
+        # 모든 입력이 이 head 에 대해 unknown → 결과도 unknown.
         if not per_input_labels:
-            merged_labels[head_name] = []
+            merged_labels[head_name] = None
             continue
 
         # 라벨이 모두 동일하면 그냥 그 값 사용.
@@ -524,7 +526,7 @@ def _resolve_label_conflict(
             for input_index, labels in per_input_labels:
                 original_classes = original_classes_per_input[input_index].get(head_name)
                 if original_classes is None:
-                    # head 자체가 이 입력에 없었음 — unknown.
+                    # head 자체가 이 입력에 없었음 — unknown (dataset-level).
                     continue
                 if candidate_class in labels:
                     continue  # pos
@@ -533,7 +535,7 @@ def _resolve_label_conflict(
                     # 다른 입력에서는 pos 이므로 pos ↔ explicit_neg 상충.
                     conflict_detected = True
                     break
-                # else: unknown — 허용.
+                # else: dataset-level unknown — 허용.
             if conflict_detected:
                 break
 

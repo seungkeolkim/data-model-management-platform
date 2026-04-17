@@ -11,12 +11,12 @@ Classification 폴더 구조 → 단일 풀 + manifest.jsonl 정규화 ingest.
     manifest.jsonl   — 이미지 1장당 1줄
     head_schema.json — 그룹 head_schema 복사본
 
-Manifest 한 줄 스키마:
+Manifest 한 줄 스키마 (§2-12 확정: null=unknown, []=explicit empty):
     {
       "sha": "ab12...",
       "filename": "images/ab12....jpg",
       "original_filename": "img_0001.jpg",
-      "labels": {"hardhat_wear": ["helmet"], "visibility": ["seen"]}
+      "labels": {"hardhat_wear": ["helmet"], "visibility": null}
     }
 
 단일 label head의 이미지 중복 정책:
@@ -309,19 +309,23 @@ def ingest_classification(
             if not dest_image_path.exists():
                 shutil.copy2(record["source_abs_path"], dest_image_path)
 
-            # head별 라벨을 정렬된 list로 직렬화 (다중 label 포함, 항상 list).
+            # head별 라벨을 정렬된 list로 직렬화.
             # occurrences에서 (head_name, class_name) distinct set을 뽑아 label로 변환.
-            labels_out: dict[str, list[str]] = {head.name: [] for head in heads}
+            # 어떤 head 폴더에도 속하지 않은 이미지 → null(unknown). §2-12 확정 규약.
+            labels_out: dict[str, list[str] | None] = {head.name: None for head in heads}
             head_class_seen: dict[str, set[str]] = {head.name: set() for head in heads}
             for occ in record["occurrences"]:
                 if occ.head_name in head_class_seen:
                     head_class_seen[occ.head_name].add(occ.class_name)
             for head in heads:
-                labels_sorted = sorted(head_class_seen[head.name])
-                labels_out[head.name] = labels_sorted
-                for class_name in labels_sorted:
-                    class_idx = class_index_lookup[head.name][class_name]
-                    head_class_counts[head.name][class_idx] += 1
+                seen_classes = head_class_seen[head.name]
+                if seen_classes:
+                    labels_sorted = sorted(seen_classes)
+                    labels_out[head.name] = labels_sorted
+                    for class_name in labels_sorted:
+                        class_idx = class_index_lookup[head.name][class_name]
+                        head_class_counts[head.name][class_idx] += 1
+                # else: labels_out[head.name] 은 None(unknown) 유지
 
             manifest_entry = {
                 "sha": sha,

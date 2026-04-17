@@ -14,8 +14,8 @@ cls_merge_datasets Manipulator 단위 테스트.
   서로 다른 head 이름(예: A=wear, B=hardhat_wear) 을 가진 두 입력을
   fill_empty + merge_if_compatible 로 병합할 때, 과거 구현은 "해당 head 가 없는
   입력" 을 `[]` (explicit-empty) 로 간주해 single_label_mismatch 로 3천여 장을
-  드롭하는 버그가 있었다. 이제는 원본 스키마에 head 가 없으면 판정에서 제외
-  (unknown) 하도록 `_resolve_label_conflict` 가 수정됐다.
+  드롭하는 버그가 있었다. §2-12 확정 규약에 따라 누락 head 는 None(unknown) 으로
+  표현되며, `_resolve_label_conflict` 가 None 을 충돌 판정에서 제외한다.
 """
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ from lib.pipeline.pipeline_data_models import DatasetMeta, HeadSchema, ImageReco
 def _make_record(
     sha: str,
     file_name: str,
-    labels: dict[str, list[str]],
+    labels: dict[str, list[str] | None],
     image_id: int | str = 1,
 ) -> ImageRecord:
     return ImageRecord(
@@ -198,7 +198,7 @@ def test_fill_empty_head_treated_as_unknown_not_conflict() -> None:
 def test_fill_empty_single_source_occurrence_keeps_label() -> None:
     """
     한쪽 입력에만 존재하는 SHA 는 단일 occurrence 이므로 충돌 경로에 들어가지 않고
-    merged_head_names 에 맞춰 빈 head 가 [] 로 채워진 채 그대로 살아남는다.
+    merged_head_names 에 맞춰 누락 head 가 None(unknown) 으로 채워진 채 그대로 살아남는다.
 
     (compat 검증상 공통 head 1개 필요.)
     """
@@ -232,12 +232,12 @@ def test_fill_empty_single_source_occurrence_keeps_label() -> None:
 
     assert len(result.image_records) == 2
     by_sha = {rec.sha: rec for rec in result.image_records}
-    # A 만 있던 SHA → hardhat_wear 는 fill_empty 로 [] 채워짐.
+    # A 만 있던 SHA → hardhat_wear 는 fill_empty 로 None(unknown) 채워짐.
     assert by_sha["sha-a"].labels["wear"] == ["a"]
-    assert by_sha["sha-a"].labels["hardhat_wear"] == []
-    # B 만 있던 SHA → wear 는 fill_empty 로 [] 채워짐.
+    assert by_sha["sha-a"].labels["hardhat_wear"] is None
+    # B 만 있던 SHA → wear 는 fill_empty 로 None(unknown) 채워짐.
     assert by_sha["sha-b"].labels["hardhat_wear"] == ["a"]
-    assert by_sha["sha-b"].labels["wear"] == []
+    assert by_sha["sha-b"].labels["wear"] is None
 
 
 # ─────────────────────────────────────────────────────────────────

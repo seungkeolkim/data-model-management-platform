@@ -90,8 +90,8 @@ class SelectHeadsClassification(UnitManipulator):
         kept_head_names = {head.name for head in new_head_schema}
         new_records: list[ImageRecord] = []
         for record in input_meta.image_records:
-            filtered_labels = {
-                head_name: list(class_names)
+            filtered_labels: dict[str, list[str] | None] = {
+                head_name: (list(class_names) if class_names is not None else None)
                 for head_name, class_names in (record.labels or {}).items()
                 if head_name in kept_head_names
             }
