@@ -36,6 +36,18 @@ const CONFIRM_WARNING_OPERATORS: Record<string, { title: string; content: string
       '(ex : 사람=True & 인류=False 병합 → 내용 오염됨).\n\n' +
       '병합 대상 class 가 실제로 동일한 의미/내용인지 확인 후 진행하세요.',
   },
+  cls_demote_head_to_single_label: {
+    title: 'Multi→Single 강등 주의사항',
+    content:
+      'Multi-label head 를 Single-label 로 강등합니다.\n\n' +
+      '강등 시 single-label 에 어긋나는 이미지가 존재할 수 있습니다:\n' +
+      '• Class 2개 이상 설정된 이미지 (ex: [A, B])\n' +
+      '• 전부 미설정된 이미지 (ex: [])\n\n' +
+      '⚠️ "위반 이미지 처리" 설정에 따라:\n' +
+      '• fail — 위반 이미지가 있으면 파이프라인 전체가 실패합니다.\n' +
+      '• skip — 위반 이미지를 제외하고 나머지만 진행합니다.\n\n' +
+      '강등 전에 cls_merge_classes 등으로 class 를 줄여두는 것을 권장합니다.',
+  },
 }
 /** 백엔드 코드 미구현 manipulator (DB seed만 존재, transform_annotation 이 stub). */
 const UNIMPLEMENTED_OPERATORS = [
