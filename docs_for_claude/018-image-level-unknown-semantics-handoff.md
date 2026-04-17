@@ -1,8 +1,8 @@
-# 통합 핸드오프 018 — Classification image-level `unknown` 라벨 규약 갭
+# 통합 핸드오프 018 — Classification image-level `unknown` 라벨 규약 확정
 
-> 최종 갱신: 2026-04-16
+> 최종 갱신: 2026-04-17
 > 이전 핸드오프: `docs_history/handoffs/017-classification-dag-ready-handoff.md`
-> 설계 현행: `objective_n_plan_7th.md` (v7.3, §2-12 신설)
+> 설계 현행: `objective_n_plan_7th.md` (v7.4, §2-12 확정)
 > 이번 세션 브랜치: `feature/classification-dag-implementation-01`
 > 주요 커밋:
 > - `73059c7` cls_merge_datasets 실제 구현 + 호환성 검증 공유화
@@ -148,43 +148,45 @@ for head in heads:
 - manifest_io / merge / 학습 loader 해석만 바뀜.
 - multi-label 내 per-class unknown 은 여전히 불가.
 
-### 2-5. 결정 시 고려해야 할 요건
+### 2-5. ~~결정 시 고려해야 할 요건~~ → 확정 완료 (2026-04-17)
 
-1. **학습 loss mask 지원**: Step 2 학습 자동화 진입 시 필요. 적어도 head-level unknown 은 있어야 BCE ignore 가능.
-2. **Auto-labeling 확장** (Step 4): per-class unknown 이 필수. 옵션 A 또는 B.
-3. **기존 데이터셋 호환**: 이미 등록된 `manifest.jsonl` 파일들이 있다 → migration 경로 필요. 옵션 D 는 migration 불요, A 는 전수 rewrite.
-4. **IO 왕복 무손실** 불변식 (§2-10) 유지.
-5. **FE 라벨 뷰어**: unknown 을 시각적으로 다르게 표시해야 사용자 혼란 없음.
+**결정: `null` = unknown (head-level)** — 옵션 A~D 어디에도 정확히 해당하지 않는 별도 방식.
+
+- `labels[head] = null` → unknown (학습 시 loss mask)
+- `labels[head] = []` → explicit empty (multi-label: BCE all zero)
+- Single-label head 제약: `null` 또는 `[class 1개]`만 허용, `[]` 및 그 외는 writer assert 에러
+- Per-class unknown 미지원 → **head 전체 `null` 승격** 원칙 ("조금 덜 학습" > "잘못 학습")
+- 기존 classification 데이터 전량 삭제 후 재등록 → reader 방어/migration 불요
+- Step 4 auto-labeling 진입 시 per-class unknown 필요하면 옵션 A/B 확장 재검토
+
+상세는 `objective_n_plan_7th.md §2-12` (v7.4 확정) 참조.
 
 ---
 
-## 3. 다음 세션 체크리스트
+## 3. 다음 작업 체크리스트
 
-다음 세션 주제 = **image-level unknown 규약 확정 → cls_merge_classes & 강등 노드 구현**.
+### 3-1. ~~설계 결정~~ ✅ 완료 (2026-04-17)
 
-### 3-1. 설계 결정 (블로킹)
-
-1. `objective_n_plan_7th.md §2-12` 읽고 옵션 A/B/C/D 중 택1 (사용자 결정).
-2. 결정 옵션을 §2-12 에 "확정" 섹션으로 승격하고 `unknown` 의 저장/해석/학습 규약을 명문화.
+`null` = unknown 규약 확정. `objective_n_plan_7th.md §2-12` 에 명문화 완료.
 3. 기존 classification 데이터셋 migration 전략 정의 (필요 시):
-   - 옵션 B 선택 시 `unknown_classes` 필드가 없는 구 manifest 는 "전부 closed-world" 로 폴백.
-   - 옵션 A 선택 시 전수 rewrite 스크립트 + rollback 경로.
+   - ~~옵션 B 선택 시~~ / ~~옵션 A 선택 시~~ → 해당 없음. `null` 규약 채택, 기존 데이터 삭제 후 재등록.
 
-### 3-2. 코드 반영 범위 (결정 후)
+### 3-2. 코드 반영 범위 (`null` 규약 확정 기준)
 
-| 파일 | 필요 작업 |
-|------|-----------|
-| `lib/pipeline/pipeline_data_models.py` | `ImageRecord.labels` 타입 확장 or 보조 필드 추가 |
-| `lib/pipeline/io/manifest_io.py` | reader/writer 스키마 반영. 구 manifest 하위호환 필요 |
-| `lib/classification/ingest.py` | 폴더 기반 ingest 에서 unknown 을 어떻게 기록할지 (현재는 head 전체 `[]` 만 가능) |
-| `lib/pipeline/cls_merge_compat.py` | `check_merge_schema_compatibility` 에 unknown 존재 여부 규칙 추가 여부 검토 |
-| `lib/manipulators/cls_merge_datasets.py` | `_resolve_label_conflict` 의 pos/explicit_neg/unknown 3값 판정을 per-class 스키마 대신 **image-level unknown 정보**로 재구현 |
-| `lib/manipulators/cls_merge_classes.py` | **stub → 실구현** — unknown 처리 포함 |
-| `lib/manipulators/cls_demote_multi_to_single.py` | **신규** — multi→single 강등. 이름·스펙 이번 세션에서 확정 필요 |
-| `frontend/.../labelDisplay.tsx` (가칭) | Sample viewer / merge 로그 에서 unknown 시각화 |
-| `backend/tests/test_cls_merge_datasets.py` | unknown 시나리오 회귀 테스트 추가 |
+| 파일 | 필요 작업 | 상태 |
+|------|-----------|------|
+| `lib/classification/ingest.py` | head 초기화 `[]` → `None` | 미착수 |
+| `lib/pipeline/io/manifest_io.py` | writer 에 single-label assert 추가 (`null` or `[1개]`만 허용) | 미착수 |
+| `lib/manipulators/cls_merge_datasets.py` | `fill_empty` → `None`, `_resolve_label_conflict` 단순화 (`original_classes_per_input` 우회 제거, `null` 직접 체크) | 미착수 |
+| `lib/manipulators/cls_rename_class.py` | `None` guard 추가 | 미착수 |
+| `lib/manipulators/cls_reorder_classes.py` | `None` guard 추가 | 미착수 |
+| `backend/tests/test_cls_merge_datasets.py` | `[]` → `None` 반영 | 미착수 |
+| `lib/manipulators/cls_merge_classes.py` | **stub → 실구현** — per-class unknown 시 head 전체 `null` 승격 | 후속 |
+| `lib/manipulators/cls_demote_*.py` | **신규** — multi→single 강등 | 후속 |
 
-### 3-3. 강등 노드 — 이름 후보 (다음 세션 착수 전 결정)
+**reader 방어 로직 / migration 스크립트: 불요** — 기존 classification 데이터 전량 삭제 후 재등록.
+
+### 3-3. 강등 노드 — 이름 후보 (미결정)
 
 §2-11-4 가 `multi→single 변환` 이라고만 부르고 이름 미배정. manipulator 네이밍
 메모리(`feedback_manipulator_naming.md`) 기준 "동작 대상 + 조건 + 방법" 을
@@ -198,39 +200,37 @@ for head in heads:
 - params: `head_name: str`, `strategy: "keep_first" | "keep_only_if_single" | "error_on_multi"`
 - head 의 `multi_label` 플래그를 False 로.
 - 이미지별 labels 가 2개 이상이면 strategy 에 따라 처리 (첫 값 유지 / drop_image / error).
-- 이미지별 labels 가 unknown 이면 unknown 유지 (→ §2-12 확정 후 규약 재확인).
+- 이미지별 `labels[head]` 가 `null` (unknown) 이면 `null` 유지 (§2-12 확정 규약).
 
 ### 3-4. 참조 문서
 
-1. `objective_n_plan_7th.md §2-10, §2-11, §2-12` (§2-12 신설).
+1. `objective_n_plan_7th.md §2-10, §2-11, §2-12` (§2-12 **확정**, v7.4).
 2. `docs/pipeline-node-sdk-guide.md §3` — manipulator 추가 레시피(변경 없음).
-3. `backend/lib/classification/ingest.py:314` — `[]` 초기화 지점.
-4. `backend/lib/manipulators/cls_merge_datasets.py:449-539` — `_resolve_label_conflict`.
+3. `backend/lib/classification/ingest.py:314` — `[]` 초기화 지점 → `None` 으로 변경 예정.
+4. `backend/lib/manipulators/cls_merge_datasets.py:449-539` — `_resolve_label_conflict` → `null` 기반 단순화 예정.
 5. `backend/lib/pipeline/cls_merge_compat.py` — 공유 호환성 검증.
 6. `backend/tests/test_cls_merge_datasets.py` — 기존 9 회귀 테스트.
 
 ---
 
-## 4. 유의사항 / 규약 (017 승계 + 추가)
+## 4. 유의사항 / 규약 (017 승계 + 갱신)
 
-017 §4 전부 승계. 이번 세션에서 추가:
+017 §4 전부 승계. v7.4 확정 후 갱신:
 
-- **image-level unknown 은 multi-label 미정의**. 그 위에 쌓는 새 코드는 §2-12 결정 전까지는
-  dataset-level schema (head.classes 집합) 를 우회 수단으로 쓴다(130dc5f 가 그 예시).
-  단, 이 우회가 영구 해결은 아님 — 다음 세션에 정식화한다.
-- **`cls_merge_classes` / 강등 노드 구현 착수 전에 반드시 §2-12 결정을 마칠 것**.
-  결정 없이 구현하면 나중에 label 스토리지 재작업 시 해당 manipulator 전부 재구현해야 함.
-- **기존 classification 데이터셋 재생성 금지**. 어떤 옵션이 선택되든 migration 경로가 포함돼야 한다.
+- **`null` = unknown, `[]` = explicit empty** 가 공식 규약 (§2-12 확정). 모든 classification 코드는 이 규약을 따른다.
+- **single-label head 에서 `[]` 는 writer assert 에러**. `null` (unknown) 또는 `[class 1개]` (known) 만 허용.
+- **per-class unknown 발생 시 head 전체 `null` 승격**. "조금 덜 학습" > "잘못 학습".
+- **기존 classification 데이터셋 전량 삭제 후 재등록**. reader 방어 / migration 스크립트 불요.
 - **branch 상태**: `feature/classification-dag-implementation-01` — 미머지. PR/머지 여부는 사용자 판단.
 
 ---
 
-## 5. 열린 질문 (사용자 확인 필요)
+## 5. ~~열린 질문~~ → 결정 완료 (2026-04-17)
 
-다음 세션 시작 시 아래를 우선 결정해야 한다.
-
-1. **옵션 A/B/C/D 중 어느 방향?** (2-4 참조)
-2. **per-class unknown 이 필수인가, head-level unknown 으로 충분한가?** (Step 4 auto-labeling 고려)
-3. **기존 manifest migration 정책**: 폴백 해석으로 충분한가, 일괄 rewrite 가 필요한가?
-4. **강등 노드 이름**: 3-3 후보 중 선택, 또는 다른 제안?
-5. **single-label N/A 와 unknown 을 구분할 것인가?** — 구분한다면 옵션 A 유사 구조 필요.
+| 질문 | 결정 |
+|------|------|
+| 옵션 A/B/C/D 중 어느 방향? | **별도 방식 — `null` = unknown** (head-level, 구조 최소 변경) |
+| per-class unknown 필수? | **아니오** — head-level 승격 원칙으로 대체. Step 4 진입 시 재검토 |
+| 기존 manifest migration? | **불요** — 전량 삭제 후 재등록 |
+| 강등 노드 이름? | 미결정 — 후보 3종 (§3-3) |
+| single-label N/A vs unknown 구분? | **구분 안 함** — 둘 다 `null`. Step 4 이후 필요 시 확장 |
