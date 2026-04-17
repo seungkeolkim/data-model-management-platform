@@ -6,7 +6,7 @@
  *
  * 새 특수 노드 / 새 manipulator 추가 시 이 파일 수정 불요.
  */
-import { Typography, Collapse, Button, Spin, Badge, Tooltip } from 'antd'
+import { Typography, Collapse, Button, Spin, Badge, Tooltip, Modal } from 'antd'
 import { useQuery } from '@tanstack/react-query'
 import { manipulatorsApi } from '@/api/pipeline'
 import type { PipelineNodeData } from '@/types/pipeline'
@@ -101,6 +101,20 @@ export default function NodePalette({ onAddNode, taskType }: NodePaletteProps) {
                 showDisabledModal({
                   label: item.label,
                   disabled: item.disabled,
+                })
+                return
+              }
+              if (item.confirmWarning) {
+                Modal.confirm({
+                  title: item.confirmWarning.title,
+                  content: (
+                    <div style={{ whiteSpace: 'pre-line', lineHeight: 1.6 }}>
+                      {item.confirmWarning.content}
+                    </div>
+                  ),
+                  okText: '추가',
+                  cancelText: '취소',
+                  onOk: () => onAddNode(item.createData() as PipelineNodeData),
                 })
                 return
               }

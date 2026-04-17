@@ -72,16 +72,13 @@
 ### 3-1. `cls_merge_classes` 실구현 + multi→single 강등 노드 신설
 
 - `cls_merge_classes`: head 내 class 통합. per-class unknown 발생 시 head 전체 `null` 승격.
-- 강등 노드 이름 미결정 — 후보:
-  - `cls_demote_head_to_single_label` (명료)
-  - `cls_collapse_multi_label_to_single` (의미 강조)
-  - `cls_reduce_head_to_single_label` (중립)
+- 강등 노드 이름 확정: **`cls_demote_head_to_single_label`**
 - 동작 규약(초안): params `head_name`, `strategy: keep_first|keep_only_if_single|error_on_multi`. `labels[head]=null` 이면 `null` 유지.
 
 ### 3-2. 잔여 Classification stub 실구현 (3종)
 
 - `cls_filter_by_class` — 특정 class 포함/미포함 이미지 필터
-- `cls_remove_images_without_label` — unknown(`null`) 이미지 제거
+- `cls_remove_images_without_label` — unknown(`null`) 이미지 제거. `[]`(explicit empty)는 대상 아님 (single-label 에선 writer assert 에러, multi-label 에선 정상 값)
 - `cls_sample_n_images` — N장 랜덤 샘플링
 - 선행: `lib/pipeline/io/` CLS_MANIFEST 쓰기 경로 재검증
 
@@ -118,5 +115,5 @@
 
 | 질문 | 상태 |
 |------|------|
-| 강등 노드 이름 | 미결정 — 후보 3종 (§3-1) |
-| `cls_remove_images_without_label` 의 "without label" 이 `null` 만 대상인지 `[]` 도 포함인지 | 미결정 — 구현 시 확정 필요 |
+| 강등 노드 이름 | ✅ 확정 — `cls_demote_head_to_single_label` |
+| `cls_remove_images_without_label` 의 "without label" 대상 | ✅ 확정 — `null`(unknown) 만 대상. `[]` 는 제외 (single-label: writer assert 에러, multi-label: all neg 정상 값) |

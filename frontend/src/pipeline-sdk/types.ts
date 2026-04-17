@@ -78,6 +78,8 @@ export interface PaletteItem<K extends NodeKind = NodeKind> {
   emoji: string
   kind: K
   disabled?: { reason: string; modalTitle?: string } | null
+  /** 추가 전 확인 모달을 띄울 경고. disabled 와 달리 확인 시 노드가 추가된다. */
+  confirmWarning?: { title: string; content: string } | null
   createData: () => NodeDataByKind[K]
 }
 

@@ -428,7 +428,7 @@ per-class unknown 이 필수가 되는 시점(Step 4 auto-labeling)에 `labels` 
 6. ~~`null` 규약 코드 반영~~ ✅ **완료 (2026-04-17)** — 9개 파일, 192건 테스트 통과
    - 기존 classification 데이터셋 삭제 후 재등록 (사용자 수행)
 7. **`cls_merge_classes` 실구현 + multi→single 강등 노드 신설**
-   - 강등 노드 이름: `cls_demote_head_to_single_label` 후보 (018 §3-3)
+   - 강등 노드 이름: **`cls_demote_head_to_single_label`** (확정)
    - per-class unknown 발생 시 head 전체를 `null` 로 승격 (§2-12-2 원칙)
 8. **잔여 Classification operator 실구현 (stub 4종)**
    - 레코드 필터: `cls_filter_by_class`, `cls_remove_images_without_label`, `cls_sample_n_images`

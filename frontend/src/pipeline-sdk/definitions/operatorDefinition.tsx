@@ -23,6 +23,20 @@ const { Text } = Typography
 
 /** 포맷 변환 노드는 통일포맷 자동 처리로 대체되어 비활성 */
 const FORMAT_CONVERT_CATEGORY = 'FORMAT_CONVERT'
+
+/** 팔레트 클릭 시 확인 모달을 거쳐야 하는 operator. */
+const CONFIRM_WARNING_OPERATORS: Record<string, { title: string; content: string }> = {
+  cls_merge_classes: {
+    title: 'Class 병합 주의사항',
+    content:
+      'Class 병합은 다음 규칙으로 동작합니다:\n\n' +
+      '• Single-label head: A | B | C 중 하나라도 지정되어 있으면 병합 결과 class 로 교체\n' +
+      '• Multi-label head: A or B or C 가 하나라도 true 이면 병합 결과 class 를 true 로 설정\n\n' +
+      '⚠️ 병합 대상 class 들의 의미와 내용이 서로 다르면 라벨 정합성이 깨져 학습 데이터가 오염될 수 있습니다.\n' +
+      '(ex : 사람=True & 인류=False 병합 → 내용 오염됨).\n\n' +
+      '병합 대상 class 가 실제로 동일한 의미/내용인지 확인 후 진행하세요.',
+  },
+}
 /** 백엔드 코드 미구현 manipulator (DB seed만 존재, transform_annotation 이 stub). */
 const UNIMPLEMENTED_OPERATORS = [
   // detection
@@ -30,7 +44,6 @@ const UNIMPLEMENTED_OPERATORS = [
   'det_shuffle_image_ids',
   // classification (stub 상태 — NotImplementedError 던짐)
   'cls_filter_by_class',
-  'cls_merge_classes',
   'cls_remove_images_without_label',
   'cls_sample_n_images',
 ]
@@ -208,6 +221,7 @@ export const operatorDefinition: NodeDefinition<'operator'> = {
               modalTitle: '미구현 기능',
             }
           : null
+      const confirmWarning = CONFIRM_WARNING_OPERATORS[m.name] ?? null
       items.push({
         key: m.name,
         section: 'manipulator',
@@ -217,6 +231,7 @@ export const operatorDefinition: NodeDefinition<'operator'> = {
         emoji: getManipulatorEmoji(m.name, m.category),
         kind: 'operator',
         disabled,
+        confirmWarning,
         createData: () => createOperatorDataFromManipulator(m),
       })
     }
