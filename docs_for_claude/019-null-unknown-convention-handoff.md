@@ -1,4 +1,4 @@
-# 통합 핸드오프 019 — `null` = unknown 규약 확정 + 코드 반영 완료
+# 통합 핸드오프 019 — `null` = unknown 규약 확정 + `cls_merge_classes` 실구현
 
 > 최종 갱신: 2026-04-17
 > 이전 핸드오프: `docs_history/handoffs/018-image-level-unknown-semantics-handoff.md`
@@ -7,11 +7,12 @@
 > 주요 커밋:
 > - `eb8379d` docs: 7차 설계서 v7.4 + 018 핸드오프 — image-level unknown 라벨 규약 확정
 > - `c18a14a` refactor(classification): null=unknown 규약 코드 반영 — §2-12 확정
+> - `3087bdc` feat(manipulator): cls_merge_classes 실구현 + 팔레트 활성화 + 경고 모달
+> - `38b73c3` fix(pipeline-task): classification class_info 생성 시 null(unknown) labels 처리
 
 018 에서 옵션 A~D 로 열어두었던 image-level unknown 라벨 규약을 확정하고
-코드 전면 반영을 완료한 세션이다. 기존 옵션 어디에도 해당하지 않는 별도
-방식(`null` = unknown)을 채택했으며, 기존 classification 데이터는 사용자가
-전량 삭제 후 재등록하기로 합의했다.
+코드 전면 반영을 완료했다. 이후 `cls_merge_classes` 실구현, 팔레트 활성화,
+파이프라인 실행 시 null labels 버그 수정까지 진행했다.
 
 ---
 
@@ -50,7 +51,28 @@
 
 **테스트: 192건 전체 통과.**
 
-### 1-3. 설계서 갱신 (`eb8379d`)
+### 1-3. `cls_merge_classes` 실구현 (`3087bdc`)
+
+| 파일 | 변경 내용 |
+|---|---|
+| `lib/manipulators/cls_merge_classes.py` | stub → 실구현. head 내 class 병합 (single-label OR / multi-label OR). `_parse_source_classes` 로 textarea 줄바꿈 문자열 수용 |
+| `tests/test_cls_merge_classes.py` | 17건 신규 (single/multi/null/schema/에러/textarea 파싱) |
+| `migrations/versions/020_cls_merge_classes_params.py` | DB params_schema: `merged_into` → `target_class` 갱신 |
+| `frontend/.../operatorDefinition.tsx` | `UNIMPLEMENTED_OPERATORS` 에서 제거 → 팔레트 활성화. `CONFIRM_WARNING_OPERATORS` 로 경고 모달 추가 |
+| `frontend/.../types.ts` | `PaletteItem.confirmWarning` 필드 추가 |
+| `frontend/.../NodePalette.tsx` | `confirmWarning` 분기 — `Modal.confirm` 으로 경고 후 추가 |
+
+**테스트: 209건 전체 통과.**
+
+### 1-4. 파이프라인 실행 null labels 버그 수정 (`38b73c3`)
+
+| 파일 | 변경 내용 |
+|---|---|
+| `app/tasks/pipeline_tasks.py` | classification class_info 생성 시 `labels[head]=None`(unknown) 에서 `for class_name in None` 순회 에러 — `None` guard 추가 |
+
+**배경**: §2-12 null 규약 반영 시 `pipeline_tasks.py` 가 누락되어, 파이프라인 정상 실행 후 class_info 메타데이터 생성 단계에서 `'NoneType' object is not iterable` 에러 발생.
+
+### 1-5. 설계서 갱신 (`eb8379d`)
 
 - `objective_n_plan_7th.md`: v7.3 → **v7.4**. §2-12 "결정 대기" → **확정**. §2-8/2-10/2-11-3/2-11-5 관련 문구 갱신. §5 작업 목록 갱신.
 - `018-handoff.md`: §2-5 확정 결과, §3-1 완료, §4 규약 갱신, §5 전부 결정 완료.
@@ -62,18 +84,18 @@
 **Detection 12종 (전부 실구현):** 변동 없음.
 
 **Classification 10종:**
-- ✅ 실구현 6종: `cls_rename_head`, `cls_rename_class`, `cls_reorder_heads`, `cls_reorder_classes`, `cls_select_heads`, `cls_merge_datasets`
-- 🚧 stub 4종: `cls_filter_by_class`, `cls_remove_images_without_label`, `cls_sample_n_images`, `cls_merge_classes`
+- ✅ 실구현 7종: `cls_rename_head`, `cls_rename_class`, `cls_reorder_heads`, `cls_reorder_classes`, `cls_select_heads`, `cls_merge_datasets`, `cls_merge_classes`
+- 🚧 stub 3종: `cls_filter_by_class`, `cls_remove_images_without_label`, `cls_sample_n_images`
 
 ---
 
 ## 3. 다음 작업 체크리스트
 
-### 3-1. `cls_merge_classes` 실구현 + multi→single 강등 노드 신설
+### 3-1. `cls_demote_head_to_single_label` 신설
 
-- `cls_merge_classes`: head 내 class 통합. per-class unknown 발생 시 head 전체 `null` 승격.
 - 강등 노드 이름 확정: **`cls_demote_head_to_single_label`**
 - 동작 규약(초안): params `head_name`, `strategy: keep_first|keep_only_if_single|error_on_multi`. `labels[head]=null` 이면 `null` 유지.
+- `cls_merge_classes` 로 class 를 줄인 뒤 multi→single 강등하는 시나리오에서 사용.
 
 ### 3-2. 잔여 Classification stub 실구현 (3종)
 
@@ -95,7 +117,10 @@
 3. `backend/lib/classification/ingest.py` — `None` 초기화 지점.
 4. `backend/lib/pipeline/io/manifest_io.py` — writer single-label assert.
 5. `backend/lib/manipulators/cls_merge_datasets.py` — `_resolve_label_conflict` (`null` 기반).
-6. `backend/tests/test_cls_merge_datasets.py` — 9건 회귀 테스트.
+6. `backend/lib/manipulators/cls_merge_classes.py` — head 내 class 병합 (실구현 완료).
+7. `backend/tests/test_cls_merge_datasets.py` — 9건 회귀 테스트.
+8. `backend/tests/test_cls_merge_classes.py` — 17건 단위 테스트.
+9. `backend/app/tasks/pipeline_tasks.py:220-228` — classification class_info 생성 (`None` guard 포함).
 
 ---
 

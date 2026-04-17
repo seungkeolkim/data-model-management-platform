@@ -50,7 +50,7 @@ image-level `unknown` 라벨 규약 갭을 §2-12 로 명문화했으며,
 - DAG 실행: Phase A(annotation 처리 — topological 순) → Phase B(이미지 실체화 — copy vs transform 분기)
 - Celery 태스크 1건 = 파이프라인 전체 1실행 (Phase B가 주 병목)
 
-### 2-4. MANIPULATOR_REGISTRY — 자동 발견 (22종: det 12 실구현 + cls 6 실구현 + cls 4 stub)
+### 2-4. MANIPULATOR_REGISTRY — 자동 발견 (22종: det 12 실구현 + cls 7 실구현 + cls 3 stub)
 
 - `lib/manipulators/__init__.py`가 `pkgutil.iter_modules`로 하위 모듈 순회, `UnitManipulator` 구체 서브클래스를 자동 수집
 - 인스턴스 `.name` property를 키로 사용. 중복 name 즉시 RuntimeError (seed 정합성 보호)
@@ -64,10 +64,10 @@ image-level `unknown` 라벨 규약 갭을 §2-12 로 명문화했으며,
 - `det_remap_class_name` / `det_rotate_image` / `det_mask_region_by_class` / `det_sample_n_images`
 
 **Classification 10종 (`cls_` prefix):**
-- ✅ 실구현 완료 6종: `cls_rename_head`, `cls_rename_class`, `cls_reorder_heads`, `cls_reorder_classes`, `cls_select_heads`, `cls_merge_datasets` (`accepts_multi_input=True`, §2-11)
-- 🚧 stub 4종: `cls_filter_by_class`, `cls_remove_images_without_label`, `cls_sample_n_images`, `cls_merge_classes` (head 내 class 통합 — §2-12 결정 선행 필요)
+- ✅ 실구현 완료 7종: `cls_rename_head`, `cls_rename_class`, `cls_reorder_heads`, `cls_reorder_classes`, `cls_select_heads`, `cls_merge_datasets` (`accepts_multi_input=True`, §2-11), `cls_merge_classes` (head 내 class 병합)
+- 🚧 stub 3종: `cls_filter_by_class`, `cls_remove_images_without_label`, `cls_sample_n_images`
 
-또한 §2-11-4 에서 언급된 **multi→single 강등 노드** 는 아직 registry 에 배정된 이름조차 없다 (018 §3-3 후보 제시).
+**multi→single 강등 노드**: 이름 확정 — `cls_demote_head_to_single_label` (미구현, 019 §3-1).
 
 **미구현 Detection 2종:** `det_change_compression`, `det_shuffle_image_ids` (014 §3-3 승계).
 
@@ -427,23 +427,24 @@ per-class unknown 이 필수가 되는 시점(Step 4 auto-labeling)에 `labels` 
 5. ~~Image-level `unknown` 라벨 규약 확정~~ ✅ **완료 (2026-04-17)** — `null` = unknown, `[]` = explicit empty (§2-12 확정)
 6. ~~`null` 규약 코드 반영~~ ✅ **완료 (2026-04-17)** — 9개 파일, 192건 테스트 통과
    - 기존 classification 데이터셋 삭제 후 재등록 (사용자 수행)
-7. **`cls_merge_classes` 실구현 + multi→single 강등 노드 신설**
-   - 강등 노드 이름: **`cls_demote_head_to_single_label`** (확정)
+7. ~~`cls_merge_classes` 실구현~~ ✅ **완료 (2026-04-17)** — head 내 class 병합 (single/multi-label OR), 팔레트 활성화 + 경고 모달, 17건 테스트
+   - 파이프라인 실행 시 null labels 버그 수정 (`pipeline_tasks.py` class_info 생성)
+8. **`cls_demote_head_to_single_label` 신설**
+   - multi→single 강등 노드. `cls_merge_classes` 로 class 줄인 뒤 사용.
    - per-class unknown 발생 시 head 전체를 `null` 로 승격 (§2-12-2 원칙)
-8. **잔여 Classification operator 실구현 (stub 4종)**
+9. **잔여 Classification operator 실구현 (stub 3종)**
    - 레코드 필터: `cls_filter_by_class`, `cls_remove_images_without_label`, `cls_sample_n_images`
-   - `cls_merge_classes` (7번과 동일)
    - 선행: `lib/pipeline/io/` CLS_MANIFEST 쓰기 경로를 operator 결과 기준으로 재검증, 정합성 audit 유틸 도입
-9. **Automation 실구현** — 정책 확정 대기 (lineage 조정 + minor 버전 증가 규약)
-10. **미구현 Detection manipulator 2종** — `det_change_compression` / `det_shuffle_image_ids`
-11. **버전 정책 운영 검증** — automation과 함께
-12. **Phase 3** — TrainingExecutor/GPUResourceManager 인터페이스, 알림 골격, GNB/Manipulator/시스템 상태 페이지, 전체 UX 정리
-13. **Step 2** 진입 — DockerTrainingExecutor, nvidia-smi 기반 GPUResourceManager, MLflow, Prometheus+DCGM, SMTP 알림
+10. **Automation 실구현** — 정책 확정 대기 (lineage 조정 + minor 버전 증가 규약)
+11. **미구현 Detection manipulator 2종** — `det_change_compression` / `det_shuffle_image_ids`
+12. **버전 정책 운영 검증** — automation과 함께
+13. **Phase 3** — TrainingExecutor/GPUResourceManager 인터페이스, 알림 골격, GNB/Manipulator/시스템 상태 페이지, 전체 UX 정리
+14. **Step 2** 진입 — DockerTrainingExecutor, nvidia-smi 기반 GPUResourceManager, MLflow, Prometheus+DCGM, SMTP 알림
     - ⚠️ multi-label head 학습 시 unknown 을 loss mask 로 배제: §2-12 `null` 규약으로 head-level 가능. per-class 필요 시 옵션 A/B 확장
-14. **Step 3 이후** — S3StorageClient, KubernetesTrainingExecutor, Helm, Argo/Kubeflow, Volcano, KEDA, MinIO
-15. **Step 4** — Label Studio, Synthetic Data, Auto Labeling, Offline Testing, Auto Deploy, 데이터 자동 수집
+15. **Step 3 이후** — S3StorageClient, KubernetesTrainingExecutor, Helm, Argo/Kubeflow, Volcano, KEDA, MinIO
+16. **Step 4** — Label Studio, Synthetic Data, Auto Labeling, Offline Testing, Auto Deploy, 데이터 자동 수집
     - ⚠️ auto-labeling 의 per-class unknown 시나리오는 현 head-level `null` 로 부분 해결 (head 전체 승격). 완전 해결은 옵션 A/B 확장 필요
-16. **Step 5** — Generative Model MLOps
+17. **Step 5** — Generative Model MLOps
 
 ---
 
