@@ -13,6 +13,7 @@
 > - `54fb15c` feat(manipulator): cls_set_head_labels_for_all_images 실구현 + Alembic 025 + 33건 테스트
 > - `56bcd5a` fix(pipeline-service): cls_set_head_labels_for_all_images 정적 DB-aware 검증 + 12건 테스트 (pipeline id `a6e6b2a2-d0cd-4cf9-8ce9-b0f6b263829c` 재현 버그)
 > - `9e33476` feat(manipulator): cls_crop_image 실구현 — direction(상단/하단) + crop_pct(1~99) 2-필드 UX, postfix `_crop_up/down_{pct:03d}` + Alembic 026 + 45건 테스트
+> - `19118dc` feat(manipulator): cls_filter_by_class 실구현 + cls_remove_images_without_label 통합 제거 + Alembic 027 + 55건 테스트
 
 020 의 filename-identity 전환(§2-13)이 끝난 상태에서, 고정 rename 규약 덕분에 이미지 변형 manipulator 도
 detection 과 동일한 "변형 시 파일명에 postfix 를 붙여 새 이미지로 만든다" 규약으로 구현할 수 있게 됐다.
@@ -377,26 +378,115 @@ images/truck_001.jpg → images/truck_001_crop_down_099.jpg (하단 99%)
 **Phase B operation 네이밍.** `crop_image_vertical` 로 직접 명시. 향후 horizontal crop 을 별도
 operation 으로 추가할 여지를 남김 — §2-4 의 "det/cls 동일 operation 공유" 원칙과 호환.
 
+### 1-9. `cls_filter_by_class` 실구현 + `cls_remove_images_without_label` 통합 제거
+
+**배경.** 설계서 §5 의 "이미지 단위 필터 2종" (1. label 없는 이미지 제거 / 2. 특정 head 의 특정
+class include·exclude 필터) 을 처음엔 별개 노드로 설계했으나, 사용자 확인으로 **두 기능은 단일
+노드의 파라미터 조합으로 완전히 커버됨** 이 확인됐다 — "exclude 로 label 이 없는 이미지는 싹 다
+날아갈 테니까". 두 seed 를 하나로 합치면 팔레트도 더 간결해진다.
+
+#### 1-9-1. 최종 파라미터 스키마 (4필드)
+
+| 필드 | 타입 | 필수 | 설명 |
+|---|---|---|---|
+| `head_name` | text | ✓ | 대상 head 이름. head_schema 에 존재해야 함 |
+| `mode` | select("include"\|"exclude") | ✓ | 매칭된 이미지를 남길지(include) 버릴지(exclude) |
+| `classes` | textarea (줄바꿈 구분) | ✗ | 매칭 대상 class 이름 목록. any-match 정책(1개라도 매칭→match). 비우면 오직 `include_unknown` 로만 판정 |
+| `include_unknown` | checkbox | ✗ | `labels[head] is None` 인 이미지도 매칭 대상에 포함 (체크 시 unknown 이 match 로 취급됨) |
+
+v1 은 **match_policy 항상 "any" 고정.** 추후 `all` 이 필요하면 별도 파라미터로 확장.
+
+#### 1-9-2. `null` vs `[]` 구분 규약 (§2-12 승계)
+
+사용자 확정 — 이 둘을 혼동하면 "label 없는 이미지 제거" 같은 기본 동작이 어긋나므로 명문화:
+
+- **`labels[head] is None` → unknown.** `include_unknown` 토글에 의해 match 여부가 결정됨.
+- **`labels[head] == []` → explicit empty.** 이 이미지의 상태를 "현재 class 목록 중 어느 것에도
+  해당하지 않음" 으로 정확히 알고 있는 것. unknown 이 아니며 `include_unknown` 에 영향받지 않고,
+  오직 match_policy(any) 에 의해 처리됨 → `classes_set` 이 비어 있지 않은 한 교집합은 항상 False.
+
+동일 convention 이 §2-12 / `cls_set_head_labels_for_all_images` 에도 동일하게 적용된다.
+
+#### 1-9-3. 통합 사용 예시 — "label 없는 이미지만 제거"
+
+```yaml
+# 기존 cls_remove_images_without_label 과 완전 동일한 동작
+- operator: cls_filter_by_class
+  params:
+    head_name: weather
+    mode: exclude
+    classes: ""           # 빈 목록
+    include_unknown: true  # unknown 만 매칭 → exclude → null 인 이미지만 drop
+```
+
+`labels[weather] == []` 인 이미지는 그대로 유지 (match_policy 에 의해 매칭되지 않아 drop 안됨).
+
+#### 1-9-4. 반영된 파일
+
+- `backend/lib/manipulators/cls_filter_by_class.py` — stub → 전체 구현.
+  - 모듈 레벨 `validate_filter_by_class_params(head_schema, params) -> list[(code, message)]` —
+    runtime + 정적 공용 순수 함수. 코드 9종:
+    `HEAD_SCHEMA_MISSING`, `HEAD_NAME_MISSING`, `HEAD_NAME_NOT_FOUND`, `MODE_INVALID`,
+    `CLASSES_INVALID`, `CLASSES_DUPLICATE`, `CLASSES_NOT_IN_SCHEMA`, `INCLUDE_UNKNOWN_INVALID`,
+    `FILTER_MATCHES_NOTHING` (classes 가 비어있는데 include_unknown=false → no-op 차단).
+  - helper: `_parse_head_name`, `_parse_mode`, `_parse_classes`, `_parse_include_unknown`,
+    `_record_matches`.
+  - `transform_annotation` — `validate_filter_by_class_params` 첫 원소를 ValueError 로 승격.
+    record 단위로 `_record_matches` 호출 후 `mode` 에 따라 keep/drop. 0건 결과 시 WARNING 로그.
+- `backend/lib/manipulators/cls_remove_images_without_label.py` — **삭제.** pkgutil 자동 발견
+  레지스트리가 파일 삭제만으로 자동 정리됨 (`MANIPULATOR_REGISTRY` 에서 즉시 빠짐).
+- `backend/migrations/versions/027_cls_filter_by_class_unified.py`:
+  - UPDATE `cls_filter_by_class` params_schema → 상기 4필드 구조, description 갱신.
+  - DELETE `cls_remove_images_without_label` row.
+  - downgrade 는 023 stub params 복구 + `cls_remove_images_without_label` row 재삽입
+    (`gen_random_uuid()`, `IMAGE_FILTER`, `[PER_SOURCE, POST_MERGE]`, `[CLASSIFICATION]`,
+    `[CLS_MANIFEST]`, output `CLS_MANIFEST`).
+- `backend/app/services/pipeline_service.py`:
+  - `_validate_with_database` docstring 에 6번 항목 추가 + call 추가.
+  - 신규 `_validate_cls_filter_by_class_compatibility` — `cls_set_head_labels` compat 과 동형
+    (build_stub_source_meta + preview_head_schema_at_task → validate_filter_by_class_params).
+    이슈마다 `FILTER_BY_CLASS_{CODE}` prefix 로 ERROR 수집. preview 실패 시
+    `FILTER_BY_CLASS_UPSTREAM_PREVIEW_FAILED` WARNING 으로 degrade.
+- `frontend/src/pipeline-sdk/styles.ts` — `MANIPULATOR_EMOJI.cls_filter_by_class = '🧮'` 추가.
+- `frontend/src/pipeline-sdk/definitions/operatorDefinition.tsx` — `UNIMPLEMENTED_OPERATORS` 에서
+  `'cls_filter_by_class'`, `'cls_remove_images_without_label'` 제거 → classification 섹션이 빈
+  배열이 됨 (주석 `// classification — (현재 없음; 모든 cls_* 실구현 완료)` 로 기록).
+- `backend/tests/test_cls_filter_by_class.py` — **55건 신규.** 11개 섹션:
+  - §1~2 include / exclude 기본 동작 + 다중 class
+  - §3 include_unknown 토글 (null label 대응, 양방향)
+  - §4 `[]` ≠ unknown 명시 테스트 (핵심 규약 검증)
+  - §5 multi-label any-policy
+  - §6 통합 use case — `label 없는 이미지 제거` (mode=exclude, classes=[], include_unknown=True)
+  - §7 head_schema / storage_uri / categories 보존
+  - §8 deep copy isolation
+  - §9 에러 케이스 7종 (list input / missing head / head not found / class not in schema /
+    no-op / invalid mode / duplicate classes)
+  - §10 `validate_filter_by_class_params` 순수 함수 — 코드별 1건 + OK 2건 + 다중 이슈 축적
+  - §11 parsing helper 파라미터라이즈 (`_parse_mode`, `_parse_classes`, `_parse_include_unknown`)
+
+**테스트 결과.** `backend/tests` 전체 회귀 — **445 / 445 pass.** (이전 390 + 55 = 445.
+`test_cls_remove_images_without_label.py` 는 원래 없었음 — stub 상태였기 때문에.)
+
 ---
 
-## 2. Registry 상태 (27종)
+## 2. Registry 상태 (26종)
 
 - Detection: **12 실구현**
-- Classification: **13 실구현 + 2 stub**
-  - 실구현 (13): `cls_rename_head`, `cls_rename_class`, `cls_reorder_heads`, `cls_reorder_classes`, `cls_select_heads`, `cls_merge_datasets`, `cls_merge_classes`, `cls_demote_head_to_single_label`, `cls_sample_n_images`, `cls_rotate_image`, `cls_add_head`, `cls_set_head_labels_for_all_images`, **`cls_crop_image` (신규 — 수직축 단일 crop 으로 scope 축소)**
-  - stub (2): `cls_filter_by_class`, `cls_remove_images_without_label`
+- Classification: **14 실구현 + 0 stub** (이전 13 + 2 stub 에서 `cls_filter_by_class` 실구현 전환,
+  `cls_remove_images_without_label` 통합 흡수로 seed 제거)
+  - 실구현 (14): `cls_rename_head`, `cls_rename_class`, `cls_reorder_heads`, `cls_reorder_classes`, `cls_select_heads`, `cls_merge_datasets`, `cls_merge_classes`, `cls_demote_head_to_single_label`, `cls_sample_n_images`, `cls_rotate_image`, `cls_add_head`, `cls_set_head_labels_for_all_images`, `cls_crop_image`, **`cls_filter_by_class` (신규 — 기존 stub + remove_images_without_label 흡수)**
 
 ---
 
 ## 3. 다음 작업 체크리스트 (우선순위)
 
-1. **`cls_filter_by_class` / `cls_remove_images_without_label`** — annotation 기반 필터 2종.
-   이미지 변형과 달리 Phase B 는 건드리지 않는다 (record 제거만).
-2. **Automation 실구현** (lineage + minor 버전 증가 규약)
-3. **Detection 미구현 2종** — `det_change_compression`, `det_shuffle_image_ids` (long-tail).
-4. **Step 2 진입 시 `loss_per_head` 스키마 실장** — §6-2 결정 반영.
-5. **(future) horizontal crop 필요 시** — `cls_crop_image` 를 확장할지 별도 `cls_crop_image_horizontal`
+1. **Automation 실구현** (lineage + minor 버전 증가 규약)
+2. **Detection 미구현 2종** — `det_change_compression`, `det_shuffle_image_ids` (long-tail).
+3. **Step 2 진입 시 `loss_per_head` 스키마 실장** — §6-2 결정 반영.
+4. **(future) horizontal crop 필요 시** — `cls_crop_image` 를 확장할지 별도 `cls_crop_image_horizontal`
    로 분리할지 결정. 현재는 수직축만.
+5. **(future) filter match_policy "all"** — 현재 v1 은 any 고정. 필요 시 `cls_filter_by_class` 에
+   `match_policy: "any"|"all"` 파라미터로 확장.
 
 ---
 
