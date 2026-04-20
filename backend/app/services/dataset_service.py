@@ -1646,9 +1646,17 @@ class DatasetGroupService:
         items = []
         for entry in page_images:
             stored_filename = entry.get("stored_filename") or ""
+            original_filename = entry.get("original_filename") or ""
+            # merge rename 등으로 현재 파일명과 원본이 달라진 경우에만 original 노출.
+            # 캐시 빌더가 original 결측 시 stored 로 채워 넣으므로 문자열 비교로 판별 가능.
+            original_display: str | None = (
+                original_filename
+                if original_filename and original_filename != stored_filename
+                else None
+            )
             items.append({
-                "sha": entry.get("sha") or "",
-                "file_name": entry.get("original_filename") or stored_filename,
+                "file_name": stored_filename,
+                "original_file_name": original_display,
                 "image_url": f"{image_url_base}/{stored_filename}" if stored_filename else "",
                 "width": entry.get("width"),
                 "height": entry.get("height"),

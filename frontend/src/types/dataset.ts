@@ -348,8 +348,10 @@ export interface SampleListResponse {
 // 프론트는 group.annotation_format 으로 분기해 Detection / Classification 컴포넌트를 선택.
 
 export interface ClassificationSampleImageItem {
-  sha: string
-  file_name: string                       // original_filename (표시용)
+  /** 현재 storage pool 상의 파일명 (basename). merge rename 이 적용된 경우 prefix 가 포함된 이름이다. */
+  file_name: string
+  /** merge rename 등으로 원본과 달라진 경우에만 원본 basename. 동일하면 null 로 내려온다. */
+  original_file_name: string | null
   image_url: string
   width: number | null
   height: number | null

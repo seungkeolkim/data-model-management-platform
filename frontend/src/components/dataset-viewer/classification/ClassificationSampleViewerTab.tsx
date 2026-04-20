@@ -102,10 +102,15 @@ export default function ClassificationSampleViewerTab({ datasetId }: Props) {
   const heads = data?.heads ?? []
 
   // 파일명 검색만 클라이언트 측. head/class 필터는 서버에서 처리됨.
+  // merge rename 된 이미지를 원본 이름으로도 찾을 수 있도록 original_file_name 까지 매칭 대상에 포함.
   const filteredItems = useMemo(() => {
     if (!searchText) return items
     const query = searchText.toLowerCase()
-    return items.filter(item => (item.file_name || '').toLowerCase().includes(query))
+    return items.filter(item => {
+      const current = (item.file_name || '').toLowerCase()
+      const original = (item.original_file_name || '').toLowerCase()
+      return current.includes(query) || original.includes(query)
+    })
   }, [items, searchText])
 
   const totalSelectedFilters = headFilterParams.length
@@ -355,16 +360,18 @@ function ClassificationImagePreview({
 }) {
   return (
     <div>
-      <div style={{ marginBottom: 8, display: 'flex', gap: 16, alignItems: 'center' }}>
+      <div style={{ marginBottom: 8, display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
         <Text strong>{image.file_name}</Text>
+        {image.original_file_name && (
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            (원본: {image.original_file_name})
+          </Text>
+        )}
         {image.width && image.height && (
           <Text type="secondary">
             {image.width} x {image.height}
           </Text>
         )}
-        <Text type="secondary" style={{ fontFamily: 'monospace', fontSize: 11 }}>
-          sha: {image.sha.slice(0, 10)}…
-        </Text>
       </div>
 
       <ClassificationImageCanvas image={image} />

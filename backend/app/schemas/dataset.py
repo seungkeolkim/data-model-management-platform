@@ -499,10 +499,12 @@ class ClassificationSampleImageItem(BaseModel):
     """Classification 샘플 뷰어용 이미지 1장 정보.
 
     detection과 달리 bbox/area가 없는 대신 head별 class 라벨을 반환한다.
-    file_name은 원본 파일명(표시용), image_url은 nginx가 서빙하는 sha 기반 경로.
+    `file_name` 은 현재 storage pool 상의 파일명(basename, 표시/링크 기준).
+    `original_file_name` 은 merge rename 등으로 원본과 달라졌을 때만 세팅되며,
+    동일하면 None 으로 내려간다 — UI 가 이 값을 보고 "(원본: …)" 표시 여부를 결정한다.
     """
-    sha: str
-    file_name: str                # original_filename (표시용)
+    file_name: str
+    original_file_name: str | None = None
     image_url: str
     width: int | None = None
     height: int | None = None
