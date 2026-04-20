@@ -26,7 +26,7 @@ Step 1의 세부적인 작업:
 - 5차 설계: `docs_history/objective_n_plan_5th.md`
 - 6차 설계: `docs_history/objective_n_plan_6th.md`
 - **7차 설계 (현행)**: `objective_n_plan_7th.md`
-- 통합 핸드오프 (현행): `docs_for_claude/020-classification-filename-identity-handoff.md` (001~019는 `docs_history/handoffs/`)
+- 통합 핸드오프 (현행): `docs_for_claude/021-cls-rotate-and-new-stubs-handoff.md` (001~020은 `docs_history/handoffs/`)
 
 | Phase | 내용 | 상태 |
 |-------|------|------|

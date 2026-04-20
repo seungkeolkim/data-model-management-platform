@@ -1,9 +1,9 @@
 # 데이터 관리 & 학습 자동화 플랫폼 — 7차 설계서
 
-> **작업지시서 v7.5** | cls 강등+샘플링 실구현 완료, 이미지 변형/Annotation 조작/Head 추가/Binary type 방법론 TODO 추가
-> 기준일: 2026-04-17
+> **작업지시서 v7.5** | filename-identity 전환 + cls_rotate_image 실구현 + 신규 Classification 노드 4종 stub + Binary label type 결정
+> 기준일: 2026-04-20
 > 이전 설계서: `docs_history/objective_n_plan_6th.md`
-> 통합 핸드오프: `docs_for_claude/019-null-unknown-convention-handoff.md` (이전 018은 `docs_history/handoffs/`)
+> 통합 핸드오프: `docs_for_claude/021-cls-rotate-and-new-stubs-handoff.md` (001~020은 `docs_history/handoffs/`)
 > 노드 SDK 규약: `docs/pipeline-node-sdk-guide.md` (2026-04-15 재작성본)
 
 6차 설계서의 §7-1 최우선 액션(노드 SDK화 + 가이드)이 완료되어 baseline에 편입됐다.
@@ -11,8 +11,10 @@ v7.2 에서 Classification DAG + Celery runner + manipulator prefix 통일(det_/
 v7.3 에서 `cls_merge_datasets` 실구현과 3125장 드롭 버그 수정 과정에서 드러난
 image-level `unknown` 라벨 규약 갭을 §2-12 로 명문화했으며,
 v7.4 에서 `null` = unknown / `[]` = explicit empty 규약을 확정했다 (§2-12).
-**v7.5 에서 cls_demote_head_to_single_label + cls_sample_n_images 실구현을 완료**하고,
-이미지 변형·Annotation 조작·Head 추가 등 신규 노드 TODO 를 §5 에 추가했으며,
+v7.5 에서 classification 이미지 identity 를 SHA → filename 으로 전환하고 (§2-13),
+cls_demote_head_to_single_label / cls_sample_n_images / **cls_rotate_image** 실구현을 완료했다.
+이미지 변형 1종 (cls_crop_image) + Head 추가 1종 (cls_add_head) + Head 조작 1종 (cls_set_head_labels_for_all_images) 은 stub + seed + 팔레트 까지 노출한 상태 (§5),
+§6-1 에 이미지 변형 시 **postfix rename 규약** 을 명문화 (cls_rotate_image 로 확립),
 §6-2 Binary label type 방법론을 **(c) 주 + (b) 보조로 결정 완료** 했다 (2026-04-20).
 
 ---
@@ -53,7 +55,7 @@ v7.4 에서 `null` = unknown / `[]` = explicit empty 규약을 확정했다 (§2
 - DAG 실행: Phase A(annotation 처리 — topological 순) → Phase B(이미지 실체화 — copy vs transform 분기)
 - Celery 태스크 1건 = 파이프라인 전체 1실행 (Phase B가 주 병목)
 
-### 2-4. MANIPULATOR_REGISTRY — 자동 발견 (23종: det 12 실구현 + cls 9 실구현 + cls 2 stub)
+### 2-4. MANIPULATOR_REGISTRY — 자동 발견 (27종: det 12 실구현 + cls 10 실구현 + cls 5 stub)
 
 - `lib/manipulators/__init__.py`가 `pkgutil.iter_modules`로 하위 모듈 순회, `UnitManipulator` 구체 서브클래스를 자동 수집
 - 인스턴스 `.name` property를 키로 사용. 중복 name 즉시 RuntimeError (seed 정합성 보호)
@@ -66,9 +68,9 @@ v7.4 에서 `null` = unknown / `[]` = explicit empty 규약을 확정했다 (§2
 - `det_filter_keep_images_containing_class_name` / `det_filter_remove_images_containing_class_name` / `det_filter_remain_selected_class_names_only_in_annotation`
 - `det_remap_class_name` / `det_rotate_image` / `det_mask_region_by_class` / `det_sample_n_images`
 
-**Classification 10종 (`cls_` prefix):**
-- ✅ 실구현 완료 9종: `cls_rename_head`, `cls_rename_class`, `cls_reorder_heads`, `cls_reorder_classes`, `cls_select_heads`, `cls_merge_datasets` (`accepts_multi_input=True`, §2-11), `cls_merge_classes` (head 내 class 병합), `cls_demote_head_to_single_label` (multi→single 강등), `cls_sample_n_images` (N장 랜덤 샘플)
-- 🚧 stub 2종: `cls_filter_by_class`, `cls_remove_images_without_label`
+**Classification 15종 (`cls_` prefix):**
+- ✅ 실구현 완료 10종: `cls_rename_head`, `cls_rename_class`, `cls_reorder_heads`, `cls_reorder_classes`, `cls_select_heads`, `cls_merge_datasets` (`accepts_multi_input=True`, §2-11), `cls_merge_classes` (head 내 class 병합), `cls_demote_head_to_single_label` (multi→single 강등), `cls_sample_n_images` (N장 랜덤 샘플), `cls_rotate_image` (90°/180°/270° 회전 + postfix rename, §6-1)
+- 🚧 stub 5종: `cls_filter_by_class`, `cls_remove_images_without_label`, `cls_crop_image` (이미지 상하좌우 Crop), `cls_add_head` (신규 head 추가), `cls_set_head_labels_for_all_images` (head labels 일괄 설정)
 
 **multi→single 강등 노드**: `cls_demote_head_to_single_label` (실구현 완료, on_violation skip/fail).
 
@@ -372,7 +374,7 @@ per-class unknown 이 필수가 되는 시점(Step 4 auto-labeling)에 `labels` 
 
 ### 2-13. Classification filename-identity 전환 (확정 · 2026-04-20 · v7.5)
 
-핸드오프: `docs_for_claude/020-classification-filename-identity-handoff.md`.
+핸드오프: `docs_history/handoffs/020-classification-filename-identity-handoff.md` (→ 현행 `docs_for_claude/021-cls-rotate-and-new-stubs-handoff.md` §1-3 에서 이미지 변형 postfix rename 규약으로 이어짐).
 
 **배경.** v7.4 까지 classification 은 이미지 identity 를 SHA-1 content hash 로 관리했다. 이 설계는 "파일명이 다르지만 내용이 같은 경우를 자동 dedup 한다" 는 편의가 있었으나, 실운영에서 다음 문제를 낳았다.
 
@@ -458,48 +460,84 @@ per-class unknown 이 필수가 되는 시점(Step 4 auto-labeling)에 `labels` 
    - 파이프라인 실행 시 null labels 버그 수정 (`pipeline_tasks.py` class_info 생성)
 8. ~~`cls_demote_head_to_single_label` 신설~~ ✅ **완료 (2026-04-17)** — multi→single 강등, on_violation skip/fail, 17건 테스트
 9. ~~`cls_sample_n_images` 실구현~~ ✅ **완료 (2026-04-17)** — det_sample_n_images 동일 로직, 12건 테스트
-10. **잔여 Classification operator 실구현 (stub 2종)**
-    - `cls_filter_by_class` — 특정 class 포함/미포함 이미지 필터
+10. ~~`cls_rotate_image` 실구현~~ ✅ **완료 (2026-04-20)** — 90°/180°/270° 회전, postfix rename (`_rotated_{degrees}`), src 복원 메타데이터 `record.extra.source_storage_uri / original_file_name`, 25건 테스트. §6-1 의 이미지 변형 공통 규약을 확립한 기준 구현.
+11. **이미지 변형 / Head 조작 신규 노드 4종 — stub + seed + 팔레트 노출 완료, 실구현 대기** (핸드오프 021 §1-2)
+    - `cls_crop_image` (AUGMENT) — 상하좌우 Crop 비율. `top_pct / bottom_pct / left_pct / right_pct`. postfix rename 필수 (§6-1)
+    - `cls_add_head` (CLS_HEAD_CTRL) — 신규 head 를 head_schema 말단에 추가, 기존 이미지 labels=null
+    - `cls_set_head_labels_for_all_images` (CLS_HEAD_CTRL) — head labels 일괄 덮어쓰기 (`set_null` / `set_classes`)
+    - ⚠️ Jpeg Quality 조정은 이번 세트에서 제외
+12. **잔여 Classification 필터 stub 2종**
+    - `cls_filter_by_class` — 특정 class 포함/미포함 이미지 필터 (annotation 기반 필터, Phase B 건드리지 않음)
     - `cls_remove_images_without_label` — unknown(`null`) 이미지 제거
-11. **Classification 이미지 변형 노드 (신규)**
-    - `cls_crop_image` — 이미지 상하 Crop (상단 N%, 하단 M% 잘라 저장). SHA 재계산 + file_name 갱신 필요
-    - `cls_rotate_image` — 이미지 회전. det_rotate_image 와 동일 로직, classification 자료구조 대응
-    - ⚠️ Jpeg Quality 조정은 포함하지 않음
-    - ⚠️ 이미지 변형 시 SHA 변경 문제 — §6-1 방법론 참조
-12. **Classification Annotation 기반 이미지 필터 (신규)**
-    - 특정 head 의 특정 class 값 조건으로 이미지 필터링 (예: `visible` head 에서 `0_seen` 인 이미지만 유지)
-    - `cls_filter_by_class` 의 확장 또는 별도 노드로 구현
-13. **Classification Head 추가 노드 (신규)**
-    - `cls_add_head` — 기존 데이터셋에 새 head 를 추가. 추가할 head 이름, 가능한 class candidate 목록을 params 로 수신
-    - 기존 이미지의 신규 head labels 는 `null` (unknown, §2-12)
-14. **Classification Annotation 일괄 변경 노드 (신규)**
-    - 특정 head 의 labels 를 일괄적으로 특정 값으로 설정 (예: `visible` head 를 전부 `null`(unknown) 으로 설정)
-    - head 전체 unknown 화, 특정 class 로 일괄 설정 등
-15. **Automation 실구현** — 정책 확정 대기 (lineage 조정 + minor 버전 증가 규약)
-16. **미구현 Detection manipulator 2종** — `det_change_compression` / `det_shuffle_image_ids`
-17. **버전 정책 운영 검증** — automation과 함께
-18. **Phase 3** — TrainingExecutor/GPUResourceManager 인터페이스, 알림 골격, GNB/Manipulator/시스템 상태 페이지, 전체 UX 정리
-19. **Step 2** 진입 — DockerTrainingExecutor, nvidia-smi 기반 GPUResourceManager, MLflow, Prometheus+DCGM, SMTP 알림
+13. **Automation 실구현** — 정책 확정 대기 (lineage 조정 + minor 버전 증가 규약)
+14. **미구현 Detection manipulator 2종** — `det_change_compression` / `det_shuffle_image_ids`
+15. **버전 정책 운영 검증** — automation과 함께
+16. **Phase 3** — TrainingExecutor/GPUResourceManager 인터페이스, 알림 골격, GNB/Manipulator/시스템 상태 페이지, 전체 UX 정리
+17. **Step 2** 진입 — DockerTrainingExecutor, nvidia-smi 기반 GPUResourceManager, MLflow, Prometheus+DCGM, SMTP 알림
     - ⚠️ multi-label head 학습 시 unknown 을 loss mask 로 배제: §2-12 `null` 규약으로 head-level 가능. per-class 필요 시 옵션 A/B 확장
-20. **Step 3 이후** — S3StorageClient, KubernetesTrainingExecutor, Helm, Argo/Kubeflow, Volcano, KEDA, MinIO
-21. **Step 4** — Label Studio, Synthetic Data, Auto Labeling, Offline Testing, Auto Deploy, 데이터 자동 수집
+    - ⚠️ head 별 `loss_per_head: dict[str, Literal["softmax", "bce", "bce_ovr"]]` 실장 (§6-2 결정)
+18. **Step 3 이후** — S3StorageClient, KubernetesTrainingExecutor, Helm, Argo/Kubeflow, Volcano, KEDA, MinIO
+19. **Step 4** — Label Studio, Synthetic Data, Auto Labeling, Offline Testing, Auto Deploy, 데이터 자동 수집
     - ⚠️ auto-labeling 의 per-class unknown 시나리오는 현 head-level `null` 로 부분 해결 (head 전체 승격). 완전 해결은 옵션 A/B 확장 필요
-22. **Step 5** — Generative Model MLOps
+20. **Step 5** — Generative Model MLOps
 
 ---
 
-## 6. 방법론 메모 (미해결)
+## 6. 방법론 메모
 
-### 6-1. Classification 이미지 변형 시 SHA 문제
+### 6-1. Classification 이미지 변형 시 파일명 rename 규약 (확정 · 2026-04-20 · v7.5)
 
-이미지 회전, crop 등 바이너리 변형이 일어나면 SHA-1 이 변경된다.
+v7.5 filename-identity 전환 (§2-13) 으로 이미지 identity 는 **filename** 으로 고정됐다. 이 규약 하에서
+이미지 회전·crop·압축 변경 등 **바이너리를 변형하는 모든 classification manipulator** 가 따라야 할
+공통 계약을 `cls_rotate_image` 실구현으로 확립했다 (핸드오프 021 §1-3). 이후 추가되는 이미지 변형
+노드는 전부 이 규약을 따른다.
 
-**문제 1 — 사전 SHA 계산**: `imsave` 전에 SHA 를 먼저 알아야 manifest.jsonl 작성이 가능. 현재 detection 경로는 file_name 기반이라 SHA 불요하지만, classification 은 `images/{sha}.{ext}` 규약이므로 Phase A(annotation) 에서 SHA 를 결정해야 한다. 가능한 접근:
-  - (a) Phase A 에서 in-memory 변환 후 SHA 계산 → manifest 작성 → Phase B 에서 동일 변환 재실행 + 파일 저장. 변환이 결정론적이면 SHA 일치 보장. CPU 비용 2배.
-  - (b) Phase A 에서 placeholder SHA 사용 → Phase B 에서 실제 변환 + SHA 계산 → manifest 사후 패치. IO 2회 발생.
-  - (c) Phase A/B 통합 — 이미지 변형 manipulator 는 Phase A 에서 바로 파일까지 생성. 현재 아키텍처 변경 필요.
+**1. Phase A (`transform_annotation`) 에서 반드시 해야 하는 3가지.**
 
-**문제 2 — split 후 merge 시 중복**: 한 이미지를 두 갈래로 분기(예: split → 각각 다른 변형 → merge)하면 동일 원본에서 파생된 서로 다른 변형 이미지가 생성된다. SHA 가 다르므로 dedup 되지 않고 양쪽 모두 저장됨. 이는 의도된 동작일 수 있으나 (변형이 다르므로 다른 이미지), 동일 변형이 적용된 경우에는 불필요한 중복 → SHA dedup 으로 자연 해결.
+- **파일명에 postfix 삽입.** 확장자 앞에 변형 종류를 식별하는 고정 문자열을 붙인다 — 경로 prefix 는
+  유지하고 `os.path.splitext` 로 base/ext 를 분리해 `{base}{postfix}{ext}` 로 재조립. 예:
+  - `cls_rotate_image`: `_rotated_{degrees}` → `images/truck_001.jpg` → `images/truck_001_rotated_180.jpg`
+  - `cls_crop_image` (예정): `_cropped_{t}_{b}_{l}_{r}` 등 params 를 식별할 수 있는 형태
+  - 같은 manipulator 를 같은 params 로 두 번 태우면 같은 파일명이 다시 나온다 (멱등). 이는 v7.5 의
+    "같은 파일명 = 같은 내용" 불변식을 만족하는 의도된 동작.
+- **src 복원 메타데이터를 `record.extra` 에 기록 (최초 1회만).**
+  - `record.extra["source_storage_uri"]` = 입력 `DatasetMeta.storage_uri`
+  - `record.extra["original_file_name"]` = rename 이전 파일명
+  - **이미 값이 있으면 덮어쓰지 않는다** — `cls_merge_datasets` 가 prefix rename 과 함께 먼저
+    채워뒀을 수 있고, 그 값이 진짜 원본 src 를 가리킨다. 덮어쓰면 추적 체인이 끊어져 Phase B 가
+    src 를 찾을 수 없다.
+- **`record.extra["image_manipulation_specs"]` 에 append.** 기존 배열이 있으면 그 뒤로 쌓는다.
+  순서 = Phase B `ImageMaterializer` 적용 순서. operation 값은 prefix 없이 (`rotate_image`,
+  `crop_image`) — detection / classification 이 동일 operation 을 공유한다 (§2-4).
+
+**2. Phase B (`build_image_manipulation`) — ImageManipulationSpec 반환.**
+
+`ImageMaterializer` 가 `source_storage_uri + original_file_name` 으로 src 를 읽어서 specs 순서대로
+적용 후 `output_storage_uri + record.file_name` (postfix 가 붙은 새 이름) 으로 저장. rotate/crop/
+compression 등 operation 별 적용 함수는 `lib/pipeline/image_materializer.py` 에 집약되어 있고,
+기존 detection 경로에서 쓰던 구현을 그대로 쓴다 — manipulator 를 추가해도 materializer 코드는 보통
+건드릴 필요 없다 (신규 operation 을 들일 때만 `_apply_*` 추가).
+
+**3. 추가 강제 조건.**
+
+- **head_schema / labels 는 건드리지 않는다** — classification 이미지 변형은 annotation 과 독립.
+  label 을 바꾸는 동작이 필요하면 별도 annotation manipulator 를 쓴다.
+- **list 입력 거부.** 이미지 변형 manipulator 는 단건 `DatasetMeta` 만 받는다. merge 와 의도를
+  혼동하지 않기 위해 `isinstance(input_meta, list)` 일 때 `TypeError`.
+- **deep copy 로 입력 격리.** `copy.deepcopy(input_meta)` 로 시작해 호출자의 원본을 보존.
+- **90°/270° 회전 등 차원이 바뀌는 경우** `record.width ↔ record.height` 까지 직접 갱신. width/
+  height 가 `None` 이면 swap 을 건너뛴다.
+
+**왜 이렇게 설계했나.**
+
+v7.4 까지 논의되던 "SHA 재계산 타이밍" 문제 (a/b/c 안) 는 §2-13 filename-identity 전환으로 원천
+소멸했다 — SHA 자체를 보지 않으므로, 변형 결과의 hash 를 미리 알 필요가 없다. 대신 "내용이 바뀌면
+파일명을 반드시 바꿔야 한다" 는 책임이 각 변형 manipulator 로 옮겨왔고, 그 책임을 유일한 장소
+(`record.file_name` + `record.extra`) 에서 지역적으로 해결하도록 했다.
+
+참조 구현: `backend/lib/manipulators/cls_rotate_image.py`, 테스트:
+`backend/tests/test_cls_rotate_image.py` (25 케이스 — 각도별 동작, dim swap, labels 보존, specs
+append, extra 최초/보존 분기, list 입력 거부, deep copy 격리).
 
 ### 6-2. Binary label type (결정 완료 · 2026-04-20 · v7.5)
 
@@ -550,9 +588,9 @@ per-class unknown 이 필수가 되는 시점(Step 4 auto-labeling)에 `labels` 
 | `lib/pipeline/models.py` | DatasetMeta / Annotation / ImageRecord / ImagePlan |
 | `lib/pipeline/io/` | COCO / YOLO 파서·라이터 |
 | `lib/manipulators/__init__.py` | `MANIPULATOR_REGISTRY` — pkgutil 자동 발견 |
-| `lib/manipulators/*.py` | 23종 UnitManipulator 구현 (det 12 실구현 + cls 9 실구현 + cls 2 stub) |
-| `lib/classification/ingest.py` | Classification ingest — SHA-1 dedup + manifest.jsonl + head_schema.json + occurrence/intra-class dup 수집 |
-| `lib/classification/__init__.py` | `ingest_classification` / `ClassificationHeadInput` / `DuplicateConflict` / `IntraClassDuplicate` 등 export |
+| `lib/manipulators/*.py` | 27종 UnitManipulator 구현 (det 12 실구현 + cls 10 실구현 + cls 5 stub) |
+| `lib/classification/ingest.py` | Classification ingest — filename 기반 identity + manifest.jsonl + head_schema.json + `FilenameCollision` 수집 (single-label head 내 파일명 충돌 skip) |
+| `lib/classification/__init__.py` | `ingest_classification` / `ClassificationHeadInput` / `FilenameCollision` 등 export |
 
 ### 6-2. app/ (FastAPI + DB + Celery)
 
