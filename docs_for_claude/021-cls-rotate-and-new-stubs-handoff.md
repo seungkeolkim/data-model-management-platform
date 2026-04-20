@@ -11,7 +11,8 @@
 > - `916964f` feat(manipulator): cls_add_head 실구현 + DynamicParamForm checkbox/text 타입 추가 + Alembic 024 + 29건 테스트
 > - `56f784c` fix(pipeline-validator): cls_add_head head_name 체인 내 중복 검출 + 4건 테스트
 > - `54fb15c` feat(manipulator): cls_set_head_labels_for_all_images 실구현 + Alembic 025 + 33건 테스트
-> - (미커밋) fix(pipeline-service): cls_set_head_labels_for_all_images 정적 DB-aware 검증 + 12건 테스트 (pipeline id `a6e6b2a2-d0cd-4cf9-8ce9-b0f6b263829c` 재현 버그)
+> - `56bcd5a` fix(pipeline-service): cls_set_head_labels_for_all_images 정적 DB-aware 검증 + 12건 테스트 (pipeline id `a6e6b2a2-d0cd-4cf9-8ce9-b0f6b263829c` 재현 버그)
+> - (미커밋) feat(manipulator): cls_crop_image 실구현 — direction(상단/하단) + crop_pct(1~99) 2-필드 UX, postfix `_crop_up/down_{pct:03d}` + Alembic 026 + 45건 테스트
 
 020 의 filename-identity 전환(§2-13)이 끝난 상태에서, 고정 rename 규약 덕분에 이미지 변형 manipulator 도
 detection 과 동일한 "변형 시 파일명에 postfix 를 붙여 새 이미지로 만든다" 규약으로 구현할 수 있게 됐다.
@@ -333,27 +334,69 @@ head_schema 를 `build_stub_source_meta` + `preview_head_schema_at_task` 로 시
 
 `uv run pytest backend/tests -q` → **345 / 345** (이전 333 + 이번 12).
 
+### 1-8. `cls_crop_image` 실구현 — 수직축(상단/하단) 단일 crop + postfix 규약
+
+**목표.** 최초 `023` seed 는 상하좌우 4방향 각각의 비율을 받는 4-필드 구조였으나, 실제 사용 흐름은
+"한 번에 위/아래 중 한 영역만 잘라내기" 로 확인됨. UI/UX 단순화를 위해 2-필드 구조로 재정의:
+
+- `direction`: select("상단" | "하단"), default "상단".
+- `crop_pct`:  number(1~99, step=1), default 30. Ant Design `InputNumber` 의 ▲▼ 버튼으로 조정.
+
+**파일명 postfix.** `_crop_{direction_code}_{crop_pct:03d}` — direction 은 내부적으로 Korean → English
+(`상단→up`, `하단→down`) 로 정규화해 ASCII 만 사용. `crop_pct` 는 항상 3자리 zero-pad:
+
+```
+images/truck_001.jpg → images/truck_001_crop_up_030.jpg   (상단 30%)
+images/truck_001.jpg → images/truck_001_crop_down_099.jpg (하단 99%)
+```
+
+**데이터 흐름.**
+- `transform_annotation` — `record.height *= (100 - crop_pct) / 100` (정수 내림, 최소 1), `width` 유지.
+- `source_storage_uri` / `original_file_name` 을 최초 1회만 기록 (rotate 와 동일 규약).
+- `extra.image_manipulation_specs` 에 `{"operation": "crop_image_vertical", "params": {"direction":
+  "up"|"down", "crop_pct": N}}` 누적.
+- Phase B `ImageMaterializer._apply_crop_vertical` — `img.crop((0, cut_rows, w, h))` 또는
+  `(0, 0, w, h - cut_rows)`. `cut_rows = int(h * crop_pct / 100)`, 최소 1 픽셀 보장.
+
+**검증 규칙 (ValueError 차단).**
+- `direction` 은 `"상단" | "하단" | "up" | "down"` 중 하나 (공백 trim 허용, 그 외 전부 차단).
+- `crop_pct` 는 int-like 이며 [1, 99] 범위. 소수(`30.5`), bool, 범위 밖 정수 전부 차단.
+
+**반영된 파일.**
+- `backend/lib/manipulators/cls_crop_image.py` — stub → 전체 구현. `_parse_direction` / `_parse_crop_pct`
+  / `_append_postfix_to_filename` 모듈 레벨 helper.
+- `backend/lib/pipeline/image_materializer.py` — `_apply_image_operation` 분기에 `crop_image_vertical`
+  추가 + `_apply_crop_vertical` 신설.
+- `backend/migrations/versions/026_cls_crop_image_params.py` — params_schema 4→2 필드, description 갱신.
+  downgrade 는 023 원형으로 복구.
+- `frontend/src/pipeline-sdk/definitions/operatorDefinition.tsx` — `UNIMPLEMENTED_OPERATORS` 에서
+  `'cls_crop_image'` 제거.
+- `backend/tests/test_cls_crop_image.py` — 45건 신규. 방향별 동작 / spec 누적 / extra 보존 / 검증 에러
+  (list input / invalid direction / invalid crop_pct) / helper 단위 / 파싱 파라미터라이즈 포함.
+
+**Phase B operation 네이밍.** `crop_image_vertical` 로 직접 명시. 향후 horizontal crop 을 별도
+operation 으로 추가할 여지를 남김 — §2-4 의 "det/cls 동일 operation 공유" 원칙과 호환.
+
 ---
 
 ## 2. Registry 상태 (27종)
 
 - Detection: **12 실구현**
-- Classification: **12 실구현 + 3 stub**
-  - 실구현 (12): `cls_rename_head`, `cls_rename_class`, `cls_reorder_heads`, `cls_reorder_classes`, `cls_select_heads`, `cls_merge_datasets`, `cls_merge_classes`, `cls_demote_head_to_single_label`, `cls_sample_n_images`, `cls_rotate_image`, `cls_add_head`, **`cls_set_head_labels_for_all_images` (신규)**
-  - stub (3): `cls_filter_by_class`, `cls_remove_images_without_label`, `cls_crop_image`
+- Classification: **13 실구현 + 2 stub**
+  - 실구현 (13): `cls_rename_head`, `cls_rename_class`, `cls_reorder_heads`, `cls_reorder_classes`, `cls_select_heads`, `cls_merge_datasets`, `cls_merge_classes`, `cls_demote_head_to_single_label`, `cls_sample_n_images`, `cls_rotate_image`, `cls_add_head`, `cls_set_head_labels_for_all_images`, **`cls_crop_image` (신규 — 수직축 단일 crop 으로 scope 축소)**
+  - stub (2): `cls_filter_by_class`, `cls_remove_images_without_label`
 
 ---
 
 ## 3. 다음 작업 체크리스트 (우선순위)
 
-1. **`cls_crop_image` 실구현** — 규약 1-3-2 를 그대로 따른다. postfix 는 `_cropped_{t}_{b}_{l}_{r}`,
-   90°/270° 의 dim swap 대신 `width *= (1 - (left+right)/100)`, `height *= (1 - (top+bottom)/100)` 의
-   정수 반올림. Phase B 쪽 `_apply_crop` 이 이미 있는지 먼저 확인 필요 (없으면 추가).
-2. **`cls_filter_by_class` / `cls_remove_images_without_label`** — annotation 기반 필터 2종.
+1. **`cls_filter_by_class` / `cls_remove_images_without_label`** — annotation 기반 필터 2종.
    이미지 변형과 달리 Phase B 는 건드리지 않는다 (record 제거만).
-3. **Automation 실구현** (lineage + minor 버전 증가 규약)
-4. **Detection 미구현 2종** — `det_change_compression`, `det_shuffle_image_ids` (long-tail).
-5. **Step 2 진입 시 `loss_per_head` 스키마 실장** — §6-2 결정 반영.
+2. **Automation 실구현** (lineage + minor 버전 증가 규약)
+3. **Detection 미구현 2종** — `det_change_compression`, `det_shuffle_image_ids` (long-tail).
+4. **Step 2 진입 시 `loss_per_head` 스키마 실장** — §6-2 결정 반영.
+5. **(future) horizontal crop 필요 시** — `cls_crop_image` 를 확장할지 별도 `cls_crop_image_horizontal`
+   로 분리할지 결정. 현재는 수직축만.
 
 ---
 

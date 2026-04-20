@@ -57,7 +57,6 @@ const UNIMPLEMENTED_OPERATORS = [
   // classification (stub 상태 — NotImplementedError 던짐)
   'cls_filter_by_class',
   'cls_remove_images_without_label',
-  'cls_crop_image',
 ]
 
 /** description("버튼 텍스트 (도움말)") 패턴에서 앞부분만 추출 */
