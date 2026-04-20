@@ -12,7 +12,7 @@
 > - `56f784c` fix(pipeline-validator): cls_add_head head_name 체인 내 중복 검출 + 4건 테스트
 > - `54fb15c` feat(manipulator): cls_set_head_labels_for_all_images 실구현 + Alembic 025 + 33건 테스트
 > - `56bcd5a` fix(pipeline-service): cls_set_head_labels_for_all_images 정적 DB-aware 검증 + 12건 테스트 (pipeline id `a6e6b2a2-d0cd-4cf9-8ce9-b0f6b263829c` 재현 버그)
-> - (미커밋) feat(manipulator): cls_crop_image 실구현 — direction(상단/하단) + crop_pct(1~99) 2-필드 UX, postfix `_crop_up/down_{pct:03d}` + Alembic 026 + 45건 테스트
+> - `9e33476` feat(manipulator): cls_crop_image 실구현 — direction(상단/하단) + crop_pct(1~99) 2-필드 UX, postfix `_crop_up/down_{pct:03d}` + Alembic 026 + 45건 테스트
 
 020 의 filename-identity 전환(§2-13)이 끝난 상태에서, 고정 rename 규약 덕분에 이미지 변형 manipulator 도
 detection 과 동일한 "변형 시 파일명에 postfix 를 붙여 새 이미지로 만든다" 규약으로 구현할 수 있게 됐다.
