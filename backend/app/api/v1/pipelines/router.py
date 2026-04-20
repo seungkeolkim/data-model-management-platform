@@ -18,6 +18,8 @@ from app.schemas.pipeline import (
     PipelineSubmitResponse,
     PipelineValidationIssueResponse,
     PipelineValidationResponse,
+    SchemaPreviewRequest,
+    SchemaPreviewResponse,
 )
 from app.services.pipeline_service import PipelineService
 
@@ -99,6 +101,27 @@ async def validate_pipeline(
             for issue in validation_result.issues
         ],
     )
+
+
+@router.post("/preview-schema", response_model=SchemaPreviewResponse)
+async def preview_schema(
+    payload: SchemaPreviewRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    DAG 의 특정 노드 시점에서 head_schema 가 어떻게 변할지 계산한다.
+
+    실제 이미지 실체화 없이 transform_annotation 만 호출하므로 수 ms 수준.
+    Classification 파이프라인에서 속성 패널의 schema 프리뷰를 그리기 위해 사용한다.
+    Detection 파이프라인(소스에 head_schema 가 없음)은 task_kind='detection' 으로
+    반환되며 head_schema 는 None.
+    """
+    service = PipelineService(db)
+    preview_dict = await service.preview_head_schema(
+        config=payload.config,
+        target_ref=payload.target_ref,
+    )
+    return SchemaPreviewResponse(**preview_dict)
 
 
 @router.post("/execute", response_model=PipelineSubmitResponse, status_code=202)

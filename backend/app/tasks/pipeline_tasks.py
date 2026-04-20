@@ -219,6 +219,8 @@ def _execute_pipeline(
             }
             for record in result.output_meta.image_records:
                 for head_name, class_names in (record.labels or {}).items():
+                    if class_names is None:
+                        continue  # null = unknown (§2-12) — 카운트 대상 아님
                     head_bucket = per_head_class_counts.get(head_name)
                     if head_bucket is None:
                         continue

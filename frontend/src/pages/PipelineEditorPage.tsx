@@ -31,6 +31,7 @@ import { usePipelineEditorStore } from '@/stores/pipelineEditorStore'
 import {
   validateGraphStructure,
   graphToPipelineConfig,
+  graphToPartialPipelineConfig,
   pipelineConfigToGraph,
   extractSourceDatasetIdsFromConfig,
   buildNodeTypesFromRegistry,
@@ -38,6 +39,7 @@ import {
 import type { DatasetDisplayInfo } from '@/pipeline-sdk'
 import { pipelinesApi, manipulatorsApi } from '@/api/pipeline'
 import { datasetsApi, datasetGroupsApi } from '@/api/dataset'
+import { MERGE_OPERATORS } from '@/pipeline-sdk/definitions/mergeDefinition'
 import type {
   PipelineConfig,
   PipelineNodeData,
@@ -145,11 +147,11 @@ function PipelineEditorContent() {
     [setNodes, setNodeData, setSelectedNode],
   )
 
-  // JSON 프리뷰 업데이트
+  // JSON 프리뷰 업데이트 — Save 없이도 DataLoad 기반 partial config 표시
   useMemo(() => {
     if (!isJsonPreviewOpen) return
     try {
-      const config = graphToPipelineConfig(nodes, edges, nodeDataMap)
+      const config = graphToPartialPipelineConfig(nodes, edges, nodeDataMap)
       setJsonPreviewContent(JSON.stringify(config, null, 2))
       setJsonPreviewError(null)
     } catch (err) {
@@ -268,7 +270,7 @@ function PipelineEditorContent() {
       // 사용자에게 경고만 표시.
       const unknownOperators: string[] = []
       for (const task of Object.values(config.tasks)) {
-        if (task.operator !== 'det_merge_datasets' && !manipulatorMap[task.operator]) {
+        if (!MERGE_OPERATORS.has(task.operator) && !manipulatorMap[task.operator]) {
           unknownOperators.push(task.operator)
         }
       }

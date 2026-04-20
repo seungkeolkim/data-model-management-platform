@@ -8,6 +8,7 @@ import { Typography, Divider, Tag, Empty } from 'antd'
 import { usePipelineEditorStore } from '@/stores/pipelineEditorStore'
 import { getNodeDefinition } from '@/pipeline-sdk'
 import type { NodeKind } from '@/pipeline-sdk'
+import SchemaPreviewSection from './SchemaPreviewSection'
 
 const { Text, Title } = Typography
 
@@ -60,6 +61,8 @@ export default function PropertiesPanel() {
           이 노드는 추가 설정이 없습니다.
         </Text>
       )}
+
+      <SchemaPreviewSection selectedNodeId={selectedNodeId} nodeData={nodeData} />
 
       {/* 검증 이슈 요약 */}
       {(nodeData.validationIssues ?? []).length > 0 && (

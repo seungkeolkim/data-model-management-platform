@@ -46,7 +46,6 @@ import type {
   AnnotationFormat,
   FormatValidateResponse,
   ClassificationScanResponse,
-  DuplicateImagePolicy,
   DatasetRegisterClassificationRequest,
   ClassificationHeadWarning,
 } from '../../types/dataset'
@@ -220,10 +219,6 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
   const [classificationRootBrowserOpen, setClassificationRootBrowserOpen] = useState(false)
   // 사용자 편집용 상태 — 스캔 완료 시 이 상태로 초기화되고, 등록 payload의 기초가 된다.
   const [editorHeads, setEditorHeads] = useState<ClassificationEditHead[]>([])
-  // Classification 전용: 동일 이미지가 여러 class 폴더에 존재할 때의 처리 정책
-  //  - FAIL : 즉시 등록 중단 (기본값, 사람이 원본 폴더 정리 필요)
-  //  - SKIP : 충돌 이미지는 등록에서 제외하고 진행
-  const [duplicatePolicy, setDuplicatePolicy] = useState<DuplicateImagePolicy>('FAIL')
 
   // 파일 브라우저 열림 상태
   const [imageBrowserOpen, setImageBrowserOpen] = useState(false)
@@ -403,7 +398,6 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
         split: values.split,
         source_root_dir: classificationRootDir,
         heads,
-        duplicate_image_policy: duplicatePolicy,
       }
 
       // 복사 대상 경로 (안내 메시지용) — detection 등록과 동일한 형식.
@@ -589,7 +583,6 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
     setClassificationScanError(null)
     setClassificationScanLoading(false)
     setEditorHeads([])
-    setDuplicatePolicy('FAIL')
     setSelectedGroupOption(NEW_GROUP_SENTINEL)
     setFormatValidationResult(null)
     setNextVersion('1.0')
@@ -1555,35 +1548,6 @@ export default function DatasetRegisterModal({ open, onClose, onSuccess, existin
 
               {isClassification && (
                 <>
-                  <Form.Item
-                    label={
-                      <Space>
-                        <Text strong>이미지 중복 처리</Text>
-                        <Text type="secondary" style={{ fontSize: 12 }}>
-                          동일 이미지가 여러 class 폴더에 존재할 때의 동작
-                        </Text>
-                      </Space>
-                    }
-                  >
-                    <Radio.Group
-                      value={duplicatePolicy}
-                      onChange={(e) => setDuplicatePolicy(e.target.value as DuplicateImagePolicy)}
-                    >
-                      <Radio value="FAIL">
-                        <Text strong>등록 중단</Text>
-                        <Text type="secondary" style={{ fontSize: 11, marginLeft: 4 }}>
-                          (기본 · 원본 폴더를 정리한 뒤 다시 등록)
-                        </Text>
-                      </Radio>
-                      <Radio value="SKIP">
-                        <Text strong>해당 이미지 스킵</Text>
-                        <Text type="secondary" style={{ fontSize: 11, marginLeft: 4 }}>
-                          (중복 이미지는 등록에서 제외)
-                        </Text>
-                      </Radio>
-                    </Radio.Group>
-                  </Form.Item>
-
                   {hasSubdirsDetected && (
                     <Alert
                       type="error"

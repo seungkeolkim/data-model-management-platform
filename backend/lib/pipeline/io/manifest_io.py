@@ -2,16 +2,15 @@
 CLS_MANIFEST 포맷 파서 및 라이터.
 
 디스크 레이아웃 (dataset storage_uri 하위):
-    images/{sha}.{ext}        # 이미지 풀. SHA-1 hex 기반 파일명.
+    images/{filename}         # 이미지 풀. 이미지 identity = filename.
     manifest.jsonl            # 이미지 1장당 1줄. 메타/라벨 기록.
     head_schema.json          # head 정의 (SSOT — classes 순서가 output index 와 일치)
 
-manifest.jsonl 1줄 스키마:
+manifest.jsonl 1줄 스키마 (§2-12 확정: null=unknown, []=explicit empty):
     {
-      "sha": "ab12...",
-      "filename": "images/ab12....jpg",
+      "filename": "images/img_0001.jpg",
       "original_filename": "img_0001.jpg",
-      "labels": {"hardhat_wear": ["helmet"], "visibility": ["seen"]}
+      "labels": {"hardhat_wear": ["helmet"], "visibility": null}
     }
 
 head_schema.json 스키마 (SSOT — objective_n_plan_7th.md):
@@ -27,6 +26,7 @@ head_schema.json 스키마 (SSOT — objective_n_plan_7th.md):
   - 이미지 바이너리는 건드리지 않는다 (실체화는 ImageMaterializer 담당).
   - 파서는 manifest.jsonl 라인 순서를 보존해 image_records 에 담는다.
   - 라이터는 DatasetMeta.image_records 순서대로 manifest.jsonl 을 작성한다.
+  - 이미지 identity 는 filename (과거 SHA 기반 content identity 는 폐지됨).
 """
 from __future__ import annotations
 
@@ -98,51 +98,46 @@ def parse_manifest_dir(
 
     # manifest.jsonl 라인별 파싱
     image_records: list[ImageRecord] = []
-    with open(manifest_path, "r", encoding="utf-8") as manifest_file:
-        for line_number, raw_line in enumerate(manifest_file, start=1):
-            stripped_line = raw_line.strip()
-            if not stripped_line:
-                continue
-            try:
-                line_data = json.loads(stripped_line)
-            except json.JSONDecodeError as json_error:
-                raise ValueError(
-                    f"manifest.jsonl {line_number}행 JSON 파싱 실패: {json_error}"
-                ) from json_error
+    for line_number, raw_line in _iter_manifest_lines(manifest_path):
+        try:
+            line_data = json.loads(raw_line)
+        except json.JSONDecodeError as json_error:
+            raise ValueError(
+                f"manifest.jsonl {line_number}행 JSON 파싱 실패: {json_error}"
+            ) from json_error
 
-            sha_value = line_data.get("sha")
-            filename_value = line_data.get("filename")
-            if not sha_value or not filename_value:
-                raise ValueError(
-                    f"manifest.jsonl {line_number}행에 sha/filename 필드가 없습니다: {line_data}"
-                )
-
-            labels_value = line_data.get("labels", {}) or {}
-            if not isinstance(labels_value, dict):
-                raise ValueError(
-                    f"manifest.jsonl {line_number}행 labels 는 dict 여야 합니다: {labels_value!r}"
-                )
-            # single-label head 도 list 로 통일해 내부 표현을 단일화한다.
-            normalized_labels: dict[str, list[str]] = {}
-            for head_name, label_value in labels_value.items():
-                if isinstance(label_value, list):
-                    normalized_labels[head_name] = [str(item) for item in label_value]
-                elif label_value is None:
-                    normalized_labels[head_name] = []
-                else:
-                    normalized_labels[head_name] = [str(label_value)]
-
-            image_records.append(
-                ImageRecord(
-                    image_id=sha_value,
-                    file_name=filename_value,
-                    sha=sha_value,
-                    labels=normalized_labels,
-                    extra={
-                        "original_filename": line_data.get("original_filename"),
-                    },
-                )
+        filename_value = line_data.get("filename")
+        if not filename_value:
+            raise ValueError(
+                f"manifest.jsonl {line_number}행에 filename 필드가 없습니다: {line_data}"
             )
+
+        labels_value = line_data.get("labels", {}) or {}
+        if not isinstance(labels_value, dict):
+            raise ValueError(
+                f"manifest.jsonl {line_number}행 labels 는 dict 여야 합니다: {labels_value!r}"
+            )
+        # null=unknown(None), []=explicit empty, [class,...]=known labels. §2-12 확정 규약.
+        normalized_labels: dict[str, list[str] | None] = {}
+        for head_name, label_value in labels_value.items():
+            if label_value is None:
+                normalized_labels[head_name] = None
+            elif isinstance(label_value, list):
+                normalized_labels[head_name] = [str(item) for item in label_value]
+            else:
+                normalized_labels[head_name] = [str(label_value)]
+
+        # image_id 는 filename 자체를 사용 (파이프라인 내부에서 이미지 식별자 역할).
+        image_records.append(
+            ImageRecord(
+                image_id=filename_value,
+                file_name=filename_value,
+                labels=normalized_labels,
+                extra={
+                    "original_filename": line_data.get("original_filename"),
+                },
+            )
+        )
 
     return DatasetMeta(
         dataset_id=dataset_id,
@@ -151,6 +146,16 @@ def parse_manifest_dir(
         head_schema=head_schema,
         image_records=image_records,
     )
+
+
+def _iter_manifest_lines(manifest_path: Path):
+    """빈 줄을 건너뛰며 (line_number, stripped_line) 을 yield."""
+    with open(manifest_path, "r", encoding="utf-8") as manifest_file:
+        for line_number, raw_line in enumerate(manifest_file, start=1):
+            stripped_line = raw_line.strip()
+            if not stripped_line:
+                continue
+            yield line_number, stripped_line
 
 
 def write_manifest_dir(meta: DatasetMeta, dataset_root: Path) -> None:
@@ -188,20 +193,30 @@ def write_manifest_dir(meta: DatasetMeta, dataset_root: Path) -> None:
     with open(schema_path, "w", encoding="utf-8") as schema_file:
         json.dump(serialized_schema, schema_file, ensure_ascii=False, indent=2)
 
+    # single-label head 이름 집합 — writer assert 용.
+    single_label_head_names = {
+        head.name for head in meta.head_schema if not head.multi_label
+    }
+
     manifest_path = dataset_root / MANIFEST_FILENAME
     with open(manifest_path, "w", encoding="utf-8") as manifest_file:
         for record in meta.image_records:
-            # classification 모드에서 sha/labels 는 반드시 세팅되어 있어야 한다.
-            if record.sha is None:
-                raise ValueError(
-                    f"image_record.sha 가 None 입니다 (file_name={record.file_name}). "
-                    "classification manipulator 는 sha 를 유지해야 합니다."
-                )
+            record_labels = record.labels or {}
+
+            # §2-12 writer strict assert: single-label head 는 null 또는 [class 1개]만 허용.
+            for head_name in single_label_head_names:
+                label_value = record_labels.get(head_name)
+                if label_value is not None and len(label_value) != 1:
+                    raise ValueError(
+                        f"single-label head '{head_name}': labels 는 null(unknown) "
+                        f"또는 [class 1개] 여야 합니다, got {label_value!r} "
+                        f"(file_name={record.file_name})"
+                    )
+
             line_obj = {
-                "sha": record.sha,
                 "filename": record.file_name,
                 "original_filename": (record.extra or {}).get("original_filename"),
-                "labels": record.labels or {},
+                "labels": record_labels,
             }
             manifest_file.write(json.dumps(line_obj, ensure_ascii=False))
             manifest_file.write("\n")

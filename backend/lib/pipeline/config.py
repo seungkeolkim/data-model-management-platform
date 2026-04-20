@@ -233,6 +233,97 @@ class PipelineConfig(BaseModel):
         return terminal_tasks[0]
 
 
+class PartialPipelineConfig(BaseModel):
+    """
+    Save 노드 없이도 유효한 부분 파이프라인 설정.
+
+    JSON 프리뷰, schema 프리뷰 등 "실행 전 미리보기" 용도로 사용한다.
+    output / name 이 없어도 tasks + source 참조만 있으면 유효.
+    PipelineConfig 를 상속하지 않고 별도 정의하여 실행 경로와 격리한다.
+    """
+    name: str = Field(default="<draft>", description="출력 DatasetGroup 이름 (임시)")
+    description: str | None = None
+    output: OutputConfig | None = Field(
+        default=None,
+        description="출력 설정. Save 노드가 없으면 null.",
+    )
+    tasks: dict[str, TaskConfig] = Field(default_factory=dict)
+    passthrough_source_dataset_id: str | None = None
+    schema_version: int | None = None
+
+    @model_validator(mode="after")
+    def _validate_task_references(self) -> PartialPipelineConfig:
+        """모든 태스크의 inputs 가 유효한 참조인지 검증."""
+        task_names = set(self.tasks.keys())
+        for task_name, task_config in self.tasks.items():
+            for ref in task_config.get_dependency_task_names():
+                if ref not in task_names:
+                    raise ValueError(
+                        f"태스크 '{task_name}'의 input '{ref}'가 "
+                        f"정의된 태스크 목록에 없습니다: {sorted(task_names)}"
+                    )
+            if task_name in task_config.get_dependency_task_names():
+                raise ValueError(
+                    f"태스크 '{task_name}'이 자기 자신을 input으로 참조합니다."
+                )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_no_cycle(self) -> PartialPipelineConfig:
+        """DAG 순환 참조 검증."""
+        in_degree: dict[str, int] = {name: 0 for name in self.tasks}
+        adjacency: dict[str, list[str]] = {name: [] for name in self.tasks}
+        for task_name, task_config in self.tasks.items():
+            for dep in task_config.get_dependency_task_names():
+                adjacency[dep].append(task_name)
+                in_degree[task_name] += 1
+        queue = [name for name, deg in in_degree.items() if deg == 0]
+        visited_count = 0
+        while queue:
+            current = queue.pop(0)
+            visited_count += 1
+            for neighbor in adjacency[current]:
+                in_degree[neighbor] -= 1
+                if in_degree[neighbor] == 0:
+                    queue.append(neighbor)
+        if visited_count != len(self.tasks):
+            raise ValueError("파이프라인 태스크에 순환 참조가 있습니다.")
+        return self
+
+    def topological_order(self) -> list[str]:
+        """태스크를 의존 관계 순서대로 정렬 (Kahn's algorithm)."""
+        in_degree: dict[str, int] = {name: 0 for name in self.tasks}
+        adjacency: dict[str, list[str]] = {name: [] for name in self.tasks}
+        for task_name, task_config in self.tasks.items():
+            for dep in task_config.get_dependency_task_names():
+                adjacency[dep].append(task_name)
+                in_degree[task_name] += 1
+        queue = sorted([name for name, deg in in_degree.items() if deg == 0])
+        order: list[str] = []
+        while queue:
+            current = queue.pop(0)
+            order.append(current)
+            for neighbor in sorted(adjacency[current]):
+                in_degree[neighbor] -= 1
+                if in_degree[neighbor] == 0:
+                    queue.append(neighbor)
+        return order
+
+    def get_all_source_dataset_ids(self) -> list[str]:
+        """파이프라인 전체에서 참조하는 모든 source dataset_id 를 중복 제거 반환."""
+        seen: set[str] = set()
+        result: list[str] = []
+        if self.passthrough_source_dataset_id:
+            seen.add(self.passthrough_source_dataset_id)
+            result.append(self.passthrough_source_dataset_id)
+        for task_config in self.tasks.values():
+            for dataset_id in task_config.get_source_dataset_ids():
+                if dataset_id not in seen:
+                    seen.add(dataset_id)
+                    result.append(dataset_id)
+        return result
+
+
 def load_pipeline_config_from_yaml(yaml_path: str | Path) -> PipelineConfig:
     """
     YAML 파일을 읽어서 PipelineConfig로 파싱.

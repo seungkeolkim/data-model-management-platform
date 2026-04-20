@@ -129,6 +129,8 @@ def validate_pipeline_config_static(config: PipelineConfig) -> PipelineValidatio
       4. 각 태스크의 operator가 MANIPULATOR_REGISTRY에 등록되어 있는지
       5. det_merge_datasets operator의 inputs가 2개 이상인지
       6. 단일 입력 전용 operator에 다중 입력이 주어지지 않았는지
+      7. required params 누락 검사
+      8. cls_add_head head_name 이 upstream cls_add_head 체인과 중복되지 않는지
 
     Args:
         config: 검증할 파이프라인 설정
@@ -158,6 +160,9 @@ def validate_pipeline_config_static(config: PipelineConfig) -> PipelineValidatio
 
     # (7) required params 누락 검사
     _validate_required_params(config, result)
+
+    # (8) cls_add_head head_name 중복 (파이프라인 내부 chain 기준)
+    _validate_cls_add_head_duplicates(config, result)
 
     return result
 
@@ -252,13 +257,15 @@ def _validate_merge_minimum_inputs(
     config: PipelineConfig,
     result: PipelineValidationResult,
 ) -> None:
-    """det_merge_datasets operator의 inputs가 2개 이상인지 검증한다."""
+    """도메인별 merge_datasets operator 의 inputs 가 2개 이상인지 검증한다."""
+    # detection / classification 양쪽의 명시적 merge operator 모두 2+ 입력이 필수.
+    merge_operators = {"det_merge_datasets", "cls_merge_datasets"}
     for task_name, task_config in config.tasks.items():
-        if task_config.operator == "det_merge_datasets" and len(task_config.inputs) < 2:
+        if task_config.operator in merge_operators and len(task_config.inputs) < 2:
             result.add_error(
                 code="MERGE_MIN_INPUTS",
                 message=(
-                    f"태스크 '{task_name}'의 det_merge_datasets operator는 "
+                    f"태스크 '{task_name}'의 {task_config.operator} operator는 "
                     f"최소 2개 이상의 입력이 필요합니다. "
                     f"현재 입력 수: {len(task_config.inputs)}"
                 ),
@@ -293,6 +300,63 @@ def _validate_required_params(
                     ),
                     issue_field=f"tasks.{task_name}.params.{param_name}",
                 )
+
+
+def _validate_cls_add_head_duplicates(
+    config: PipelineConfig,
+    result: PipelineValidationResult,
+) -> None:
+    """
+    `cls_add_head` 태스크의 `head_name` 이 **같은 파이프라인의 upstream cls_add_head**
+    에서 이미 추가된 이름과 중복되면 ERROR.
+
+    예: task_A(add_head is_person) → task_B(add_head gender) → task_C(add_head is_person)
+        → task_C 시점에 is_person 은 이미 task_A 가 추가했으므로 ERROR.
+
+    한계 (DB 검증 소관):
+      - source dataset 에 이미 존재하는 head 이름과의 충돌은 여기서 잡지 못한다.
+        (static 단계에서는 source head_schema 를 모른다.)
+      - 해당 충돌은 transform_annotation 런타임 혹은 app/ 레이어의 DB 검증에서 잡힌다.
+
+    순환 DAG 처럼 위상정렬이 실패하는 경우는 PipelineConfig validator 가 선행으로
+    차단하므로, 여기서는 topological_order 가 전체 task 를 반환한다고 가정한다.
+    """
+    try:
+        topo_order = config.topological_order()
+    except ValueError:
+        # 순환이 있으면 다른 validator 가 처리 — 여기서는 조용히 넘어간다.
+        return
+
+    # 각 task 의 "upstream 에서 누적된 cls_add_head head_name 집합"
+    upstream_added_heads: dict[str, frozenset[str]] = {}
+
+    for task_name in topo_order:
+        task_config = config.tasks.get(task_name)
+        if task_config is None:
+            continue
+
+        # 모든 상위 task 에서 누적된 head_name 합집합을 모은다.
+        inherited: set[str] = set()
+        for parent_task_name in task_config.get_dependency_task_names():
+            inherited.update(upstream_added_heads.get(parent_task_name, frozenset()))
+
+        if task_config.operator == "cls_add_head":
+            raw_head_name = task_config.params.get("head_name")
+            head_name = raw_head_name.strip() if isinstance(raw_head_name, str) else ""
+            if head_name and head_name in inherited:
+                result.add_error(
+                    code="CLS_ADD_HEAD_DUPLICATE",
+                    message=(
+                        f"태스크 '{task_name}' 의 cls_add_head head_name='{head_name}' 은 "
+                        f"상위 cls_add_head 태스크에서 이미 추가한 이름입니다. "
+                        f"같은 파이프라인 내에서 같은 head 를 두 번 추가할 수 없습니다."
+                    ),
+                    issue_field=f"tasks.{task_name}.params.head_name",
+                )
+            if head_name:
+                inherited = inherited | {head_name}
+
+        upstream_added_heads[task_name] = frozenset(inherited)
 
 
 def _validate_single_input_operators(

@@ -6,13 +6,14 @@
  *
  * 새 특수 노드 / 새 manipulator 추가 시 이 파일 수정 불요.
  */
-import { Typography, Collapse, Button, Spin, Badge, Tooltip } from 'antd'
+import { Typography, Collapse, Button, Spin, Badge, Tooltip, Modal } from 'antd'
 import { useQuery } from '@tanstack/react-query'
 import { manipulatorsApi } from '@/api/pipeline'
 import type { PipelineNodeData } from '@/types/pipeline'
 import {
   buildPaletteItems,
   CATEGORY_STYLE,
+  CATEGORY_ITEM_ORDER,
   DEFAULT_CATEGORY_STYLE,
   getCategoryStyle,
   showDisabledModal,
@@ -60,6 +61,22 @@ export default function NodePalette({ onAddNode, taskType }: NodePaletteProps) {
     return (idxA === -1 ? 999 : idxA) - (idxB === -1 ? 999 : idxB)
   })
 
+  // 카테고리별로 CATEGORY_ITEM_ORDER 에 명시된 항목을 앞쪽 지정 순서로,
+  // 나머지는 기존 순서(API 응답 = name asc) 그대로 뒤에 붙인다.
+  for (const [category, items] of sortedCategories) {
+    const explicitOrder = CATEGORY_ITEM_ORDER[category]
+    if (!explicitOrder || explicitOrder.length === 0) continue
+    items.sort((a, b) => {
+      const idxA = explicitOrder.indexOf(a.key)
+      const idxB = explicitOrder.indexOf(b.key)
+      const rankA = idxA === -1 ? explicitOrder.length : idxA
+      const rankB = idxB === -1 ? explicitOrder.length : idxB
+      if (rankA !== rankB) return rankA - rankB
+      // 명시 순서 밖 항목끼리는 이름 알파벳 순 (기존 기본값 유지).
+      return a.key.localeCompare(b.key)
+    })
+  }
+
   const collapseItems = sortedCategories.map(([category, items]) => {
     const meta = CATEGORY_STYLE[category] ?? DEFAULT_CATEGORY_STYLE
     return {
@@ -84,6 +101,20 @@ export default function NodePalette({ onAddNode, taskType }: NodePaletteProps) {
                 showDisabledModal({
                   label: item.label,
                   disabled: item.disabled,
+                })
+                return
+              }
+              if (item.confirmWarning) {
+                Modal.confirm({
+                  title: item.confirmWarning.title,
+                  content: (
+                    <div style={{ whiteSpace: 'pre-line', lineHeight: 1.6 }}>
+                      {item.confirmWarning.content}
+                    </div>
+                  ),
+                  okText: '추가',
+                  cancelText: '취소',
+                  onOk: () => onAddNode(item.createData() as PipelineNodeData),
                 })
                 return
               }

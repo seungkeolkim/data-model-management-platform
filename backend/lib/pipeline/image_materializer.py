@@ -186,10 +186,13 @@ class ImageMaterializer:
 
         지원 operation:
           - rotate_image: 이미지를 지정 각도(90/180/270)로 시계 방향 회전
+          - crop_image_vertical: 상단 또는 하단에서 height 의 지정 비율(%)을 잘라냄
           - mask_region: 지정 bbox 영역을 단색으로 채우기
         """
         if spec.operation == "rotate_image":
             return self._apply_rotate(img, spec.params)
+        if spec.operation == "crop_image_vertical":
+            return self._apply_crop_vertical(img, spec.params)
         if spec.operation == "mask_region":
             return self._apply_mask_region(img, spec.params)
 
@@ -214,6 +217,39 @@ class ImageMaterializer:
 
         logger.warning("지원하지 않는 회전 각도: %d (건너뜀)", degrees)
         return img
+
+    def _apply_crop_vertical(self, img: 'Image.Image', params: dict) -> 'Image.Image':
+        """
+        이미지 상단 또는 하단에서 height 의 지정 비율(%)을 잘라낸다.
+
+        params:
+            direction: "up" | "down" — "up" 이면 상단 영역, "down" 이면 하단 영역을 제거.
+            crop_pct:  int (1~99)    — 전체 height 중 잘라낼 비율.
+        """
+        direction = str(params.get("direction", "up"))
+        crop_pct = int(params.get("crop_pct", 30))
+
+        if direction not in ("up", "down"):
+            logger.warning(
+                "미지원 crop direction: %s (건너뜀)", direction,
+            )
+            return img
+        if crop_pct < 1 or crop_pct > 99:
+            logger.warning(
+                "crop_pct 범위 밖: %d (건너뜀)", crop_pct,
+            )
+            return img
+
+        image_width, image_height = img.size
+        cut_rows = int(image_height * crop_pct / 100)
+        # 최소 1 픽셀은 남겨둔다 — crop_pct=99 + 작은 이미지에서도 0-height 방지.
+        cut_rows = max(0, min(cut_rows, image_height - 1))
+
+        if direction == "up":
+            # 상단 영역을 제거 → upper 를 cut_rows 지점부터 시작.
+            return img.crop((0, cut_rows, image_width, image_height))
+        # direction == "down" — 하단 영역을 제거 → lower 를 height - cut_rows 로.
+        return img.crop((0, 0, image_width, image_height - cut_rows))
 
     def _apply_mask_region(self, img: 'Image.Image', params: dict) -> 'Image.Image':
         """

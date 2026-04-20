@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 # 파이프라인 설정 스키마 — lib.pipeline.config에서 re-export
 from lib.pipeline.config import (  # noqa: F401
     OutputConfig,
+    PartialPipelineConfig,
     PipelineConfig,
     TaskConfig,
     load_pipeline_config_from_yaml,
@@ -23,7 +24,6 @@ from lib.pipeline.pipeline_validator import (  # noqa: F401
     ValidationSeverity,
     validate_pipeline_config_static,
 )
-
 
 # =============================================================================
 # Manipulator 스키마
@@ -109,6 +109,48 @@ class PipelineListResponse(BaseModel):
     """파이프라인 실행 이력 목록 응답."""
     items: list[PipelineExecutionResponse]
     total: int
+
+
+# =============================================================================
+# Schema Preview (파이프라인 노드 시점별 head_schema 프리뷰)
+# =============================================================================
+
+class SchemaPreviewRequest(BaseModel):
+    """
+    특정 노드 시점의 head_schema 를 요청한다.
+
+    Save 노드가 없는 부분 그래프에서도 프리뷰할 수 있도록
+    PartialPipelineConfig 를 받는다. (output 필드 nullable)
+
+    target_ref:
+        - "task_{nodeId}" : operator/merge 노드의 출력
+        - "source:{dataset_id}" : dataLoad 노드의 출력 (= 소스 자체의 head_schema)
+    """
+    config: PartialPipelineConfig
+    target_ref: str = Field(..., description="task_<nodeId> 또는 source:<dataset_id>")
+
+
+class SchemaPreviewHead(BaseModel):
+    """head_schema 응답 항목."""
+    name: str
+    multi_label: bool
+    classes: list[str]
+
+
+class SchemaPreviewResponse(BaseModel):
+    """프리뷰 응답.
+
+    task_kind:
+        "classification" | "detection" | "unknown"
+    head_schema:
+        classification 일 때만 채워진다. 이외엔 None.
+    error:
+        계산 실패 시 사용자 노출용 사유. 성공 시 None.
+    """
+    task_kind: str
+    head_schema: list[SchemaPreviewHead] | None = None
+    error_code: str | None = None
+    error_message: str | None = None
 
 
 # =============================================================================

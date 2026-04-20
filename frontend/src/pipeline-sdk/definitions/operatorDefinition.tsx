@@ -13,7 +13,7 @@ import { Typography, Select, Tag, Divider, Modal } from 'antd'
 import { useNodeData, useSetNodeData } from '../hooks/useNodeData'
 import { NodeShell } from '../components/NodeShell'
 import { getCategoryStyle, getManipulatorEmoji } from '../styles'
-import { buildInputsFromIncoming } from './mergeDefinition'
+import { buildInputsFromIncoming, MERGE_OPERATORS } from './mergeDefinition'
 import DynamicParamForm from '@/components/pipeline/DynamicParamForm'
 import type { NodeDefinition, PaletteItem, CreateContext } from '../types'
 import type { OperatorNodeData } from '@/types/pipeline'
@@ -23,8 +23,39 @@ const { Text } = Typography
 
 /** 포맷 변환 노드는 통일포맷 자동 처리로 대체되어 비활성 */
 const FORMAT_CONVERT_CATEGORY = 'FORMAT_CONVERT'
-/** 백엔드 코드 미구현 manipulator (DB seed만 존재) */
-const UNIMPLEMENTED_OPERATORS = ['det_change_compression', 'det_shuffle_image_ids']
+
+/** 팔레트 클릭 시 확인 모달을 거쳐야 하는 operator. */
+const CONFIRM_WARNING_OPERATORS: Record<string, { title: string; content: string }> = {
+  cls_merge_classes: {
+    title: 'Class 병합 주의사항',
+    content:
+      'Class 병합은 다음 규칙으로 동작합니다:\n\n' +
+      '• Single-label head: A | B | C 중 하나라도 지정되어 있으면 병합 결과 class 로 교체\n' +
+      '• Multi-label head: A or B or C 가 하나라도 true 이면 병합 결과 class 를 true 로 설정\n\n' +
+      '⚠️ 병합 대상 class 들의 의미와 내용이 서로 다르면 라벨 정합성이 깨져 학습 데이터가 오염될 수 있습니다.\n' +
+      '(ex : 사람=True & 인류=False 병합 → 내용 오염됨).\n\n' +
+      '병합 대상 class 가 실제로 동일한 의미/내용인지 확인 후 진행하세요.',
+  },
+  cls_demote_head_to_single_label: {
+    title: 'Multi→Single 강등 주의사항',
+    content:
+      'Multi-label head 를 Single-label 로 강등합니다.\n\n' +
+      '강등 시 single-label 에 어긋나는 이미지가 존재할 수 있습니다:\n' +
+      '• Class 2개 이상 설정된 이미지 (ex: [A, B])\n' +
+      '• 전부 미설정된 이미지 (ex: [])\n\n' +
+      '⚠️ "위반 이미지 처리" 설정에 따라:\n' +
+      '• fail — 위반 이미지가 있으면 파이프라인 전체가 실패합니다.\n' +
+      '• skip — 위반 이미지를 제외하고 나머지만 진행합니다.\n\n' +
+      '강등 전에 cls_merge_classes 등으로 class 를 줄여두는 것을 권장합니다.',
+  },
+}
+/** 백엔드 코드 미구현 manipulator (DB seed만 존재, transform_annotation 이 stub). */
+const UNIMPLEMENTED_OPERATORS = [
+  // detection
+  'det_change_compression',
+  'det_shuffle_image_ids',
+  // classification — (현재 없음; 모든 cls_* 실구현 완료)
+]
 
 /** description("버튼 텍스트 (도움말)") 패턴에서 앞부분만 추출 */
 function extractShortLabel(desc: string): string {
@@ -182,8 +213,8 @@ export const operatorDefinition: NodeDefinition<'operator'> = {
   paletteFromManipulators(manipulators: Manipulator[], _ctx: CreateContext): PaletteItem<'operator'>[] {
     const items: PaletteItem<'operator'>[] = []
     for (const m of manipulators) {
-      // det_merge_datasets는 MergeNode 별도 특수 노드로 처리 — 여기서 제외.
-      if (m.name === 'det_merge_datasets') continue
+      // det_/cls_merge_datasets 는 Merge 기본 노드로 별도 처리 — 팔레트에서 제외.
+      if (MERGE_OPERATORS.has(m.name)) continue
       const style = getCategoryStyle(m.category)
       const isFormatConvert = m.category === FORMAT_CONVERT_CATEGORY
       const isUnimplemented = UNIMPLEMENTED_OPERATORS.includes(m.name)
@@ -199,6 +230,7 @@ export const operatorDefinition: NodeDefinition<'operator'> = {
               modalTitle: '미구현 기능',
             }
           : null
+      const confirmWarning = CONFIRM_WARNING_OPERATORS[m.name] ?? null
       items.push({
         key: m.name,
         section: 'manipulator',
@@ -208,6 +240,7 @@ export const operatorDefinition: NodeDefinition<'operator'> = {
         emoji: getManipulatorEmoji(m.name, m.category),
         kind: 'operator',
         disabled,
+        confirmWarning,
         createData: () => createOperatorDataFromManipulator(m),
       })
     }
@@ -245,7 +278,8 @@ export const operatorDefinition: NodeDefinition<'operator'> = {
     const restored = []
     for (const [taskKey, taskConfig] of Object.entries(config.tasks)) {
       if (claimedTaskKeys.has(taskKey)) continue
-      if (taskConfig.operator === 'det_merge_datasets') continue
+      // merge operator 들은 MergeDefinition 이 점유함.
+      if (MERGE_OPERATORS.has(taskConfig.operator)) continue
       const manipulatorMeta = manipulatorMap[taskConfig.operator]
       if (!manipulatorMeta) continue // placeholderDefinition이 나중에 점유
 

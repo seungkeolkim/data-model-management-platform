@@ -17,6 +17,7 @@ import { useNodeData } from '../hooks/useNodeData'
 import { NodeShell } from '../components/NodeShell'
 import type { NodeDefinition } from '../types'
 import type { PlaceholderNodeData } from '../types'
+import { MERGE_OPERATORS } from './mergeDefinition'
 
 const { Text } = Typography
 
@@ -111,9 +112,9 @@ export const placeholderDefinition: NodeDefinition<'placeholder'> = {
     const restored = []
     for (const [taskKey, taskConfig] of Object.entries(config.tasks)) {
       if (claimedTaskKeys.has(taskKey)) continue
-      // manipulator registry에 없고 det_merge_datasets도 아닌 경우
+      // manipulator registry 에도 없고 merge operator 도 아닌 경우만 placeholder 로 복원.
       const isKnown =
-        taskConfig.operator === 'det_merge_datasets' || !!manipulatorMap[taskConfig.operator]
+        MERGE_OPERATORS.has(taskConfig.operator) || !!manipulatorMap[taskConfig.operator]
       if (isKnown) continue
       const nodeId = taskKey.startsWith('task_') ? taskKey.slice(5) : taskKey
       const data: PlaceholderNodeData = {

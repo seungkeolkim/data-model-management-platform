@@ -40,6 +40,21 @@ export interface PipelineConfig {
   schema_version?: number
 }
 
+/**
+ * Save 노드가 없어도 생성 가능한 부분 설정.
+ *
+ * JSON 프리뷰와 schema preview 에서 사용. output 이 없으면
+ * 백엔드 실행은 불가하지만 프리뷰 계산은 가능하다.
+ */
+export interface PartialPipelineConfig {
+  name: string
+  description?: string
+  output: OutputConfig | null
+  tasks: Record<string, TaskConfig>
+  passthrough_source_dataset_id?: string | null
+  schema_version?: number
+}
+
 // =============================================================================
 // API 응답 타입
 // =============================================================================
@@ -139,10 +154,10 @@ export interface OperatorNodeData {
   [key: string]: unknown
 }
 
-/** Merge 노드: det_merge_datasets, 다중 입력 필수 */
+/** Merge 노드: det_/cls_merge_datasets, 다중 입력 필수. 에디터 taskType 에 따라 operator 결정 */
 export interface MergeNodeData {
   type: 'merge'
-  operator: 'det_merge_datasets'
+  operator: 'det_merge_datasets' | 'cls_merge_datasets'
   params: Record<string, unknown>
   /** 현재 연결된 입력 수 (동적 핸들 관리용) */
   inputCount: number

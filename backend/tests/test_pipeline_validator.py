@@ -425,3 +425,173 @@ class TestComplexValidationScenarios:
         result = validate_pipeline_config_static(config)
         assert result.is_valid is True
         assert result.error_count == 0
+
+
+# =============================================================================
+# cls_add_head head_name 중복 검증
+# =============================================================================
+
+
+class TestValidateClsAddHeadDuplicates:
+    """cls_add_head head_name 이 같은 DAG 체인에서 중복되면 ERROR 여야 한다.
+
+    배경: pipeline id a30a723f-ee93-4d5d-9e42-badba0d405ac 에서 같은 head('is_person')
+          를 두 번 추가했지만 정적 검증을 그대로 통과했던 버그가 있었다. 이를 방지하기 위함.
+    """
+
+    def test_duplicate_head_name_in_chain_is_error(self):
+        """동일 체인 상의 두 cls_add_head 가 같은 head_name 을 추가하면 ERROR."""
+        config = _make_config(
+            dataset_type="PROCESSED",
+            annotation_format="CLASSIFICATION_JSONL",
+            split="TRAIN",
+            tasks={
+                "add_is_person_first": {
+                    "operator": "cls_add_head",
+                    "inputs": ["source:00000000-0000-0000-0000-000000000001"],
+                    "params": {
+                        "head_name": "is_person",
+                        "multi_label": False,
+                        "class_candidates": "yes\nno",
+                    },
+                },
+                "add_gender": {
+                    "operator": "cls_add_head",
+                    "inputs": ["add_is_person_first"],
+                    "params": {
+                        "head_name": "gender",
+                        "multi_label": False,
+                        "class_candidates": "male\nfemale",
+                    },
+                },
+                "add_is_person_again": {
+                    "operator": "cls_add_head",
+                    "inputs": ["add_gender"],
+                    "params": {
+                        "head_name": "is_person",
+                        "multi_label": False,
+                        "class_candidates": "yes\nno",
+                    },
+                },
+            },
+        )
+        result = validate_pipeline_config_static(config)
+        assert result.is_valid is False
+        duplicate_errors = [
+            issue
+            for issue in result.issues
+            if issue.code == "CLS_ADD_HEAD_DUPLICATE"
+        ]
+        assert len(duplicate_errors) == 1
+        assert "add_is_person_again" in duplicate_errors[0].message
+        assert "is_person" in duplicate_errors[0].message
+
+    def test_distinct_head_names_in_chain_pass(self):
+        """체인 상의 cls_add_head 가 서로 다른 head_name 이면 통과해야 한다."""
+        config = _make_config(
+            dataset_type="PROCESSED",
+            annotation_format="CLASSIFICATION_JSONL",
+            split="TRAIN",
+            tasks={
+                "add_is_person": {
+                    "operator": "cls_add_head",
+                    "inputs": ["source:00000000-0000-0000-0000-000000000001"],
+                    "params": {
+                        "head_name": "is_person",
+                        "multi_label": False,
+                        "class_candidates": "yes\nno",
+                    },
+                },
+                "add_gender": {
+                    "operator": "cls_add_head",
+                    "inputs": ["add_is_person"],
+                    "params": {
+                        "head_name": "gender",
+                        "multi_label": False,
+                        "class_candidates": "male\nfemale",
+                    },
+                },
+            },
+        )
+        result = validate_pipeline_config_static(config)
+        duplicate_errors = [
+            issue
+            for issue in result.issues
+            if issue.code == "CLS_ADD_HEAD_DUPLICATE"
+        ]
+        assert duplicate_errors == []
+
+    def test_same_head_name_on_independent_branches_pass(self):
+        """공통 upstream 이 없는 독립 브랜치라면 같은 head_name 이어도 허용."""
+        # 두 개의 독립된 source 에서 각각 is_person head 를 추가 — 서로 상속 관계 없음.
+        config = _make_config(
+            dataset_type="PROCESSED",
+            annotation_format="CLASSIFICATION_JSONL",
+            split="TRAIN",
+            tasks={
+                "add_is_person_branch_a": {
+                    "operator": "cls_add_head",
+                    "inputs": ["source:00000000-0000-0000-0000-000000000001"],
+                    "params": {
+                        "head_name": "is_person",
+                        "multi_label": False,
+                        "class_candidates": "yes\nno",
+                    },
+                },
+                "add_is_person_branch_b": {
+                    "operator": "cls_add_head",
+                    "inputs": ["source:00000000-0000-0000-0000-000000000002"],
+                    "params": {
+                        "head_name": "is_person",
+                        "multi_label": False,
+                        "class_candidates": "yes\nno",
+                    },
+                },
+            },
+        )
+        result = validate_pipeline_config_static(config)
+        duplicate_errors = [
+            issue
+            for issue in result.issues
+            if issue.code == "CLS_ADD_HEAD_DUPLICATE"
+        ]
+        assert duplicate_errors == []
+
+    def test_empty_head_name_is_not_duplicate_report(self):
+        """head_name 이 공백이면 이 validator 는 중복으로 보고하지 않는다.
+
+        (빈 값 자체는 cls_add_head.py 의 transform_annotation 레이어에서 거부되므로
+        여기서 ERROR 를 중복 발생시키지 않는 것이 바람직하다.)
+        """
+        config = _make_config(
+            dataset_type="PROCESSED",
+            annotation_format="CLASSIFICATION_JSONL",
+            split="TRAIN",
+            tasks={
+                "add_blank_first": {
+                    "operator": "cls_add_head",
+                    "inputs": ["source:00000000-0000-0000-0000-000000000001"],
+                    "params": {
+                        "head_name": "",
+                        "multi_label": False,
+                        "class_candidates": "a\nb",
+                    },
+                },
+                "add_blank_second": {
+                    "operator": "cls_add_head",
+                    "inputs": ["add_blank_first"],
+                    "params": {
+                        "head_name": "   ",
+                        "multi_label": False,
+                        "class_candidates": "a\nb",
+                    },
+                },
+            },
+        )
+        result = validate_pipeline_config_static(config)
+        duplicate_errors = [
+            issue
+            for issue in result.issues
+            if issue.code == "CLS_ADD_HEAD_DUPLICATE"
+        ]
+        assert duplicate_errors == []

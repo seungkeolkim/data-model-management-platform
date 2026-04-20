@@ -10,7 +10,11 @@ export { useNodeData, useSetNodeData } from './hooks/useNodeData'
 export { NodeShell } from './components/NodeShell'
 export { buildPaletteItems } from './palette'
 export { buildNodeTypesFromRegistry } from './nodeTypes'
-export { graphToPipelineConfig, CURRENT_SCHEMA_VERSION } from './engine/graphToConfig'
+export {
+  graphToPipelineConfig,
+  graphToPartialPipelineConfig,
+  CURRENT_SCHEMA_VERSION,
+} from './engine/graphToConfig'
 export {
   pipelineConfigToGraph,
   extractSourceDatasetIdsFromConfig,
@@ -19,7 +23,13 @@ export type { DatasetDisplayInfo } from './engine/configToGraph'
 export { validateGraphStructure } from './engine/clientValidation'
 export { distributeIssuesToNodes } from './engine/issueMapping'
 export { showDisabledModal } from './definitions/operatorDefinition'
-export { CATEGORY_STYLE, DEFAULT_CATEGORY_STYLE, getCategoryStyle, getManipulatorEmoji } from './styles'
+export {
+  CATEGORY_STYLE,
+  CATEGORY_ITEM_ORDER,
+  DEFAULT_CATEGORY_STYLE,
+  getCategoryStyle,
+  getManipulatorEmoji,
+} from './styles'
 
 // bootstrap — side-effect 등록. 이 파일을 import하면 registry가 채워진다.
 import './bootstrap'
