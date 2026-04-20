@@ -40,6 +40,172 @@ from lib.pipeline.pipeline_data_models import DatasetMeta, HeadSchema, ImageReco
 logger = logging.getLogger(__name__)
 
 
+# =============================================================================
+# 순수 params 검증 — runtime (transform_annotation) 과 정적 DB-aware 검증
+# (PipelineService) 양쪽에서 동일 규칙을 공유하도록 모듈 레벨로 노출.
+#
+# 반환 형식: (issue_code, human_readable_message) 튜플의 리스트.
+#   - runtime 은 첫 원소만 쓰고 ValueError 로 올린다 (transform_annotation).
+#   - 정적 검증은 리스트 전체를 PipelineValidationIssue 로 변환한다.
+# =============================================================================
+
+
+def validate_set_head_labels_params(
+    head_schema: list[HeadSchema] | None,
+    params: dict[str, Any],
+) -> list[tuple[str, str]]:
+    """
+    cls_set_head_labels_for_all_images params 를 head_schema 와 대조해 위반 목록을 반환.
+
+    head_schema 가 None 이면 `HEAD_SCHEMA_MISSING` 한 건만 반환하고 이후 검증은 skip.
+    그 외에는 다음 규칙을 순차 평가하되, 먼저 파싱 오류가 나면 그 한 건만 반환한다
+    (후속 검증이 의미를 잃기 때문).
+
+    규칙:
+      HEAD_NAME_MISSING       — head_name 누락/공백
+      HEAD_NAME_NOT_FOUND     — head_name 이 head_schema 에 없음
+      CLASSES_DUPLICATE       — classes 에 중복된 class 이름
+      CLASSES_NOT_IN_SCHEMA   — classes 에 head_schema 바깥 class 이름 (SSOT 위반)
+      SINGLE_LABEL_ARITY      — single-label head 에 0개 또는 2개 이상 classes
+    """
+    if head_schema is None:
+        return [(
+            "HEAD_SCHEMA_MISSING",
+            "cls_set_head_labels_for_all_images 는 classification 데이터셋 "
+            "(head_schema 보유) 에만 사용할 수 있습니다.",
+        )]
+
+    # head_name 파싱 — 실패하면 단건만 반환.
+    try:
+        target_head_name = _parse_head_name(params.get("head_name"))
+    except ValueError as error:
+        return [("HEAD_NAME_MISSING", str(error))]
+
+    # head 존재 여부.
+    target_head: HeadSchema | None = None
+    for head in head_schema:
+        if head.name == target_head_name:
+            target_head = head
+            break
+    if target_head is None:
+        existing = [head.name for head in head_schema]
+        return [(
+            "HEAD_NAME_NOT_FOUND",
+            f"head_name='{target_head_name}' 을 head_schema 에서 찾지 못했습니다. "
+            f"존재하는 head: {existing}",
+        )]
+
+    # set_unknown=True 면 classes 검증 스킵.
+    try:
+        set_unknown = _parse_set_unknown(params.get("set_unknown", False))
+    except ValueError as error:
+        return [("SET_UNKNOWN_INVALID", str(error))]
+    if set_unknown:
+        return []
+
+    # classes 파싱.
+    try:
+        class_names = _parse_classes(params.get("classes"))
+    except ValueError as error:
+        return [("CLASSES_INVALID", str(error))]
+
+    issues: list[tuple[str, str]] = []
+
+    # 중복.
+    seen: set[str] = set()
+    duplicates: list[str] = []
+    for name in class_names:
+        if name in seen:
+            duplicates.append(name)
+        seen.add(name)
+    if duplicates:
+        issues.append((
+            "CLASSES_DUPLICATE",
+            f"classes 에 중복된 class 이름이 있습니다: {duplicates}",
+        ))
+
+    # SSOT 위반.
+    allowed = set(target_head.classes)
+    unknown = [name for name in class_names if name not in allowed]
+    if unknown:
+        issues.append((
+            "CLASSES_NOT_IN_SCHEMA",
+            f"classes 에 head_schema 에 없는 class 가 포함되어 있습니다: "
+            f"{unknown} (허용: {target_head.classes})",
+        ))
+
+    # single-label arity.
+    if not target_head.multi_label and len(class_names) != 1:
+        issues.append((
+            "SINGLE_LABEL_ARITY",
+            f"single-label head '{target_head.name}' 에는 정확히 1개의 class 만 "
+            f"set 할 수 있습니다. 입력 개수: {len(class_names)} ({class_names}). "
+            f"0개로 비우려면 set_unknown=True 를 사용하세요.",
+        ))
+
+    return issues
+
+
+# =============================================================================
+# 내부 파싱 헬퍼 (검증 함수 + manipulator 양쪽에서 재사용)
+# =============================================================================
+
+
+def _parse_head_name(raw_value: Any) -> str:
+    """head_name 을 str 로 정규화. 비어있으면 ValueError."""
+    if raw_value is None:
+        raise ValueError("head_name 은 필수 입력입니다.")
+    if not isinstance(raw_value, str):
+        raise ValueError(
+            f"head_name 은 문자열이어야 합니다: {type(raw_value).__name__}"
+        )
+    stripped = raw_value.strip()
+    if not stripped:
+        raise ValueError("head_name 이 공백입니다. 대상 Head 이름을 지정하세요.")
+    return stripped
+
+
+def _parse_set_unknown(raw_value: Any) -> bool:
+    """set_unknown checkbox 값을 bool 로 정규화. 기본 False."""
+    if isinstance(raw_value, bool):
+        return raw_value
+    if raw_value is None:
+        return False
+    if isinstance(raw_value, str):
+        normalized = raw_value.strip().lower()
+        if normalized in ("true", "1", "yes", "on"):
+            return True
+        if normalized in ("false", "0", "no", "off", ""):
+            return False
+        raise ValueError(
+            f"set_unknown 문자열 값은 true/false 계열이어야 합니다: {raw_value!r}"
+        )
+    raise ValueError(
+        f"set_unknown 은 bool 이어야 합니다: {type(raw_value).__name__}"
+    )
+
+
+def _parse_classes(raw_value: Any) -> list[str]:
+    """
+    classes 를 list[str] 로 정규화. 비어있어도 허용 — single-label 여부는
+    상위에서 별도 검증한다.
+
+    허용 입력:
+        - None / "" → 빈 리스트.
+        - str (textarea): 줄바꿈 구분, trim 후 빈 줄 제외.
+        - list[str] / tuple[str]: 각 원소 trim 후 빈 값 제외.
+    """
+    if raw_value is None:
+        return []
+    if isinstance(raw_value, str):
+        return [line.strip() for line in raw_value.splitlines() if line.strip()]
+    if isinstance(raw_value, (list, tuple)):
+        return [str(item).strip() for item in raw_value if str(item).strip()]
+    raise ValueError(
+        f"classes 는 str 또는 list 이어야 합니다: {type(raw_value).__name__}"
+    )
+
+
 class SetHeadLabelsForAllImagesClassification(UnitManipulator):
     """DB seed name: "cls_set_head_labels_for_all_images"."""
 
@@ -60,26 +226,24 @@ class SetHeadLabelsForAllImagesClassification(UnitManipulator):
                 "cls_set_head_labels_for_all_images 는 단건 DatasetMeta 만 입력 가능합니다 "
                 "(list 입력 불가)."
             )
-        if input_meta.head_schema is None:
-            raise ValueError(
-                "cls_set_head_labels_for_all_images 는 classification DatasetMeta 에만 "
-                "사용합니다 (head_schema 가 None 입니다)."
-            )
 
-        target_head_name = self._parse_head_name(params.get("head_name"))
-        set_unknown = self._parse_set_unknown(params.get("set_unknown", False))
+        # ── params + head_schema 공통 검증 (정적 검증과 규칙 공유) ──
+        issues = validate_set_head_labels_params(input_meta.head_schema, params)
+        if issues:
+            _, first_message = issues[0]
+            raise ValueError(first_message)
 
-        # ── 대상 head 조회 ──
-        target_head = self._find_head(input_meta.head_schema, target_head_name)
+        # 검증 통과 → 파싱된 값을 사용 (input_meta.head_schema 는 여기서 None 이 아님이
+        # 보장된다 — HEAD_SCHEMA_MISSING 이 issues 로 잡혔을 것).
+        assert input_meta.head_schema is not None
+        target_head_name = _parse_head_name(params.get("head_name"))
+        set_unknown = _parse_set_unknown(params.get("set_unknown", False))
 
         # ── 교체할 labels 값 결정 ──
         if set_unknown:
-            # set_unknown=True 면 classes 는 무시. 모든 이미지 해당 head 를 null 로.
             replacement: list[str] | None = None
         else:
-            # set_unknown=False → classes 파싱 후 head 타입에 맞는지 검증.
-            class_names = self._parse_classes(params.get("classes"))
-            self._validate_classes_for_head(class_names, target_head)
+            class_names = _parse_classes(params.get("classes"))
             replacement = list(class_names)
 
         # ── head_schema 는 그대로 복사 (불변) ──
@@ -129,119 +293,3 @@ class SetHeadLabelsForAllImagesClassification(UnitManipulator):
             head_schema=new_head_schema,
             extra=dict(input_meta.extra) if input_meta.extra else {},
         )
-
-    # ─────────────────────────────────────────────────────────────
-    # 내부 헬퍼
-    # ─────────────────────────────────────────────────────────────
-
-    @staticmethod
-    def _parse_head_name(raw_value: Any) -> str:
-        """head_name 을 str 로 정규화. 비어있으면 ValueError."""
-        if raw_value is None:
-            raise ValueError("head_name 은 필수 입력입니다.")
-        if not isinstance(raw_value, str):
-            raise ValueError(
-                f"head_name 은 문자열이어야 합니다: {type(raw_value).__name__}"
-            )
-        stripped = raw_value.strip()
-        if not stripped:
-            raise ValueError("head_name 이 공백입니다. 대상 Head 이름을 지정하세요.")
-        return stripped
-
-    @staticmethod
-    def _parse_set_unknown(raw_value: Any) -> bool:
-        """set_unknown checkbox 값을 bool 로 정규화. 기본 False."""
-        if isinstance(raw_value, bool):
-            return raw_value
-        if raw_value is None:
-            return False
-        if isinstance(raw_value, str):
-            normalized = raw_value.strip().lower()
-            if normalized in ("true", "1", "yes", "on"):
-                return True
-            if normalized in ("false", "0", "no", "off", ""):
-                return False
-            raise ValueError(
-                f"set_unknown 문자열 값은 true/false 계열이어야 합니다: {raw_value!r}"
-            )
-        raise ValueError(
-            f"set_unknown 은 bool 이어야 합니다: {type(raw_value).__name__}"
-        )
-
-    @staticmethod
-    def _parse_classes(raw_value: Any) -> list[str]:
-        """
-        classes 를 list[str] 로 정규화. 비어있어도 허용 — 단, single-label 여부는
-        상위에서 별도 검증한다.
-
-        허용 입력:
-            - None / "" → 빈 리스트.
-            - str (textarea): 줄바꿈 구분, trim 후 빈 줄 제외.
-            - list[str] / tuple[str]: 각 원소 trim 후 빈 값 제외.
-        """
-        if raw_value is None:
-            return []
-        if isinstance(raw_value, str):
-            return [line.strip() for line in raw_value.splitlines() if line.strip()]
-        if isinstance(raw_value, (list, tuple)):
-            return [str(item).strip() for item in raw_value if str(item).strip()]
-        raise ValueError(
-            f"classes 는 str 또는 list 이어야 합니다: {type(raw_value).__name__}"
-        )
-
-    @staticmethod
-    def _find_head(head_schema: list[HeadSchema], head_name: str) -> HeadSchema:
-        """head_schema 에서 이름으로 head 를 찾는다. 없으면 ValueError."""
-        for head in head_schema:
-            if head.name == head_name:
-                return head
-        existing = [head.name for head in head_schema]
-        raise ValueError(
-            f"cls_set_head_labels_for_all_images: head_name='{head_name}' 을 "
-            f"head_schema 에서 찾지 못했습니다. 존재하는 head: {existing}"
-        )
-
-    @staticmethod
-    def _validate_classes_for_head(
-        class_names: list[str], target_head: HeadSchema
-    ) -> None:
-        """
-        입력 classes 가 target_head 의 정의와 양립하는지 검증.
-
-        검증 항목:
-            - 중복 class 금지.
-            - 모든 class 는 target_head.classes 에 포함되어야 함 (SSOT §2-4).
-            - single-label head (multi_label=False) 는 정확히 1개여야 함.
-              (0 개 → set_unknown 대신 set_unknown=True 를 명시적으로 써야 함)
-              (2개 이상 → writer assert 이전에 이 단계에서 차단)
-            - multi-label head (multi_label=True) 는 0개 이상 허용.
-              (빈 리스트 = explicit empty = §2-12 규약)
-        """
-        # 중복 검사 — 입력 순서를 유지하고 어떤 값이 중복인지 알려준다.
-        seen: set[str] = set()
-        duplicates: list[str] = []
-        for name in class_names:
-            if name in seen:
-                duplicates.append(name)
-            seen.add(name)
-        if duplicates:
-            raise ValueError(
-                f"classes 에 중복된 class 이름이 있습니다: {duplicates}"
-            )
-
-        # SSOT 위반 검사 — target_head.classes 바깥 이름은 거부한다.
-        allowed = set(target_head.classes)
-        unknown = [name for name in class_names if name not in allowed]
-        if unknown:
-            raise ValueError(
-                f"classes 에 head_schema 에 없는 class 가 포함되어 있습니다: "
-                f"{unknown} (허용: {target_head.classes})"
-            )
-
-        # single-label head 는 정확히 1개여야 함.
-        if not target_head.multi_label and len(class_names) != 1:
-            raise ValueError(
-                f"single-label head '{target_head.name}' 에는 정확히 1개의 class 만 "
-                f"set 할 수 있습니다. 입력 개수: {len(class_names)} ({class_names}). "
-                f"0개로 비우려면 set_unknown=True 를 사용하세요."
-            )

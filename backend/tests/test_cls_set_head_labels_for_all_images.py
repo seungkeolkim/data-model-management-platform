@@ -24,6 +24,7 @@ import pytest
 
 from lib.manipulators.cls_set_head_labels_for_all_images import (
     SetHeadLabelsForAllImagesClassification,
+    validate_set_head_labels_params,
 )
 from lib.pipeline.pipeline_data_models import (
     DatasetMeta,
@@ -450,3 +451,156 @@ def test_image_metadata_preserved() -> None:
     assert out.width == 1920
     assert out.height == 1080
     assert out.extra == {"source_storage_uri": "source/A/1.0"}
+
+
+# ─────────────────────────────────────────────────────────────────
+# 7. validate_set_head_labels_params — 순수 검증 함수
+#    (runtime + 정적 DB-aware 검증이 공유하는 단일 규칙 테이블)
+# ─────────────────────────────────────────────────────────────────
+
+
+_SINGLE_LABEL_SCHEMA = [
+    HeadSchema(name="vehicle", multi_label=False, classes=["sedan", "truck"]),
+]
+_MULTI_LABEL_SCHEMA = [
+    HeadSchema(name="tags", multi_label=True, classes=["x", "y", "z"]),
+]
+
+
+def test_validate_returns_empty_when_params_ok_single_label() -> None:
+    issues = validate_set_head_labels_params(
+        _SINGLE_LABEL_SCHEMA,
+        {"head_name": "vehicle", "classes": "truck"},
+    )
+    assert issues == []
+
+
+def test_validate_returns_empty_for_set_unknown_true() -> None:
+    """set_unknown=True 면 classes 내용과 무관하게 통과."""
+    issues = validate_set_head_labels_params(
+        _SINGLE_LABEL_SCHEMA,
+        {"head_name": "vehicle", "set_unknown": True, "classes": "unknown_garbage"},
+    )
+    assert issues == []
+
+
+def test_validate_returns_empty_for_multi_label_with_empty_classes() -> None:
+    """multi-label + 빈 classes = explicit empty (§2-12), 정당함."""
+    issues = validate_set_head_labels_params(
+        _MULTI_LABEL_SCHEMA,
+        {"head_name": "tags", "classes": ""},
+    )
+    assert issues == []
+
+
+def test_validate_head_schema_missing() -> None:
+    issues = validate_set_head_labels_params(None, {"head_name": "vehicle"})
+    assert len(issues) == 1
+    code, message = issues[0]
+    assert code == "HEAD_SCHEMA_MISSING"
+    assert "classification" in message
+
+
+def test_validate_head_name_missing() -> None:
+    issues = validate_set_head_labels_params(_SINGLE_LABEL_SCHEMA, {})
+    assert len(issues) == 1
+    assert issues[0][0] == "HEAD_NAME_MISSING"
+
+
+def test_validate_head_name_not_found() -> None:
+    issues = validate_set_head_labels_params(
+        _SINGLE_LABEL_SCHEMA,
+        {"head_name": "nonexistent", "set_unknown": True},
+    )
+    assert len(issues) == 1
+    code, message = issues[0]
+    assert code == "HEAD_NAME_NOT_FOUND"
+    assert "vehicle" in message
+
+
+def test_validate_single_label_arity_two_classes() -> None:
+    """a6e6b2a2-... 재현 — single-label head 에 2 classes → SINGLE_LABEL_ARITY."""
+    issues = validate_set_head_labels_params(
+        _SINGLE_LABEL_SCHEMA,
+        {"head_name": "vehicle", "classes": "sedan\ntruck"},
+    )
+    codes = [code for code, _ in issues]
+    assert "SINGLE_LABEL_ARITY" in codes
+
+
+def test_validate_single_label_arity_zero_classes() -> None:
+    issues = validate_set_head_labels_params(
+        _SINGLE_LABEL_SCHEMA,
+        {"head_name": "vehicle", "classes": ""},
+    )
+    codes = [code for code, _ in issues]
+    assert "SINGLE_LABEL_ARITY" in codes
+
+
+def test_validate_classes_not_in_schema() -> None:
+    issues = validate_set_head_labels_params(
+        _MULTI_LABEL_SCHEMA,
+        {"head_name": "tags", "classes": "x\nunknown_name"},
+    )
+    codes = [code for code, _ in issues]
+    assert "CLASSES_NOT_IN_SCHEMA" in codes
+
+
+def test_validate_classes_duplicate() -> None:
+    issues = validate_set_head_labels_params(
+        _MULTI_LABEL_SCHEMA,
+        {"head_name": "tags", "classes": "x\ny\nx"},
+    )
+    codes = [code for code, _ in issues]
+    assert "CLASSES_DUPLICATE" in codes
+
+
+def test_validate_multiple_issues_accumulated() -> None:
+    """single-label + 바깥 class + 2개 입력 → 여러 이슈가 동시에 보고됨 (정적 검증용)."""
+    issues = validate_set_head_labels_params(
+        _SINGLE_LABEL_SCHEMA,
+        {"head_name": "vehicle", "classes": "unknown1\nunknown2"},
+    )
+    codes = [code for code, _ in issues]
+    # 바깥 class + single-label 2개 → 2건 이상.
+    assert "CLASSES_NOT_IN_SCHEMA" in codes
+    assert "SINGLE_LABEL_ARITY" in codes
+
+
+# ─────────────────────────────────────────────────────────────────
+# 8. 통합 — preview 체인으로 a6e6b2a2 시나리오 재현
+#    cls_add_head(2회) → cls_set_head_labels_for_all_images(single-label + 2 classes)
+# ─────────────────────────────────────────────────────────────────
+
+
+def test_validate_after_preview_catches_a6e6b2a2_scenario() -> None:
+    """
+    실제 버그 파이프라인(a6e6b2a2-...) 의 핵심 패턴 재현.
+
+    상류에서 source 의 single-label head 를 preview 로 확정한 뒤, 그 head 에
+    2개 classes 를 set 하려는 params 를 주면 validate_set_head_labels_params 가
+    SINGLE_LABEL_ARITY 를 반환하는지 확인한다. 정적 DB-aware 검증의 핵심 경로.
+    """
+    # source head_schema 에 visibility (single-label, classes=[0_unseen, 1_seen]) 가 있다고 가정.
+    source_head_schema = [
+        HeadSchema(
+            name="visibility",
+            multi_label=False,
+            classes=["0_unseen", "1_seen"],
+        ),
+    ]
+
+    # 버그 재현 params — set_unknown=False 인데 classes 에 2개.
+    params = {
+        "head_name": "visibility",
+        "set_unknown": False,
+        "classes": "0_unseen\n1_seen",
+    }
+
+    issues = validate_set_head_labels_params(source_head_schema, params)
+    codes = [code for code, _ in issues]
+    assert "SINGLE_LABEL_ARITY" in codes
+    # 메시지에 정확한 수치와 유도 안내가 담겨야 한다.
+    arity_msg = next(msg for code, msg in issues if code == "SINGLE_LABEL_ARITY")
+    assert "2" in arity_msg
+    assert "set_unknown" in arity_msg

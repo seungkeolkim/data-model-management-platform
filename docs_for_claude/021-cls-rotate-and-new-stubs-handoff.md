@@ -10,7 +10,8 @@
 > - `84e6b40` feat(manipulator): cls_rotate_image 실구현 + postfix rename 규약 확립 + 25건 테스트
 > - `916964f` feat(manipulator): cls_add_head 실구현 + DynamicParamForm checkbox/text 타입 추가 + Alembic 024 + 29건 테스트
 > - `56f784c` fix(pipeline-validator): cls_add_head head_name 체인 내 중복 검출 + 4건 테스트
-> - (미커밋) feat(manipulator): cls_set_head_labels_for_all_images 실구현 + Alembic 025 (action→set_unknown) + 33건 테스트
+> - `54fb15c` feat(manipulator): cls_set_head_labels_for_all_images 실구현 + Alembic 025 + 33건 테스트
+> - (미커밋) fix(pipeline-service): cls_set_head_labels_for_all_images 정적 DB-aware 검증 + 12건 테스트 (pipeline id `a6e6b2a2-d0cd-4cf9-8ce9-b0f6b263829c` 재현 버그)
 
 020 의 filename-identity 전환(§2-13)이 끝난 상태에서, 고정 rename 규약 덕분에 이미지 변형 manipulator 도
 detection 과 동일한 "변형 시 파일명에 postfix 를 붙여 새 이미지로 만든다" 규약으로 구현할 수 있게 됐다.
@@ -274,6 +275,63 @@ annotation-only manipulator (head_schema / file_name 불변 → Phase B lazy cop
 #### 1-6-4. UNIMPLEMENTED_OPERATORS 해제
 
 `frontend/src/pipeline-sdk/definitions/operatorDefinition.tsx` 에서 `cls_set_head_labels_for_all_images` 제거. 팔레트에 활성 버튼으로 노출 (CLS_HEAD_CTRL 카테고리 최하단).
+
+### 1-7. 정적 DB-aware 검증 확장 — cls_set_head_labels_for_all_images params × 상류 head_schema
+
+#### 1-7-1. 버그 재현
+
+- Pipeline id `a6e6b2a2-d0cd-4cf9-8ce9-b0f6b263829c`.
+- 체인 말단에 `cls_set_head_labels_for_all_images` 가 source 의 single-label head `visibility`
+  (classes=`[0_unseen, 1_seen]`) 에 대해 `set_unknown=False, classes="0_unseen\n1_seen"` 로 구성됨.
+- `/pipelines/validate` 는 PASS 로 판정, `/pipelines/execute` 가 제출되어 runtime 에서만 실패
+  (`SetHeadLabelsForAllImagesClassification.transform_annotation` 의 SINGLE_LABEL_ARITY 검증).
+
+#### 1-7-2. 원인
+
+`PipelineService._validate_with_database` 는 `cls_merge_datasets` 에 대해서만 DB 의 source
+head_schema 를 `build_stub_source_meta` + `preview_head_schema_at_task` 로 시뮬레이션해 compat
+체크를 수행하고 있었다. `cls_set_head_labels_for_all_images` 는 동일한 preview 가 필요했지만
+미연결 — 정적 단계에서 params × head_schema 대조가 아예 빠져 있었다.
+
+#### 1-7-3. 수정 — `lib/manipulators/cls_set_head_labels_for_all_images.py` + `app/services/pipeline_service.py`
+
+1. **manipulator 리팩터.** `SetHeadLabelsForAllImagesClassification` 클래스 내 staticmethod
+   검증을 모듈 레벨 함수 `validate_set_head_labels_params(head_schema, params) -> list[(code, message)]`
+   로 추출. 반환값은 위반 목록으로, 코드 5종:
+   - `HEAD_SCHEMA_MISSING` — detection 등 head_schema=None
+   - `HEAD_NAME_MISSING` — 파라미터 누락/공백
+   - `HEAD_NAME_NOT_FOUND` — head_schema 에 없는 head
+   - `CLASSES_DUPLICATE`, `CLASSES_NOT_IN_SCHEMA`, `SINGLE_LABEL_ARITY` (set_unknown=False 일 때만)
+   - `SET_UNKNOWN_INVALID` / `CLASSES_INVALID` — 파싱 실패
+
+   `transform_annotation` 은 이 함수의 첫 원소를 ValueError 로 승격 (runtime 메시지 기존 유지).
+   정적 검증은 리스트 전체를 `PipelineValidationIssue` 로 변환해 **한 번의 검증 호출로 여러
+   이슈를 동시에 노출**.
+
+2. **pipeline_service 확장.** `_validate_with_database` 에 검증 항목 5번으로
+   `_validate_cls_set_head_labels_compatibility(config, result)` 추가.
+   - 로직: config 내 `cls_set_head_labels_for_all_images` 태스크마다 상류 단일 입력의
+     head_schema 를 계산 — `source:<id>` 면 `build_stub_source_meta`, task ref 면
+     `preview_head_schema_at_task` 로 체인 시뮬레이션 → `validate_set_head_labels_params` 호출 →
+     이슈마다 `SET_HEAD_LABELS_{CODE}` prefix 로 ERROR 수집.
+   - preview 자체가 실패하면 (상류 operator NotImplementedError 등) WARNING 으로만 남기고 본
+     검증 스킵 — 동일 원인의 이중 에러 방지. 패턴은 기존 `MERGE_UPSTREAM_PREVIEW_FAILED` 와 동일.
+   - 소스 데이터셋 존재성(1~3번) 이 먼저 통과한 경우에만 실행 (same as cls_merge compat).
+
+3. **runtime 동작은 그대로.** `transform_annotation` 의 ValueError 메시지/타입 변경 없음 —
+   기존 manipulator 테스트 33/33 통과. 정적 검증은 추가되는 레이어이며 runtime 을 대체하지 않는다
+   (API 우회 방어).
+
+#### 1-7-4. 테스트 (`backend/tests/test_cls_set_head_labels_for_all_images.py`, 12건 신규)
+
+기존 파일 말단에 §7 / §8 섹션 추가:
+- **§7** `validate_set_head_labels_params` 순수 함수 — OK 케이스 3종, 5종 에러 코드별 1건씩,
+  multi-issue 축적 1건.
+- **§8** `test_validate_after_preview_catches_a6e6b2a2_scenario` — 실제 버그 파이프라인의 핵심
+  조건(single-label head + 2 classes + set_unknown=False) 을 순수 함수에 주어 `SINGLE_LABEL_ARITY`
+  가 수집되고 메시지에 `set_unknown` 유도 안내가 포함되는지 확인.
+
+`uv run pytest backend/tests -q` → **345 / 345** (이전 333 + 이번 12).
 
 ---
 

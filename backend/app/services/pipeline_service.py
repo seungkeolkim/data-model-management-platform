@@ -85,6 +85,8 @@ class PipelineService:
           3. source dataset에 annotation 파일이 등록되어 있는지
           4. cls_merge_datasets 태스크 입력들의 head_schema 호환성
              (objective_n_plan_7th.md §2-11-2 표의 9종 충돌을 검사)
+          5. cls_set_head_labels_for_all_images 태스크의 params 가 상류 head_schema
+             와 양립하는지 (single-label head 에 2개+ classes 등을 사전 차단)
         """
         result = PipelineValidationResult()
 
@@ -103,11 +105,12 @@ class PipelineService:
                 result,
             )
 
-        # (4) cls_merge_datasets 호환성 검사.
-        #     소스 데이터셋 존재성이 먼저 보장돼야 head_schema 를 로드할 수 있으므로,
-        #     앞선 소스 검증이 에러를 낸 상태에서는 compatibility 는 건너뛴다.
+        # (4), (5) — 상류 head_schema 를 preview 로 계산해야 하므로 소스 검증이
+        # 먼저 통과한 경우에만 수행. 두 검사 모두 preview_head_schema_at_task 를
+        # 재사용하므로 source_meta_by_dataset_id 는 한 번만 준비한다.
         if result.is_valid:
             await self._validate_cls_merge_compatibility(config, result)
+            await self._validate_cls_set_head_labels_compatibility(config, result)
 
         return result
 
@@ -283,6 +286,111 @@ class PipelineService:
                     code=f"MERGE_{issue.code}",
                     message=issue.message,
                     issue_field=f"tasks.{task_name}.{issue.field_suffix}",
+                )
+
+    # -------------------------------------------------------------------------
+    # cls_set_head_labels_for_all_images 정적 검증 (§2-4 SSOT / §2-12 null 규약)
+    # -------------------------------------------------------------------------
+
+    async def _validate_cls_set_head_labels_compatibility(
+        self,
+        config: PipelineConfig,
+        result: PipelineValidationResult,
+    ) -> None:
+        """
+        config 내 cls_set_head_labels_for_all_images 태스크마다 상류 head_schema 를
+        preview 로 계산해 `validate_set_head_labels_params` 로 검증한다.
+
+        이 검증이 필요한 이유:
+            runtime 의 `transform_annotation` 이 이미 동일 규칙을 검사하지만, 정적
+            `/pipelines/validate` 단계에서는 DAG 를 실제 실행하지 않으므로 단일 노드
+            의 runtime 검증이 호출되지 않는다 (pipeline id a6e6b2a2-... 재현 버그).
+            상류 head_schema 를 preview 로 시뮬레이션한 뒤 params 와 대조해, 사용자
+            가 `/execute` 를 누르기 전에 UI 에 이슈를 노출한다.
+
+        단일 입력 노드이므로 입력 ref 는 정확히 1 개. 0 개/2 개 이상은 NodeKind 정적
+        검증이 선행 차단한다.
+
+        상류 preview 가 실패하면 경고로만 남기고 본검증은 skip — 동일한 원인을
+        이중 에러로 띄우지 않는다.
+        """
+        from lib.manipulators.cls_set_head_labels_for_all_images import (
+            validate_set_head_labels_params,
+        )
+        from lib.pipeline.schema_preview import (
+            SchemaPreviewError,
+            build_stub_source_meta,
+            preview_head_schema_at_task,
+        )
+
+        target_tasks = [
+            (task_name, task_config)
+            for task_name, task_config in config.tasks.items()
+            if task_config.operator == "cls_set_head_labels_for_all_images"
+        ]
+        if not target_tasks:
+            return
+
+        # 필요한 source dataset 의 head_schema 를 한 번만 로드.
+        source_meta_by_dataset_id: dict[str, Any] = {}
+        for dataset_id in config.get_all_source_dataset_ids():
+            dataset_row = await self.db.execute(
+                select(Dataset)
+                .options(selectinload(Dataset.group))
+                .where(Dataset.id == dataset_id, Dataset.deleted_at.is_(None))
+            )
+            dataset_obj = dataset_row.scalar_one_or_none()
+            if dataset_obj is None:
+                continue
+            group_head_schema = (
+                dataset_obj.group.head_schema if dataset_obj.group else None
+            )
+            source_meta_by_dataset_id[dataset_id] = build_stub_source_meta(
+                dataset_id=dataset_id,
+                head_schema_json=group_head_schema,
+            )
+
+        for task_name, task_config in target_tasks:
+            if len(task_config.inputs) != 1:
+                # 단일 입력이 아닌 경우 NodeKind validator 가 잡을 문제 — skip.
+                continue
+            upstream_ref = task_config.inputs[0]
+
+            if upstream_ref.startswith("source:"):
+                source_dataset_id = upstream_ref.split(":", 1)[1]
+                upstream_meta = source_meta_by_dataset_id.get(source_dataset_id)
+                if upstream_meta is None:
+                    # 앞선 _validate_source_dataset 에서 이미 에러로 잡힘.
+                    continue
+                upstream_head_schema = getattr(upstream_meta, "head_schema", None)
+            else:
+                try:
+                    upstream_meta = preview_head_schema_at_task(
+                        config=config,  # type: ignore[arg-type]
+                        target_task_name=upstream_ref,
+                        source_meta_by_dataset_id=source_meta_by_dataset_id,
+                    )
+                except SchemaPreviewError as preview_error:
+                    result.add_warning(
+                        code="SET_HEAD_LABELS_UPSTREAM_PREVIEW_FAILED",
+                        message=(
+                            f"태스크 '{task_name}' 의 입력 '{upstream_ref}' 의 "
+                            f"head_schema 를 계산하지 못해 params 검증을 건너뜁니다: "
+                            f"[{preview_error.code}] {preview_error.message}"
+                        ),
+                        issue_field=f"tasks.{task_name}.inputs",
+                    )
+                    continue
+                upstream_head_schema = upstream_meta.head_schema
+
+            issues = validate_set_head_labels_params(
+                upstream_head_schema, task_config.params,
+            )
+            for issue_code, issue_message in issues:
+                result.add_error(
+                    code=f"SET_HEAD_LABELS_{issue_code}",
+                    message=issue_message,
+                    issue_field=f"tasks.{task_name}.params",
                 )
 
     # -------------------------------------------------------------------------
