@@ -87,6 +87,8 @@ class PipelineService:
              (objective_n_plan_7th.md §2-11-2 표의 9종 충돌을 검사)
           5. cls_set_head_labels_for_all_images 태스크의 params 가 상류 head_schema
              와 양립하는지 (single-label head 에 2개+ classes 등을 사전 차단)
+          6. cls_filter_by_class 태스크의 params 가 상류 head_schema 와 양립하는지
+             (head_name 존재 / classes SSOT / no-op 조합 사전 차단)
         """
         result = PipelineValidationResult()
 
@@ -105,12 +107,13 @@ class PipelineService:
                 result,
             )
 
-        # (4), (5) — 상류 head_schema 를 preview 로 계산해야 하므로 소스 검증이
-        # 먼저 통과한 경우에만 수행. 두 검사 모두 preview_head_schema_at_task 를
+        # (4), (5), (6) — 상류 head_schema 를 preview 로 계산해야 하므로 소스 검증이
+        # 먼저 통과한 경우에만 수행. 세 검사 모두 preview_head_schema_at_task 를
         # 재사용하므로 source_meta_by_dataset_id 는 한 번만 준비한다.
         if result.is_valid:
             await self._validate_cls_merge_compatibility(config, result)
             await self._validate_cls_set_head_labels_compatibility(config, result)
+            await self._validate_cls_filter_by_class_compatibility(config, result)
 
         return result
 
@@ -389,6 +392,104 @@ class PipelineService:
             for issue_code, issue_message in issues:
                 result.add_error(
                     code=f"SET_HEAD_LABELS_{issue_code}",
+                    message=issue_message,
+                    issue_field=f"tasks.{task_name}.params",
+                )
+
+    # -------------------------------------------------------------------------
+    # cls_filter_by_class 정적 검증 (§2-4 SSOT / §2-12 null 규약)
+    # -------------------------------------------------------------------------
+
+    async def _validate_cls_filter_by_class_compatibility(
+        self,
+        config: PipelineConfig,
+        result: PipelineValidationResult,
+    ) -> None:
+        """
+        config 내 cls_filter_by_class 태스크마다 상류 head_schema 를 preview 로 계산해
+        `validate_filter_by_class_params` 로 검증한다.
+
+        cls_set_head_labels_for_all_images 와 동일 패턴 — runtime
+        `transform_annotation` 이 이미 동일 규칙을 적용하지만, 정적
+        `/pipelines/validate` 단계에서는 DAG 를 실행하지 않으므로 여기서도 검사해
+        사용자가 `/execute` 전에 UI 에서 이슈를 확인할 수 있게 한다.
+
+        상류 preview 가 실패하면 경고로 degrade 하고 본 검증은 skip.
+        """
+        from lib.manipulators.cls_filter_by_class import (
+            validate_filter_by_class_params,
+        )
+        from lib.pipeline.schema_preview import (
+            SchemaPreviewError,
+            build_stub_source_meta,
+            preview_head_schema_at_task,
+        )
+
+        target_tasks = [
+            (task_name, task_config)
+            for task_name, task_config in config.tasks.items()
+            if task_config.operator == "cls_filter_by_class"
+        ]
+        if not target_tasks:
+            return
+
+        source_meta_by_dataset_id: dict[str, Any] = {}
+        for dataset_id in config.get_all_source_dataset_ids():
+            dataset_row = await self.db.execute(
+                select(Dataset)
+                .options(selectinload(Dataset.group))
+                .where(Dataset.id == dataset_id, Dataset.deleted_at.is_(None))
+            )
+            dataset_obj = dataset_row.scalar_one_or_none()
+            if dataset_obj is None:
+                continue
+            group_head_schema = (
+                dataset_obj.group.head_schema if dataset_obj.group else None
+            )
+            source_meta_by_dataset_id[dataset_id] = build_stub_source_meta(
+                dataset_id=dataset_id,
+                head_schema_json=group_head_schema,
+            )
+
+        for task_name, task_config in target_tasks:
+            if len(task_config.inputs) != 1:
+                # 단일 입력이 아닌 경우 NodeKind validator 가 잡을 문제 — skip.
+                continue
+            upstream_ref = task_config.inputs[0]
+
+            if upstream_ref.startswith("source:"):
+                source_dataset_id = upstream_ref.split(":", 1)[1]
+                upstream_meta = source_meta_by_dataset_id.get(source_dataset_id)
+                if upstream_meta is None:
+                    # 앞선 _validate_source_dataset 에서 이미 에러로 잡힘.
+                    continue
+                upstream_head_schema = getattr(upstream_meta, "head_schema", None)
+            else:
+                try:
+                    upstream_meta = preview_head_schema_at_task(
+                        config=config,  # type: ignore[arg-type]
+                        target_task_name=upstream_ref,
+                        source_meta_by_dataset_id=source_meta_by_dataset_id,
+                    )
+                except SchemaPreviewError as preview_error:
+                    result.add_warning(
+                        code="FILTER_BY_CLASS_UPSTREAM_PREVIEW_FAILED",
+                        message=(
+                            f"태스크 '{task_name}' 의 입력 '{upstream_ref}' 의 "
+                            f"head_schema 를 계산하지 못해 params 검증을 건너뜁니다: "
+                            f"[{preview_error.code}] {preview_error.message}"
+                        ),
+                        issue_field=f"tasks.{task_name}.inputs",
+                    )
+                    continue
+                upstream_head_schema = upstream_meta.head_schema
+
+            issues = validate_filter_by_class_params(
+                upstream_head_schema, task_config.params,
+            )
+            for issue_code, issue_message in issues:
+                result.add_error(
+                    code=f"FILTER_BY_CLASS_{issue_code}",
                     message=issue_message,
                     issue_field=f"tasks.{task_name}.params",
                 )

@@ -54,9 +54,7 @@ const UNIMPLEMENTED_OPERATORS = [
   // detection
   'det_change_compression',
   'det_shuffle_image_ids',
-  // classification (stub 상태 — NotImplementedError 던짐)
-  'cls_filter_by_class',
-  'cls_remove_images_without_label',
+  // classification — (현재 없음; 모든 cls_* 실구현 완료)
 ]
 
 /** description("버튼 텍스트 (도움말)") 패턴에서 앞부분만 추출 */

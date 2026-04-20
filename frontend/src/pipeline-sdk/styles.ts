@@ -68,6 +68,7 @@ export const MANIPULATOR_EMOJI: Record<string, string> = {
   cls_rotate_image: '↩️',
   cls_add_head: '➕',
   cls_set_head_labels_for_all_images: '📝',
+  cls_filter_by_class: '🧮',
 }
 
 export function getCategoryStyle(category: string) {
