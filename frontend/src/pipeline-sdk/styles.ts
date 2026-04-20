@@ -32,8 +32,16 @@ export const CATEGORY_STYLE: Record<string, { color: string; emoji: string; labe
  * API 응답의 기본 정렬(name asc) 을 덮어써야 할 때만 항목을 추가한다.
  */
 export const CATEGORY_ITEM_ORDER: Record<string, readonly string[]> = {
-  CLS_HEAD_CTRL: ['cls_select_heads', 'cls_rename_head', 'cls_reorder_heads', 'cls_demote_head_to_single_label'],
+  CLS_HEAD_CTRL: [
+    'cls_add_head',
+    'cls_select_heads',
+    'cls_rename_head',
+    'cls_reorder_heads',
+    'cls_demote_head_to_single_label',
+    'cls_set_head_labels_for_all_images',
+  ],
   CLS_CLASS_CTRL: ['cls_rename_class', 'cls_reorder_classes', 'cls_merge_classes'],
+  AUGMENT: ['cls_crop_image', 'cls_rotate_image'],
 }
 
 export const DEFAULT_CATEGORY_STYLE = { color: '#8c8c8c', emoji: '⚙️', label: '기타' }
@@ -56,6 +64,10 @@ export const MANIPULATOR_EMOJI: Record<string, string> = {
   det_merge_datasets: '🔗',
   cls_merge_datasets: '🔗',
   cls_demote_head_to_single_label: '⬇️',
+  cls_crop_image: '✂️',
+  cls_rotate_image: '↩️',
+  cls_add_head: '➕',
+  cls_set_head_labels_for_all_images: '📝',
 }
 
 export function getCategoryStyle(category: string) {
