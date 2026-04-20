@@ -8,7 +8,8 @@
 > - `c43a0b3` docs: binary label type 미결내용 결정 및 문서 반영
 > - `55a68a2` feat(manipulator): classification 이미지 변형 2종 + head 조작 2종 seed + 팔레트 노출 (stub)
 > - `84e6b40` feat(manipulator): cls_rotate_image 실구현 + postfix rename 규약 확립 + 25건 테스트
-> - (미커밋) feat(manipulator): cls_add_head 실구현 + DynamicParamForm checkbox/text 타입 추가 + Alembic 024 + 29건 테스트
+> - `916964f` feat(manipulator): cls_add_head 실구현 + DynamicParamForm checkbox/text 타입 추가 + Alembic 024 + 29건 테스트
+> - (미커밋) fix(pipeline-validator): cls_add_head head_name 이 같은 체인에서 중복되면 ERROR (pipeline id `a30a723f-ee93-4d5d-9e42-badba0d405ac` 재현 버그)
 
 020 의 filename-identity 전환(§2-13)이 끝난 상태에서, 고정 rename 규약 덕분에 이미지 변형 manipulator 도
 detection 과 동일한 "변형 시 파일명에 postfix 를 붙여 새 이미지로 만든다" 규약으로 구현할 수 있게 됐다.
@@ -188,6 +189,44 @@ labels 를 `null` (unknown, §2-12) 로 초기화하는 단순한 annotation 변
 
 `frontend/src/pipeline-sdk/definitions/operatorDefinition.tsx` 에서 `cls_add_head` 제거.
 팔레트에 활성 버튼으로 노출 (CLS_HEAD_CTRL 카테고리 최상단 — `CATEGORY_ITEM_ORDER` 기준).
+
+### 1-5. Static Pipeline Validator — `cls_add_head` 중복 head_name 검출
+
+#### 1-5-1. 버그 재현
+
+- Pipeline id `a30a723f-ee93-4d5d-9e42-badba0d405ac`.
+- 체인 상 세 번째 `cls_add_head` 에 두 번째(첫 번째 혹은 두 번째 노드)와 같은 `head_name='is_person'`
+  을 지정했는데, GUI 팔레트 편집 단계에서는 경고가 떴으나 **"검증" 버튼 (`validate_pipeline_config_static`)
+  은 성공** 으로 판정, 제출까지 통과했다. 런타임은 `cls_add_head.transform_annotation` 에서
+  `head_name already exists` 로 실패했지만 정적 검증에서 막지 못한 점이 회귀 위험.
+
+#### 1-5-2. 수정 — `backend/lib/pipeline/pipeline_validator.py`
+
+- 검증 항목 8번으로 `_validate_cls_add_head_duplicates(config, result)` 추가.
+- 로직: `config.topological_order()` 로 DAG 순회 → 각 task 마다
+  `TaskConfig.get_dependency_task_names()` 로 상위에서 누적된 head_name 집합을 합친 `inherited` 계산
+  → 현재 task 가 `cls_add_head` 이고 `head_name` 이 `inherited` 에 이미 있으면
+  `CLS_ADD_HEAD_DUPLICATE` ERROR 로 보고 → task 를 통과한 뒤 자기 head_name 도 누적에 더해 하위에
+  전파.
+- 한계: **source dataset 에 이미 존재하는 head_schema 와의 충돌은 정적 단계에서 잡지 않는다.**
+  (source 의 head_schema 는 DB 조회가 필요 — app/ 레이어 또는 런타임 `transform_annotation` 쪽 책임.)
+- 독립 브랜치(공통 upstream 없음)에서 같은 head_name 을 별도로 추가하는 경우는 허용 — 각 브랜치가
+  결국 다른 출력 데이터셋이 되고, 실제 DB 충돌이 발생할 곳은 merge 시점이므로 그 쪽 검증 소관.
+- 순환이면 `topological_order()` 가 ValueError → 다른 validator 가 선행 차단하므로 여기서는 조용히
+  return.
+
+#### 1-5-3. 테스트 (`backend/tests/test_pipeline_validator.py`, 4건 신규)
+
+`TestValidateClsAddHeadDuplicates`:
+1. `test_duplicate_head_name_in_chain_is_error` — 세 노드 체인에서 1 번째 / 3 번째가 동일
+   `is_person` → `CLS_ADD_HEAD_DUPLICATE` 1 건 (pipeline `a30a723f-...` 재현).
+2. `test_distinct_head_names_in_chain_pass` — `is_person` → `gender` 서로 다름 → 통과.
+3. `test_same_head_name_on_independent_branches_pass` — 두 source 에서 각각 `is_person` 추가,
+   공통 upstream 없음 → 허용.
+4. `test_empty_head_name_is_not_duplicate_report` — head_name 공백은 이 validator 로 중복 판정
+   안 함 (`cls_add_head.transform_annotation` 에서 ValueError 로 따로 잡힘).
+
+`uv run pytest backend/tests -q` → **300 / 300** (이전 296 + 이번 4).
 
 ---
 
