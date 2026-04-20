@@ -58,8 +58,6 @@ const UNIMPLEMENTED_OPERATORS = [
   'cls_filter_by_class',
   'cls_remove_images_without_label',
   'cls_crop_image',
-  'cls_rotate_image',
-  'cls_add_head',
   'cls_set_head_labels_for_all_images',
 ]
 

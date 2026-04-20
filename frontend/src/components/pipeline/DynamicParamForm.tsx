@@ -2,14 +2,14 @@
  * DynamicParamForm — params_schema 기반 동적 폼 렌더러
  *
  * Manipulator의 params_schema (JSONB)를 읽어 Ant Design 폼 필드를 자동 생성한다.
- * 지원 타입: multiselect, select, textarea, slider, color, number, key_value
+ * 지원 타입: multiselect, select, textarea, slider, color, number, key_value, checkbox, text
  */
 
-import { Form, Select, Input, InputNumber, Slider, ColorPicker, Button, Space } from 'antd'
+import { Form, Select, Input, InputNumber, Slider, ColorPicker, Button, Space, Checkbox } from 'antd'
 import { PlusOutlined, MinusCircleOutlined } from '@ant-design/icons'
 
 interface ParamFieldSchema {
-  type: 'multiselect' | 'select' | 'textarea' | 'slider' | 'color' | 'number' | 'key_value'
+  type: 'multiselect' | 'select' | 'textarea' | 'slider' | 'color' | 'number' | 'key_value' | 'checkbox' | 'text'
   label: string
   required?: boolean
   default?: unknown
@@ -146,6 +146,34 @@ export default function DynamicParamForm({
                 <ColorPicker
                   value={(currentValue as string) ?? schema.default ?? '#000000'}
                   onChange={(_, hex) => updateParam(paramKey, hex)}
+                />
+              </Form.Item>
+            )
+
+          case 'checkbox':
+            return (
+              <Form.Item
+                key={paramKey}
+                label={schema.label}
+                required={schema.required}
+              >
+                <Checkbox
+                  checked={Boolean(currentValue)}
+                  onChange={(e) => updateParam(paramKey, e.target.checked)}
+                />
+              </Form.Item>
+            )
+
+          case 'text':
+            return (
+              <Form.Item
+                key={paramKey}
+                label={schema.label}
+                required={schema.required}
+              >
+                <Input
+                  value={(currentValue as string) ?? ''}
+                  onChange={(e) => updateParam(paramKey, e.target.value)}
                 />
               </Form.Item>
             )
