@@ -58,7 +58,6 @@ const UNIMPLEMENTED_OPERATORS = [
   'cls_filter_by_class',
   'cls_remove_images_without_label',
   'cls_crop_image',
-  'cls_set_head_labels_for_all_images',
 ]
 
 /** description("버튼 텍스트 (도움말)") 패턴에서 앞부분만 추출 */

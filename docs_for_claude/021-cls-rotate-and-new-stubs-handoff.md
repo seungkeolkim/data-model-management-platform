@@ -9,7 +9,8 @@
 > - `55a68a2` feat(manipulator): classification 이미지 변형 2종 + head 조작 2종 seed + 팔레트 노출 (stub)
 > - `84e6b40` feat(manipulator): cls_rotate_image 실구현 + postfix rename 규약 확립 + 25건 테스트
 > - `916964f` feat(manipulator): cls_add_head 실구현 + DynamicParamForm checkbox/text 타입 추가 + Alembic 024 + 29건 테스트
-> - (미커밋) fix(pipeline-validator): cls_add_head head_name 이 같은 체인에서 중복되면 ERROR (pipeline id `a30a723f-ee93-4d5d-9e42-badba0d405ac` 재현 버그)
+> - `56f784c` fix(pipeline-validator): cls_add_head head_name 체인 내 중복 검출 + 4건 테스트
+> - (미커밋) feat(manipulator): cls_set_head_labels_for_all_images 실구현 + Alembic 025 (action→set_unknown) + 33건 테스트
 
 020 의 filename-identity 전환(§2-13)이 끝난 상태에서, 고정 rename 규약 덕분에 이미지 변형 manipulator 도
 detection 과 동일한 "변형 시 파일명에 postfix 를 붙여 새 이미지로 만든다" 규약으로 구현할 수 있게 됐다.
@@ -228,14 +229,60 @@ labels 를 `null` (unknown, §2-12) 로 초기화하는 단순한 annotation 변
 
 `uv run pytest backend/tests -q` → **300 / 300** (이전 296 + 이번 4).
 
+### 1-6. `cls_set_head_labels_for_all_images` 실구현 — params UX 단순화 + single-label assert 사전 차단
+
+stub 4종 중 세 번째 실구현. 지정 head 의 labels 를 **모든 이미지에서 동일 값으로 overwrite** 하는
+annotation-only manipulator (head_schema / file_name 불변 → Phase B lazy copy).
+
+#### 1-6-1. params UX 확정 (023 seed → 025 로 swap)
+
+세션 중 사용자가 단순화 요구: dropdown/select 대신 text + checkbox + textarea 만 쓴다.
+
+| key | UI 타입 | 의미 | 기본값 |
+|---|---|---|---|
+| `head_name` | text | 대상 head 이름 (기존 head_schema 에 존재해야 함) | — (필수) |
+| `set_unknown` | checkbox | 체크 = 해당 head 를 모든 이미지에서 `null` 로 초기화 (classes 무시) / 미체크 = classes 값으로 일괄 교체 | `False` |
+| `classes` | textarea | set_unknown 미체크 시 사용. 줄바꿈 구분. single-label = 정확히 1개, multi-label = 0개 이상 (빈 값 = explicit empty §2-12) | — |
+
+023 seed 당시 `action: select("set_null"|"set_classes")` 였는데 `set_unknown: checkbox (bool)` 로
+전환 — 024 의 `cls_add_head` swap 과 같은 패턴. Alembic `025_cls_set_head_labels_params`.
+
+#### 1-6-2. 동작 / 검증
+
+- `input_meta.head_schema=None` (detection) → `ValueError`. list 입력 → `TypeError`.
+- `head_name` 이 head_schema 에 없으면 `ValueError`.
+- **set_unknown=True**: classes 가 함께 들어와도 무시. 모든 `image_records[*].labels[head_name] = None`.
+- **set_unknown=False**: classes 파싱 후 검증
+  - 중복 이름 → `ValueError`.
+  - `head_schema.classes` 바깥 이름(신규 class) → `ValueError` (§2-4 SSOT — 새 class 가 필요하면 `cls_rename_class` / `cls_add_head` 를 먼저).
+  - single-label head 에 0개 또는 2개 이상 → `ValueError` ("0개면 set_unknown 을 쓰라" 안내 포함).
+  - multi-label head 는 0개 이상 모두 허용 (빈 리스트 = explicit empty §2-12).
+- 원본 labels 에 target_head 키가 없어도(cls_add_head 직후 등) 이번 단계에서 채워진다.
+- 다른 head labels 는 원형 유지. head_schema 도 변경 없이 깊은 복제.
+
+#### 1-6-3. 테스트 (`backend/tests/test_cls_set_head_labels_for_all_images.py`, 33 케이스)
+
+- set_unknown=True → target head 전부 null, 다른 head 보존, classes 무시
+- single-label + 1 class, multi-label + 2 classes, multi-label + 0 classes(explicit empty)
+- head_schema 불변, target_head 가 원본 labels 에 없을 때 새로 채움
+- classes textarea trim / list 수용 / set_unknown truthy·falsy 문자열 파라미터화
+- 에러: head_name 누락/공백/미존재, single-label + 0 or 2개, 바깥 class, 중복, list 입력, detection
+- 원본 meta 불변, 이미지 메타(image_id/file_name/width/height/extra) 보존
+
+`uv run pytest backend/tests -q` → **333 / 333** (이전 300 + 이번 33).
+
+#### 1-6-4. UNIMPLEMENTED_OPERATORS 해제
+
+`frontend/src/pipeline-sdk/definitions/operatorDefinition.tsx` 에서 `cls_set_head_labels_for_all_images` 제거. 팔레트에 활성 버튼으로 노출 (CLS_HEAD_CTRL 카테고리 최하단).
+
 ---
 
 ## 2. Registry 상태 (27종)
 
 - Detection: **12 실구현**
-- Classification: **11 실구현 + 4 stub**
-  - 실구현 (11): `cls_rename_head`, `cls_rename_class`, `cls_reorder_heads`, `cls_reorder_classes`, `cls_select_heads`, `cls_merge_datasets`, `cls_merge_classes`, `cls_demote_head_to_single_label`, `cls_sample_n_images`, **`cls_rotate_image` (신규)**, **`cls_add_head` (신규)**
-  - stub (4): `cls_filter_by_class`, `cls_remove_images_without_label`, `cls_crop_image`, `cls_set_head_labels_for_all_images`
+- Classification: **12 실구현 + 3 stub**
+  - 실구현 (12): `cls_rename_head`, `cls_rename_class`, `cls_reorder_heads`, `cls_reorder_classes`, `cls_select_heads`, `cls_merge_datasets`, `cls_merge_classes`, `cls_demote_head_to_single_label`, `cls_sample_n_images`, `cls_rotate_image`, `cls_add_head`, **`cls_set_head_labels_for_all_images` (신규)**
+  - stub (3): `cls_filter_by_class`, `cls_remove_images_without_label`, `cls_crop_image`
 
 ---
 
@@ -244,13 +291,11 @@ labels 를 `null` (unknown, §2-12) 로 초기화하는 단순한 annotation 변
 1. **`cls_crop_image` 실구현** — 규약 1-3-2 를 그대로 따른다. postfix 는 `_cropped_{t}_{b}_{l}_{r}`,
    90°/270° 의 dim swap 대신 `width *= (1 - (left+right)/100)`, `height *= (1 - (top+bottom)/100)` 의
    정수 반올림. Phase B 쪽 `_apply_crop` 이 이미 있는지 먼저 확인 필요 (없으면 추가).
-2. **`cls_set_head_labels_for_all_images` 실구현** — `action ∈ {set_null, set_classes}`.
-   `set_classes` + multi_label=False + len(classes) > 1 이면 single-label assert 로 ValueError.
-3. **`cls_filter_by_class` / `cls_remove_images_without_label`** — annotation 기반 필터 2종.
+2. **`cls_filter_by_class` / `cls_remove_images_without_label`** — annotation 기반 필터 2종.
    이미지 변형과 달리 Phase B 는 건드리지 않는다 (record 제거만).
-4. **Automation 실구현** (lineage + minor 버전 증가 규약)
-5. **Detection 미구현 2종** — `det_change_compression`, `det_shuffle_image_ids` (long-tail).
-6. **Step 2 진입 시 `loss_per_head` 스키마 실장** — §6-2 결정 반영.
+3. **Automation 실구현** (lineage + minor 버전 증가 규약)
+4. **Detection 미구현 2종** — `det_change_compression`, `det_shuffle_image_ids` (long-tail).
+5. **Step 2 진입 시 `loss_per_head` 스키마 실장** — §6-2 결정 반영.
 
 ---
 
