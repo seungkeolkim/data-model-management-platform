@@ -395,6 +395,13 @@ per-class unknown 이 필수가 되는 시점(Step 4 auto-labeling)에 `labels` 
 
 **검증.** `/hdd1/data-platform/uploads/hardhat_classification/val` 실등록 (5613 입력, 1건 의도적 중복) → image_count=5612, `skipped_collisions=1` 기록. 이후 파이프라인 실행 2건 (pipeline_id `28ce7e89...`, `75919089...`) 성공, merge 결과 11224 장 (5612 × 2) 생성 확인.
 
+**데이터 상세 뷰어 표시 규약 (v7.5 확정 · 2026-04-20).**
+
+- Classification 샘플 뷰어는 **현재 storage pool 파일명 (`file_name`)** 을 기본 식별자로 노출한다. merge rename 이 적용된 이미지는 prefix 가 붙은 이름이 곧 탐색 / 링크의 기준이 된다.
+- 원본 파일명 (`original_file_name`) 은 **rename 이 발생해 두 값이 달라진 경우에만 "(원본: …)" 로 병기**된다. RAW 등록 그대로인 이미지는 두 값이 동일하므로 한 줄만 보인다.
+- API 응답 스키마 (`ClassificationSampleImageItem`): `file_name: str` (current) + `original_file_name: str | None` (달라질 때만 값). 폐지된 `sha` 필드는 응답에서 제거됨.
+- 좌측 검색은 `file_name` + `original_file_name` 양쪽에 매칭 — 사용자가 원본 이름을 기억해도 rename 된 결과를 찾을 수 있다.
+
 ### 2-9. 노드 SDK 불변식 (절대 준수)
 
 - NodeKind 추가는 **3군데 동시 갱신**: `NodeDataByKind` + `definitions/<kind>Definition.tsx` + `bootstrap.ts` + `registry.ts` expected 배열. 누락 시 런타임 assert로 부팅 실패 (의도된 감시)

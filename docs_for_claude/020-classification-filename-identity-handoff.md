@@ -6,6 +6,8 @@
 > 이번 세션 브랜치: `feature/classification-image-transform-identity-01`
 > 주요 커밋:
 > - `b4de107` refactor(classification): 이미지 identity 를 SHA content → filename 기반으로 전환 (§2-8)
+> - `f3631b2` docs: 설계서 v7.5 갱신 + handoff 020 — classification filename-identity 전환
+> - `710fc88` feat(classification-viewer): 상세 뷰 파일명을 현재 파일명으로 노출 + 원본은 rename 시에만 병기
 
 019 에서 classification 파이프라인 stub 제거와 `null` = unknown 규약 확정이 끝난 뒤,
 실제 파이프라인 테스트를 돌리는 과정에서 Phase B 실체화 단계가 동일 SHA 체계 기반으로
@@ -73,15 +75,15 @@ DB 변경 없음. Alembic 마이그레이션 불필요.
 
 ## 2. 남아 있는 후속 작업
 
-### 2-1. 데이터셋 상세 보기 파일명 표시 전환 (다음 세션 시작 지점)
+### 2-1. 데이터셋 상세 보기 파일명 표시 전환 (완료 · 커밋 `710fc88`)
 
-현재 데이터셋 상세 화면은 `original_filename` 을 보여주고 있으나, v7.5 에서는 plaform 내 식별자가 `filename` (storage pool 상의 이름) 이다. merge rename 이 발생하면 `original_filename` 은 source 를 가리키고 `filename` 이 실제 파일이므로, 탐색·디버깅 용이성을 위해 **`filename` 을 기본으로 노출**하도록 변경한다.
+방향 (2) "rename 된 경우만 원본 병기" 로 확정·반영됨.
 
-- 대상: 프론트 데이터셋 상세 뷰 (sample viewer / manifest 테이블 / 상세 모달)
-- 변경 방향 후보
-  - (1) 기본은 `filename`, `original_filename` 은 보조 툴팁/보조 컬럼.
-  - (2) merge rename 이 없었던 이미지는 두 값이 동일하므로 한 컬럼만 표시, rename 된 경우만 `original_filename` 을 괄호로 병기.
-- 결정은 사용자와 함께 (2) 쪽을 우선 검토.
+- 백엔드 `ClassificationSampleImageItem` 스키마: `sha` 필드 제거, `file_name: str` (현재 파일명) + `original_file_name: str | None` (rename 시에만 값) 로 재구성.
+- `get_classification_sample_list` 가 `stored_filename` 을 `file_name` 으로 내리고, 캐시된 `original_filename` 이 이와 다를 때만 `original_file_name` 을 세팅.
+- 프론트 `ClassificationSampleViewerTab` 미리보기: 현재 파일명을 기본 표시, `original_file_name` 이 있으면 "(원본: …)" 를 secondary 스타일로 병기. 기존 `sha:` 라인 삭제.
+- 좌측 리스트 검색: `file_name` + `original_file_name` 양쪽을 대상으로 매칭하여 merge rename 결과를 원본 이름으로도 찾을 수 있게 확장.
+- 실데이터 검증: `hardhat` RAW (rename 없음) 는 한 줄만 노출, `hardhat_full_test_nosample` (merge 결과) 은 prefix 파일명 + "(원본: …)" 병기 정상 표시.
 
 ### 2-2. 기타 TODO (우선순위 낮음)
 
