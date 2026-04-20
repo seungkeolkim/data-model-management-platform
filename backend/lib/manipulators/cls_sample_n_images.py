@@ -9,7 +9,7 @@ params:
     n:    int        — 추출할 이미지 수 (필수, 1 이상)
     seed: int | None — 랜덤 시드 (선택, 기본값 42)
 
-이미지 바이너리 불변 → sha/file_name 유지 → lazy copy.
+이미지 바이너리 불변 → file_name 유지 → lazy copy.
 """
 from __future__ import annotations
 

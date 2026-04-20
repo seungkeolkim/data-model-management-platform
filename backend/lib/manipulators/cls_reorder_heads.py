@@ -11,7 +11,7 @@ params:
         중복 없이 포함해야 한다.
 
 head_schema 만 변경되며 image_records[*].labels 는 dict 이라 순서 무관 → 수정 불요.
-이미지 바이너리 불변 → sha/file_name 유지 → lazy copy.
+이미지 바이너리 불변 → file_name 유지 → lazy copy.
 """
 from __future__ import annotations
 

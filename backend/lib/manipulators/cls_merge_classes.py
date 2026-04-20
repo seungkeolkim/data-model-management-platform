@@ -22,7 +22,7 @@ params:
     source_classes: list[str] — 병합 대상 class 이름 목록 (필수, 최소 2개).
     target_class:   str       — 병합 후 class 이름 (필수). source_classes 중 하나이거나 신규 이름.
 
-이미지 바이너리 불변 → sha/file_name 유지 → lazy copy.
+이미지 바이너리 불변 → file_name 유지 → lazy copy.
 """
 from __future__ import annotations
 

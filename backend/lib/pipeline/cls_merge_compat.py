@@ -26,7 +26,6 @@ from lib.pipeline.pipeline_data_models import HeadSchema
 
 OPTION_ON_HEAD_MISMATCH = "on_head_mismatch"
 OPTION_ON_CLASS_SET_MISMATCH = "on_class_set_mismatch"
-OPTION_ON_LABEL_CONFLICT = "on_label_conflict"
 
 HEAD_MISMATCH_ERROR = "error"
 HEAD_MISMATCH_FILL_EMPTY = "fill_empty"
@@ -36,23 +35,22 @@ CLASS_SET_MISMATCH_ERROR = "error"
 CLASS_SET_MISMATCH_MULTI_LABEL_UNION = "multi_label_union"
 CLASS_SET_MISMATCH_ALLOWED = {CLASS_SET_MISMATCH_ERROR, CLASS_SET_MISMATCH_MULTI_LABEL_UNION}
 
-LABEL_CONFLICT_DROP_IMAGE = "drop_image"
-LABEL_CONFLICT_MERGE_IF_COMPATIBLE = "merge_if_compatible"
-LABEL_CONFLICT_ALLOWED = {LABEL_CONFLICT_DROP_IMAGE, LABEL_CONFLICT_MERGE_IF_COMPATIBLE}
-
 
 def resolve_merge_params(params: dict[str, Any] | None) -> dict[str, str]:
     """
-    params dict 에서 merge 3옵션의 최종 값을 뽑는다. 미지정이면 default,
+    params dict 에서 merge 2옵션의 최종 값을 뽑는다. 미지정이면 default,
     허용값 외의 값이면 ValueError.
 
+    과거에 존재하던 `on_label_conflict` 옵션은 filename identity 확정(§2-8)으로
+    SHA 기반 content dedup 이 폐지되면서 함께 제거됐다. 같은 파일명이 여러 입력에
+    걸쳐도 rename 으로 공존시키므로 label 충돌 판정 자체가 필요 없어졌다.
+
     Returns:
-        {"on_head_mismatch": "...", "on_class_set_mismatch": "...", "on_label_conflict": "..."}
+        {"on_head_mismatch": "...", "on_class_set_mismatch": "..."}
     """
     params = params or {}
     on_head = str(params.get(OPTION_ON_HEAD_MISMATCH) or HEAD_MISMATCH_ERROR)
     on_class = str(params.get(OPTION_ON_CLASS_SET_MISMATCH) or CLASS_SET_MISMATCH_ERROR)
-    on_label = str(params.get(OPTION_ON_LABEL_CONFLICT) or LABEL_CONFLICT_DROP_IMAGE)
 
     if on_head not in HEAD_MISMATCH_ALLOWED:
         allowed = sorted(HEAD_MISMATCH_ALLOWED)
@@ -64,15 +62,9 @@ def resolve_merge_params(params: dict[str, Any] | None) -> dict[str, str]:
         raise ValueError(
             f"{OPTION_ON_CLASS_SET_MISMATCH} 값은 {allowed} 중 하나여야 합니다: {on_class!r}"
         )
-    if on_label not in LABEL_CONFLICT_ALLOWED:
-        allowed = sorted(LABEL_CONFLICT_ALLOWED)
-        raise ValueError(
-            f"{OPTION_ON_LABEL_CONFLICT} 값은 {allowed} 중 하나여야 합니다: {on_label!r}"
-        )
     return {
         OPTION_ON_HEAD_MISMATCH: on_head,
         OPTION_ON_CLASS_SET_MISMATCH: on_class,
-        OPTION_ON_LABEL_CONFLICT: on_label,
     }
 
 

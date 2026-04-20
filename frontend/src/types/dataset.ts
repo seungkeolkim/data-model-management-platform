@@ -97,10 +97,9 @@ export interface ClassificationHeadInfo {
 
 export interface ClassificationClassInfo {
   heads: ClassificationHeadInfo[]
-  skipped_conflict_count?: number
-  skipped_conflicts?: unknown[]
-  intra_class_duplicate_count?: number
-  intra_class_duplicates?: unknown[]
+  // single-label head 에서 동일 파일명이 2개 이상 class 에 등장하여 ingest 에서 skip 된 이미지 상세.
+  skipped_collision_count?: number
+  skipped_collisions?: unknown[]
 }
 
 export type ClassInfo = DetectionClassInfo | ClassificationClassInfo
@@ -178,8 +177,9 @@ export interface DatasetRegisterRequest {
 // =============================================================================
 // Classification 등록 요청/응답
 // =============================================================================
-
-export type DuplicateImagePolicy = 'FAIL' | 'SKIP'
+// 이미지 identity 는 filename 기반 (§2-8). single-label head 에서 동일 파일명이
+// 2개 이상 class 에 등장하면 ingest 단계에서 warning + skip 되므로 별도 사용자
+// 정책(duplicate_image_policy) 선택지는 없다.
 
 export interface ClassificationHeadSpec {
   name: string                       // head 표시 이름 (편집 가능)
@@ -197,7 +197,6 @@ export interface DatasetRegisterClassificationRequest {
   split: Split
   source_root_dir: string
   heads: ClassificationHeadSpec[]
-  duplicate_image_policy?: DuplicateImagePolicy
 }
 
 export interface ClassificationHeadWarning {

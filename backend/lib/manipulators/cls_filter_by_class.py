@@ -12,7 +12,7 @@ params:
     class_names:    list[str] — 필터 대상 class 이름 목록.
     mode:           "include" | "exclude" — 기본 "include".
 
-이미지 바이너리 불변 → 남은 image_records 의 sha/file_name 유지 → lazy copy.
+이미지 바이너리 불변 → 남은 image_records 의 file_name 유지 → lazy copy.
 
 현재는 STUB. 실제 로직은 다음 세션.
 """

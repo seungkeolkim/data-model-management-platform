@@ -17,7 +17,7 @@ params:
         - 같은 new_name 으로 2개 이상 이름이 매핑되면 에러
           (head 병합은 의미가 모호하므로 지원하지 않음).
 
-이미지 바이너리는 불변 → sha/file_name 유지 → lazy copy.
+이미지 바이너리는 불변 → file_name 유지 → lazy copy.
 """
 from __future__ import annotations
 

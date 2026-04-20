@@ -15,7 +15,7 @@ params:
 
 주로 merge 이전에 class 이름 충돌을 회피하기 위해 사용한다.
 classes 순서는 학습 output index SSOT 이므로 rename 은 순서를 보존한다.
-이미지 바이너리 불변 → sha/file_name 유지 → lazy copy.
+이미지 바이너리 불변 → file_name 유지 → lazy copy.
 """
 from __future__ import annotations
 

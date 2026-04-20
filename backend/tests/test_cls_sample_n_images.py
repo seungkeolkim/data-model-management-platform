@@ -23,15 +23,16 @@ from lib.pipeline.pipeline_data_models import DatasetMeta, HeadSchema, ImageReco
 
 
 def _make_record(
-    sha: str,
+    tag: str,
     labels: dict[str, list[str] | None],
 ) -> ImageRecord:
+    """tag 는 테스트 내 이미지 식별용 임의 문자열 — file_name 생성에만 쓰임."""
+    file_name = f"images/{tag}.jpg"
     return ImageRecord(
         image_id=1,
-        file_name=f"images/{sha}.jpg",
+        file_name=file_name,
         width=640,
         height=480,
-        sha=sha,
         labels=labels,
     )
 
@@ -59,7 +60,7 @@ _HEAD_SCHEMA = [
 def _make_ten_records() -> list[ImageRecord]:
     """테스트용 10장 레코드 생성."""
     return [
-        _make_record(f"sha{i:02d}", {"vehicle": ["sedan"] if i % 2 == 0 else ["truck"]})
+        _make_record(f"img{i:02d}", {"vehicle": ["sedan"] if i % 2 == 0 else ["truck"]})
         for i in range(10)
     ]
 
@@ -136,9 +137,9 @@ def test_same_seed_same_result() -> None:
     result_a = _MANIPULATOR.transform_annotation(meta, {"n": 3, "seed": 7})
     result_b = _MANIPULATOR.transform_annotation(meta, {"n": 3, "seed": 7})
 
-    shas_a = [r.sha for r in result_a.image_records]
-    shas_b = [r.sha for r in result_b.image_records]
-    assert shas_a == shas_b
+    file_names_a = [r.file_name for r in result_a.image_records]
+    file_names_b = [r.file_name for r in result_b.image_records]
+    assert file_names_a == file_names_b
 
 
 def test_different_seed_different_result() -> None:
@@ -148,10 +149,10 @@ def test_different_seed_different_result() -> None:
     result_a = _MANIPULATOR.transform_annotation(meta, {"n": 3, "seed": 1})
     result_b = _MANIPULATOR.transform_annotation(meta, {"n": 3, "seed": 999})
 
-    shas_a = [r.sha for r in result_a.image_records]
-    shas_b = [r.sha for r in result_b.image_records]
+    file_names_a = [r.file_name for r in result_a.image_records]
+    file_names_b = [r.file_name for r in result_b.image_records]
     # 10장 중 3장 — seed 가 다르면 거의 확실히 다른 결과
-    assert shas_a != shas_b
+    assert file_names_a != file_names_b
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -186,9 +187,9 @@ def test_head_schema_preserved() -> None:
 def test_null_labels_preserved() -> None:
     """null(unknown) labels 가 샘플링 후에도 보존."""
     records = [
-        _make_record("sha1", {"vehicle": None}),
-        _make_record("sha2", {"vehicle": ["sedan"]}),
-        _make_record("sha3", {"vehicle": None}),
+        _make_record("img1", {"vehicle": None}),
+        _make_record("img2", {"vehicle": ["sedan"]}),
+        _make_record("img3", {"vehicle": None}),
     ]
     meta = _make_meta(_HEAD_SCHEMA, records)
 

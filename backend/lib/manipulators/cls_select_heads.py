@@ -10,7 +10,7 @@ params:
         list[str] 또는 줄바꿈 구분 str. 비어있거나 None 이면 아무것도 제거하지 않음(= passthrough).
         지정된 head 이름 중 실제 존재하지 않는 것은 무시한다 (에러 내지 않고 로그만).
 
-이미지 바이너리 불변 → sha/file_name 유지 → lazy copy.
+이미지 바이너리 불변 → file_name 유지 → lazy copy.
 """
 from __future__ import annotations
 

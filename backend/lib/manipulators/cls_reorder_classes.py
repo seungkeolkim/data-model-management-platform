@@ -15,7 +15,7 @@ params:
 
 image_records[*].labels 는 dict[head_name → list[class_name]] 이므로 순서 무관
 → labels 는 얕게 복제만. 다른 head 는 불변.
-이미지 바이너리 불변 → sha/file_name 유지 → lazy copy.
+이미지 바이너리 불변 → file_name 유지 → lazy copy.
 """
 from __future__ import annotations
 

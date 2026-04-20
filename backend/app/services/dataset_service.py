@@ -315,7 +315,6 @@ class DatasetGroupService:
             "Classification 등록 요청",
             root_dir=req.source_root_dir,
             heads=[head.name for head in req.heads],
-            policy=req.duplicate_image_policy,
         )
         root_dir = self._validate_browse_path(req.source_root_dir, expect_dir=True)
         # LOCAL_UPLOAD_BASE 하위인지 확인 (파일 브라우저 라우터와 동일한 정책)
@@ -445,7 +444,6 @@ class DatasetGroupService:
             dataset_id=dataset.id,
             storage_uri=storage_uri,
             heads_payload=heads_payload,
-            duplicate_policy=req.duplicate_image_policy,
         )
         logger.info(
             "Classification 등록 태스크 dispatch 완료",

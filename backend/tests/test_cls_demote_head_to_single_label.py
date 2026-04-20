@@ -26,17 +26,22 @@ from lib.pipeline.pipeline_data_models import DatasetMeta, HeadSchema, ImageReco
 
 
 def _make_record(
-    sha: str,
+    tag: str,
     labels: dict[str, list[str] | None],
 ) -> ImageRecord:
+    """tag 는 테스트 내 이미지 식별용 임의 문자열 — file_name 생성에만 쓰임."""
     return ImageRecord(
         image_id=1,
-        file_name=f"images/{sha}.jpg",
+        file_name=f"images/{tag}.jpg",
         width=640,
         height=480,
-        sha=sha,
         labels=labels,
     )
+
+
+def _tags_of(records: list[ImageRecord]) -> list[str]:
+    """file_name "images/{tag}.jpg" 에서 tag 부분을 추출해 테스트 비교용 list 로 반환."""
+    return [record.file_name.removeprefix("images/").removesuffix(".jpg") for record in records]
 
 
 def _make_meta(
@@ -152,10 +157,10 @@ def test_skip_multi_label_images() -> None:
     )
 
     assert len(result.image_records) == 2
-    shas = [r.sha for r in result.image_records]
-    assert "sha1" in shas
-    assert "sha3" in shas
-    assert "sha2" not in shas
+    tags = _tags_of(result.image_records)
+    assert "sha1" in tags
+    assert "sha3" in tags
+    assert "sha2" not in tags
 
 
 def test_skip_empty_list_images() -> None:
@@ -176,7 +181,7 @@ def test_skip_empty_list_images() -> None:
     )
 
     assert len(result.image_records) == 1
-    assert result.image_records[0].sha == "sha1"
+    assert _tags_of(result.image_records) == ["sha1"]
 
 
 def test_skip_mixed_violations() -> None:
@@ -200,8 +205,7 @@ def test_skip_mixed_violations() -> None:
     )
 
     assert len(result.image_records) == 3
-    shas = [r.sha for r in result.image_records]
-    assert shas == ["sha1", "sha2", "sha5"]
+    assert _tags_of(result.image_records) == ["sha1", "sha2", "sha5"]
 
 
 # ─────────────────────────────────────────────────────────────────

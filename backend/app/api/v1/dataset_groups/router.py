@@ -98,7 +98,6 @@ async def register_classification_dataset(
         split=req.split,
         head_count=len(req.heads),
         root_dir=req.source_root_dir,
-        policy=req.duplicate_image_policy,
     )
     svc = DatasetGroupService(db)
     try:

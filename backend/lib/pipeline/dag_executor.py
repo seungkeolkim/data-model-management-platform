@@ -521,9 +521,13 @@ class PipelineDagExecutor:
           - merge 경로면 record.extra.source_storage_uri + original_file_name 으로 원본 위치 지정.
 
         Classification 경로:
-          - record.file_name 은 이미 "images/{sha}.{ext}" 상대경로 규약 (manifest_io).
-          - images_dirname 을 중복 부착하면 "images/images/..." 로 깨지므로 분기한다.
-          - merge 경로는 아직 미구현 (다음 세션).
+          - record.file_name 은 "images/{basename}" 상대경로 (manifest_io 규약).
+          - merge 에서 파일명 충돌이 rename 된 경우 record.file_name 은
+            "images/{display}_{md5_4}_{basename}" 형태가 된다. 소스 스토리지에는
+            이 renamed 파일이 존재하지 않으므로, src 경로는 반드시
+            record.extra.original_file_name (rename 이전의 원본 경로) 로 구성한다.
+          - images_dirname 을 경로에 중복 부착하면 "images/images/..." 로 깨지므로
+            detection 과 달리 분기 처리한다.
         """
         plans: list[ImagePlan] = []
         is_classification = output_meta.task_kind == "CLASSIFICATION"
@@ -533,19 +537,20 @@ class PipelineDagExecutor:
             original_file_name = record.extra.get("original_file_name")
 
             if is_classification:
-                # file_name 자체가 "images/{sha}.{ext}" → 그대로 사용.
-                rel_path = record.file_name
-                if source_uri_override:
-                    src_uri = f"{source_uri_override}/{rel_path}"
+                # dst 는 merge rename 이 반영된 최종 이름.
+                dst_uri = f"{output_storage_uri}/{record.file_name}"
+                # src 는 rename 이전의 원본 경로여야 실제 파일을 찾을 수 있다.
+                if source_uri_override and original_file_name:
+                    src_uri = f"{source_uri_override}/{original_file_name}"
                 elif source_storage_uris:
-                    src_uri = f"{source_storage_uris[0]}/{rel_path}"
+                    # 비-merge 경로: record.file_name 자체가 원본 경로와 동일.
+                    src_uri = f"{source_storage_uris[0]}/{record.file_name}"
                 else:
                     logger.warning(
                         "소스 경로를 결정할 수 없음 (건너뜀): file_name=%s",
                         record.file_name,
                     )
                     continue
-                dst_uri = f"{output_storage_uri}/{rel_path}"
             else:
                 if source_uri_override and original_file_name:
                     src_uri = f"{source_uri_override}/{self.images_dirname}/{original_file_name}"

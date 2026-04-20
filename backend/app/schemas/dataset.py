@@ -202,11 +202,11 @@ class DatasetRegisterRequest(BaseModel):
 # =============================================================================
 # Classification은 어노테이션 파일 대신 폴더 구조(head/class/이미지)로 라벨이
 # 결정되므로 별도 요청 스키마를 둔다. 등록 시 단일 풀 + manifest.jsonl로 정규화한다.
-
-# single-label head에서 동일 이미지가 여러 class 폴더에 존재할 때의 정책.
-# - FAIL: 감지 즉시 등록 작업 중단 + 사용자 리포트 (기본)
-# - SKIP: 해당 이미지를 pool/manifest에서 제외하고 계속 진행
-DuplicateImagePolicy = Literal["FAIL", "SKIP"]
+#
+# 이미지 identity 는 filename 기반이다 (§2-8 확정). single-label head 에서 동일
+# filename 이 2개 이상 class 폴더에 등장하는 경우는 사용자 라벨링 오류이므로,
+# ingest 단계에서 warning + 해당 이미지 전체 skip 처리된다. 과거의 SHA 기반
+# content dedup / duplicate_image_policy 옵션은 폐지됐다.
 
 
 class ClassificationHeadSpec(BaseModel):
@@ -269,12 +269,6 @@ class DatasetRegisterClassificationRequest(BaseModel):
         ...,
         min_length=1,
         description="등록할 head/class 계약. 순서·이름 모두 사용자 확정 값",
-    )
-
-    # 단일 label head에서 이미지 충돌 시 정책. 기본 FAIL.
-    duplicate_image_policy: DuplicateImagePolicy = Field(
-        default="FAIL",
-        description="single-label head의 이미지 중복 정책. FAIL=중단, SKIP=해당 이미지 제외",
     )
 
     @model_validator(mode="after")

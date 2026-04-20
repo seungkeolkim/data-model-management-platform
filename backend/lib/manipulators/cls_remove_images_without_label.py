@@ -9,7 +9,7 @@ params:
     target_head_names: list[str] | None — None 이면 모든 head 기준. 리스트면 해당 head 들 중
                                             하나라도 label 이 없으면 제거 (AND 아닌 OR 조건).
 
-이미지 바이너리 불변 → 남은 image_records 의 sha/file_name 유지 → lazy copy.
+이미지 바이너리 불변 → 남은 image_records 의 file_name 유지 → lazy copy.
 
 현재는 STUB. 실제 로직은 다음 세션.
 """

@@ -24,7 +24,7 @@ params:
     head_name:      str                — 강등 대상 head 이름 (필수).
     on_violation:   "skip" | "fail"    — single-label 위반 이미지 처리 정책 (필수, 기본 "fail").
 
-이미지 바이너리 불변 → sha/file_name 유지 → lazy copy.
+이미지 바이너리 불변 → file_name 유지 → lazy copy.
 """
 from __future__ import annotations
 
@@ -131,7 +131,7 @@ class DemoteHeadToSingleLabelClassification(UnitManipulator):
 
             # 위반: [] (explicit empty) 또는 [class 2개 이상]
             violation_detail = (
-                f"sha={record.sha}, head='{target_head_name}', "
+                f"file_name={record.file_name}, head='{target_head_name}', "
                 f"labels={head_label_value!r} (개수={label_count})"
             )
 

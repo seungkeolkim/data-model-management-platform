@@ -24,15 +24,15 @@ from lib.pipeline.pipeline_data_models import DatasetMeta, HeadSchema, ImageReco
 
 
 def _make_record(
-    sha: str,
+    tag: str,
     labels: dict[str, list[str] | None],
 ) -> ImageRecord:
+    """tag 는 테스트 내 이미지 식별용 임의 문자열 — file_name 생성에만 쓰임."""
     return ImageRecord(
         image_id=1,
-        file_name=f"images/{sha}.jpg",
+        file_name=f"images/{tag}.jpg",
         width=640,
         height=480,
-        sha=sha,
         labels=labels,
     )
 
