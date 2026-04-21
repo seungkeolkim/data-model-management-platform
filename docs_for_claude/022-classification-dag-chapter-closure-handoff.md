@@ -1,10 +1,10 @@
 # 통합 핸드오프 022 — Classification DAG 실구현 챕터 종결 + main 머지 준비
 
-> 최종 갱신: 2026-04-20
+> 최종 갱신: 2026-04-21 (§11 post-merge 버그 수정 추가)
 > 이전 핸드오프: `docs_history/handoffs/021-cls-rotate-and-new-stubs-handoff.md`
-> 설계 현행: `objective_n_plan_7th.md` (v7.6)
-> 이번 세션 브랜치: `feature/classification-dag-implementation-01`
-> 브랜치 상태: **main 머지 직전** — classification DAG manipulator 실구현이 전부 완료됨
+> 설계 현행: `objective_n_plan_7th.md` (v7.7)
+> 이번 세션 브랜치: `feature/classification-dag-implementation-01` (main 머지 완료)
+> 후속 버그 수정 브랜치: `feature/classification-pipeline-fix-error` (§11)
 
 ---
 
@@ -270,8 +270,105 @@ main 머지 전에 확인할 것. 대부분 이 handoff 작성 시점에 이미 
 
 ## 10. 참조 문서
 
-- 설계서 (현행): `objective_n_plan_7th.md` (v7.6)
+- 설계서 (현행): `objective_n_plan_7th.md` (v7.7)
 - 이전 active handoff: `docs_history/handoffs/021-cls-rotate-and-new-stubs-handoff.md`
 - 이 브랜치의 하위 챕터 handoff: `docs_history/handoffs/017~021-*.md`
 - 노드 SDK 가이드: `docs/pipeline-node-sdk-guide.md`
 - 이 브랜치가 이어받은 이전 세대 설계서: `docs_history/objective_n_plan_6th.md`
+
+---
+
+## 11. Post-merge 버그 수정 — `cls_merge_datasets` 상류 변형 메타 보존 (v7.7 · 2026-04-21)
+
+> 브랜치: `feature/classification-pipeline-fix-error` (main 분기 후 단독 커밋).
+> 설계서 반영: `objective_n_plan_7th.md` §2-11-9 (신설) + §6-1 보강 (대칭 규약 교차 참조).
+
+### 11-1. 증상
+
+파이프라인 `0e6585cf-f9a5-4be1-aa8e-4f12353adddd` 실행 시 crop 대상 이미지 2600장이 Phase B
+에서 전량 skip. `processing.log` 패턴:
+
+```
+[WARNING] lib.pipeline.image_materializer — 소스 이미지를 찾을 수 없어 건너뜀:
+  src=/mnt/datasets/raw/hardhat_original/val/1.0/images/<basename>_crop_up_030.jpg
+```
+
+DAG 구성:
+
+```
+source:00c0ffd3 ──────────────────────────────────────────────┐
+source:1131116e ── cls_add_head ── cls_set_head_labels(1_seen) ┤
+source:00c0ffd3 ── cls_crop_image ── cls_set_head_labels(×2) ──┴── cls_merge_datasets ── save
+```
+
+즉, `cls_crop_image → ... → cls_merge_datasets` 체인에서 crop 된 입력이 merge 이후 src 를
+잃어버리는 상황.
+
+### 11-2. 원인
+
+`cls_merge_datasets._merge_image_records` 가 모든 record 에 대해 extra 를 **무조건 덮어쓰고**
+있었다:
+
+```python
+merged_extra["source_storage_uri"] = meta.storage_uri          # ← 상류가 심어둔 진짜 원본 유실
+merged_extra["original_file_name"] = original_file_name        # ← post-crop 이름으로 덮어씀
+```
+
+상류 `cls_crop_image` 가 §6-1 규약으로 이미 심어둔 값:
+
+- `source_storage_uri` = 진짜 raw 소스 storage (pre-crop 파일이 실재)
+- `original_file_name` = pre-crop basename (`images/photo.jpg`)
+
+이것이 merge 후:
+
+- `source_storage_uri` = crop 중간 meta 의 storage_uri (raw 와 동일하지만 무의미)
+- `original_file_name` = post-crop 이름 (`images/photo_crop_up_030.jpg`) — **이 파일은 raw 에 없음**
+
+Phase B (`dag_executor._build_image_plans` classification 분기) 가 `source_uri_override +
+original_file_name` 으로 src 를 만드니 존재하지 않는 postfix 경로가 조합됨 → `_materialize_single_image`
+가 `src_path.exists()` 에서 False → 전량 skip.
+
+### 11-3. 수정
+
+`backend/lib/manipulators/cls_merge_datasets.py` 2줄을 `setdefault` 로 전환.
+
+```python
+merged_extra.setdefault("source_storage_uri", meta.storage_uri)
+merged_extra.setdefault("original_file_name", original_file_name)
+```
+
+- upstream 값이 있으면 보존 (변형 체인의 진짜 원본 포인터 유지)
+- 변형 이력이 없는 raw 입력에만 `meta.storage_uri + record.file_name` 으로 채움 (기존 동작)
+- `source_dataset_id` 는 계속 **무조건 갱신** — rename_log 출처 표기용이며 Phase B 는 이 키를 쓰지 않음
+
+`cls_rotate_image` / `cls_crop_image` 의 `if "key" not in record.extra` 가드와 **대칭**. 변형 체인
+전반에서 "최초 세팅자가 우선, 이후는 보존" 이 일관.
+
+### 11-4. Detection 과의 차이
+
+Detection 은 이 버그가 없다 — `det_rotate_image` / `det_mask_region_by_class` 가 **파일명 rename
+을 하지 않기 때문**. `record.file_name` 이 소스 스토리지의 실제 파일명을 항상 가리키므로,
+`det_merge_datasets` 가 무조건 덮어써도 덮어쓴 값이 실재 파일을 정확히 가리킨다. Classification
+이 §2-13 filename-identity + §6-1 postfix rename 을 도입한 대가로 이 규약이 필요해진 것.
+
+### 11-5. 회귀 테스트
+
+`backend/tests/test_cls_merge_datasets.py::test_preserves_upstream_source_tracking_for_transformed_records`
+— crop 후 merge 에서 upstream 의 `source_storage_uri` / `original_file_name` /
+`image_manipulation_specs` 가 전량 보존되고, 변형 이력이 없는 다른 입력은 기본값으로 채워지는지
+검증.
+
+### 11-6. 검증 결과
+
+- backend 회귀: 446/446 통과 (기존 445 + 신규 1)
+- 실데이터 재실행 (`hardhat_classification_final_data/val/2.0`): skip 없이 정상 완료 (사용자 확인)
+
+### 11-7. 향후 유사 버그 방지 원칙
+
+§6-1 이미지 변형 manipulator 와 `cls_merge_datasets` 가 공통으로 지켜야 할 불변식:
+
+> **`record.extra["source_storage_uri"]` / `original_file_name` 은 한 번 세팅되면 체인
+> 전반에서 불변이다. 어느 단계에서든 이 키를 덮어쓰는 코드가 있으면 버그다.**
+
+신규 이미지 변형 노드 / merge 계열 노드 추가 시 이 규약을 체크 — `setdefault` 또는 `if "key"
+not in record.extra` 가드 둘 중 하나로만 세팅한다.

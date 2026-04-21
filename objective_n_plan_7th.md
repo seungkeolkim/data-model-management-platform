@@ -1,7 +1,7 @@
 # 데이터 관리 & 학습 자동화 플랫폼 — 7차 설계서
 
-> **작업지시서 v7.6** | Classification DAG manipulator 실구현 챕터 종결 (14종 전량 실구현, `cls_filter_by_class` 통합, params label 축약)
-> 기준일: 2026-04-20
+> **작업지시서 v7.7** | `cls_merge_datasets` 상류 이미지 변형 메타 보존 버그 수정 (Phase B src 전량 skip 회귀)
+> 기준일: 2026-04-21
 > 이전 설계서: `docs_history/objective_n_plan_6th.md`
 > 통합 핸드오프: `docs_for_claude/022-classification-dag-chapter-closure-handoff.md` (001~021은 `docs_history/handoffs/`)
 > 노드 SDK 규약: `docs/pipeline-node-sdk-guide.md` (2026-04-15 재작성본)
@@ -27,6 +27,19 @@ pipeline_service `_validate_with_database` 에 `cls_set_head_labels_for_all_imag
 Alembic 028 로 축약 (DAG 박스 · 속성 패널 폭 문제 해결). 본 버전으로 브랜치
 `feature/classification-dag-implementation-01` (fork: 2026-04-15 / 커밋 42건 / Alembic 14건 추가 /
 backend 445 회귀 통과) 가 종결되며, 다음 챕터는 Automation / Detection 미구현 2종 / Step 2 진입.
+
+**v7.7 (2026-04-21, post-merge 버그 수정).** `cls_merge_datasets._merge_image_records` 가
+`record.extra["source_storage_uri"]` / `original_file_name` 을 **무조건 덮어쓰는** 버그를 수정
+(§2-11-9 신설). 상류 이미지 변형 manipulator (`cls_crop_image` / `cls_rotate_image` 등 §6-1) 가
+심어둔 "진짜 원본" 포인터가 덮어쓰기로 유실되면서, Phase B 가 존재하지 않는 postfix 경로
+(`<raw>/images/x_crop_up_030.jpg`) 를 src 로 잡아 이미지를 **전량 skip** 했다 (파이프라인
+`0e6585cf-f9a5-4be1-aa8e-4f12353adddd` 에서 2600장 skip 재현). Fix: 두 키를 `setdefault` 로 전환해
+upstream 값이 있으면 보존하고, 변형 이력이 없는 raw 입력에만 기본값(`meta.storage_uri` +
+현재 `record.file_name`)을 채운다. `cls_rotate_image` / `cls_crop_image` 의 `if "key" not in
+record.extra` 가드와 대칭. Detection 은 `det_rotate_image` / `det_mask_region_by_class` 가 파일명
+rename 을 하지 않으므로 동일 버그 없음. 브랜치: `feature/classification-pipeline-fix-error`.
+회귀 테스트 `test_preserves_upstream_source_tracking_for_transformed_records` 1건 추가, backend
+446/446 통과.
 
 ---
 
@@ -310,6 +323,41 @@ v7.4 까지 존재했던 `on_label_conflict` 옵션 (SHA dedup 후 동일 이미
 - 스키마 승격 내역: `multi_label_union` 으로 single → multi 승격된 head 이름
 - 마지막에 summary 한 줄: `cls_merge_datasets: renamed=M, promoted=K heads`
 
+#### 2-11-9. 상류 이미지 변형 메타 보존 규약 (확정 · 2026-04-21 · v7.7)
+
+핸드오프: `docs_for_claude/022-classification-dag-chapter-closure-handoff.md` §11.
+
+**배경.** 파이프라인 `0e6585cf-f9a5-4be1-aa8e-4f12353adddd` 에서 `source → cls_crop_image →
+cls_set_head_labels (×2) → cls_merge_datasets` 체인 실행 시 crop 대상 이미지 2600장이 Phase B
+에서 **전량 skip** 되는 회귀가 발견됐다. 로그 패턴: `소스 이미지를 찾을 수 없어 건너뜀:
+src=/mnt/datasets/raw/.../images/<basename>_crop_up_030.jpg`. 원인은 `_merge_image_records` 가
+`record.extra["source_storage_uri"]` 와 `original_file_name` 을 **무조건 덮어쓰는** 것이었다.
+상류 `cls_crop_image` 가 §6-1 규약에 따라 심어둔 "진짜 원본" 포인터 (pre-crop 경로) 가 merge
+단계에서 "현재 meta 의 storage_uri + 현재 (post-crop) record.file_name" 으로 덮어써지면서,
+Phase B 가 존재하지 않는 postfix 경로를 src 로 잡게 된 것.
+
+**확정 규약.** merge 는 해당 2개 extra 키를 **`setdefault` 로만** 세팅한다.
+
+- `record.extra.source_storage_uri` — upstream 값이 있으면 보존, 없을 때만 `meta.storage_uri` 로 채움
+- `record.extra.original_file_name` — upstream 값이 있으면 보존, 없을 때만 현재 `record.file_name` 으로 채움
+- `record.extra.source_dataset_id` — 이 키는 **항상** 최신 merge 입력 기준으로 갱신 (rename_log
+  출처 표기용. Phase B 는 이 키를 사용하지 않음)
+
+이 규약은 §6-1 이미지 변형 manipulator 가 쓰는 `if "key" not in record.extra` 가드와 **대칭**이다.
+변형 체인 전반에서 "최초 세팅자가 우선, 이후는 보존" 이 일관되게 유지된다.
+
+**Detection 과의 차이.** Detection 경로는 `det_rotate_image` / `det_mask_region_by_class` 가
+파일명 rename 을 **하지 않기 때문에** (record.file_name = 소스 스토리지상의 실제 파일명이 항상
+유지됨) 같은 버그가 없다. `det_merge_datasets` 는 현재도 무조건 덮어쓰기지만, 덮어쓴 값
+(`meta.storage_uri` + `record.file_name`) 이 실재 파일을 정확히 가리키므로 문제되지 않는다.
+Classification 이 §2-13 filename-identity + §6-1 postfix rename 을 도입한 대가로 이 규약이
+필요해진 것.
+
+**회귀 고정.** `test_preserves_upstream_source_tracking_for_transformed_records`
+(`backend/tests/test_cls_merge_datasets.py`) 가 crop 후 merge 에서 upstream 의
+`source_storage_uri` / `original_file_name` / `image_manipulation_specs` 가 전량 보존되고,
+변형이 없는 입력에는 기본값이 채워지는지 검증.
+
 ### 2-12. Image-level `unknown` 라벨 규약 (확정 · 2026-04-17)
 
 핸드오프: `docs_for_claude/018-image-level-unknown-semantics-handoff.md` §2.
@@ -521,6 +569,8 @@ v7.5 filename-identity 전환 (§2-13) 으로 이미지 identity 는 **filename*
   - **이미 값이 있으면 덮어쓰지 않는다** — `cls_merge_datasets` 가 prefix rename 과 함께 먼저
     채워뒀을 수 있고, 그 값이 진짜 원본 src 를 가리킨다. 덮어쓰면 추적 체인이 끊어져 Phase B 가
     src 를 찾을 수 없다.
+  - 반대 방향 (`crop → merge` 순서) 도 마찬가지로 `cls_merge_datasets` 가 `setdefault` 로만
+    이 2개 키를 세팅해 상류 변형이 심어둔 값을 보존한다 — §2-11-9 대칭 규약.
 - **`record.extra["image_manipulation_specs"]` 에 append.** 기존 배열이 있으면 그 뒤로 쌓는다.
   순서 = Phase B `ImageMaterializer` 적용 순서. operation 값은 prefix 없이 (`rotate_image`,
   `crop_image`) — detection / classification 이 동일 operation 을 공유한다 (§2-4).
