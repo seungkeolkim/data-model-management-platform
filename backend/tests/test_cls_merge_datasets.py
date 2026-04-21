@@ -277,6 +277,73 @@ def test_extra_fields_populated_for_phase_b_materialization() -> None:
     assert by_source["dataset-b"].extra["original_file_name"] == "images/shared.jpg"
 
 
+def test_preserves_upstream_source_tracking_for_transformed_records() -> None:
+    """
+    상류 이미지 변형 manipulator (cls_crop_image / cls_rotate_image 등 §6-1) 가
+    이미 세팅해 둔 source_storage_uri / original_file_name 은 merge 가 덮어쓰지
+    않고 그대로 보존해야 한다.
+
+    이것이 깨지면 Phase B 가 "존재하지 않는 (postfix 가 붙은) src 경로" 를
+    생성해 전량 skip 된다 — 파이프라인 0e6585cf 에서 실제 발생한 회귀.
+    """
+    head = HeadSchema(name="wear", multi_label=False, classes=["no_helmet", "helmet"])
+
+    # 입력 A: crop 이 적용된 기록 (file_name 은 post-crop, extra 에는 pre-crop 원본 정보).
+    cropped_record = ImageRecord(
+        image_id=1,
+        file_name="images/photo_crop_up_030.jpg",
+        width=640,
+        height=336,
+        labels={"wear": ["helmet"]},
+        extra={
+            "source_storage_uri": "/fake/truly_original_a",
+            "original_file_name": "images/photo.jpg",
+            "image_manipulation_specs": [
+                {
+                    "operation": "crop_image_vertical",
+                    "params": {"direction": "up", "crop_pct": 30},
+                }
+            ],
+        },
+    )
+    meta_a = _make_meta(
+        dataset_id="dataset-a",
+        head_schema=[head],
+        records=[cropped_record],
+        storage_uri="/fake/intermediate_a",  # crop 중간 meta — 실제 파일 없음
+    )
+
+    # 입력 B: 변형 없이 raw 그대로. extra 에 출처 정보가 없는 기본 케이스.
+    meta_b = _make_meta(
+        dataset_id="dataset-b",
+        head_schema=[head],
+        records=[_make_record("images/raw_only.jpg", {"wear": ["no_helmet"]})],
+        storage_uri="/fake/raw_b",
+    )
+
+    result = MergeDatasetsClassification().transform_annotation(
+        [meta_a, meta_b], _permissive_params()
+    )
+
+    by_source = {rec.extra["source_dataset_id"]: rec for rec in result.image_records}
+
+    # A: upstream 이 심어둔 진짜 원본을 보존해야 한다 (meta.storage_uri 로 덮어쓰면 안 됨).
+    a_record = by_source["dataset-a"]
+    assert a_record.extra["source_storage_uri"] == "/fake/truly_original_a"
+    assert a_record.extra["original_file_name"] == "images/photo.jpg"
+    # file_name 은 post-crop 그대로 유지 (충돌 없음 → rename 없음).
+    assert a_record.file_name == "images/photo_crop_up_030.jpg"
+    # 변형 spec 도 유실되지 않아야 Phase B 에서 crop 이 다시 적용된다.
+    assert a_record.extra.get("image_manipulation_specs") == [
+        {"operation": "crop_image_vertical", "params": {"direction": "up", "crop_pct": 30}}
+    ]
+
+    # B: upstream 정보가 없으므로 merge 가 기본값으로 채운다 (setdefault 의 fallback 분기).
+    b_record = by_source["dataset-b"]
+    assert b_record.extra["source_storage_uri"] == "/fake/raw_b"
+    assert b_record.extra["original_file_name"] == "images/raw_only.jpg"
+
+
 # ─────────────────────────────────────────────────────────────────
 # 5. 입력 정규화 에러
 # ─────────────────────────────────────────────────────────────────

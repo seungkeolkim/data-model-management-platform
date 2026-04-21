@@ -23,7 +23,10 @@ drift 가 발생하지 않는다. 본 manipulator 는 최종 안전망으로 실
     - 파일명 충돌(2개 이상 입력에 같은 파일명 존재) → detection 과 동일하게
       `{display_name}_{md5_4자리}_{original_filename}` prefix 를 부착해 분리.
     - Phase B 이미지 실체화는 `record.extra.source_storage_uri` + `original_file_name`
-      으로 소스 경로를 확정하므로, merge 단계에서 이 2개 extra 키를 반드시 세팅한다.
+      으로 소스 경로를 확정하므로, merge 단계에서 이 2개 extra 키가 확실히 채워지도록
+      한다. 단, 상류 이미지 변형 manipulator (cls_rotate_image / cls_crop_image 등 §6-1)
+      가 이미 값을 넣어 두었다면 그 값이 "진짜 원본" 을 가리키므로 덮어쓰지 않는다
+      (setdefault 의도).
 """
 from __future__ import annotations
 
@@ -303,10 +306,16 @@ class MergeDatasetsClassification(UnitManipulator):
                     new_file_name = original_file_name
 
                 # Phase B 이미지 실체화가 소스 경로를 재구성할 수 있도록 extra 에 출처를 남긴다.
+                # source_storage_uri / original_file_name 은 상류 manipulator (cls_rotate_image,
+                # cls_crop_image 등 이미지 변형 체인 §6-1) 가 이미 "진짜 원본 파일이 실재하는
+                # 위치" 로 세팅했을 수 있다. 그 경우 현재 record.file_name 은 변형 후 postfix 가
+                # 붙은 이름이라 소스 스토리지에 존재하지 않으므로, 기존 값을 덮어쓰면 Phase B 가
+                # src 파일을 찾지 못해 전량 skip 된다 (참조: 버그 파이프라인 0e6585cf). 따라서
+                # upstream 이 세팅하지 않은 경우에만 현재 meta 기준으로 채운다.
                 merged_extra = dict(record.extra) if record.extra else {}
                 merged_extra["source_dataset_id"] = dataset_id
-                merged_extra["source_storage_uri"] = meta.storage_uri
-                merged_extra["original_file_name"] = original_file_name
+                merged_extra.setdefault("source_storage_uri", meta.storage_uri)
+                merged_extra.setdefault("original_file_name", original_file_name)
 
                 merged_labels = _align_labels_to_merged_heads(
                     record.labels or {}, merged_head_names
