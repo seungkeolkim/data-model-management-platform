@@ -226,6 +226,7 @@ classification manipulator 14종이 전량 실구현되어 **v7.6 기준으로 s
 - passthrough 모드에서도 `pipeline.png` 생성 · lineage 엣지 1개 기록
 - `manifest.jsonl` 의 `labels` 는 `dict[str, list[str] | None]` — `null` = unknown, `[]` = explicit empty (§2-12). IO 왕복 무손실
 - `head_schema.json` = DatasetGroup.head_schema 불변 스냅샷, passthrough 시 그대로 복사
+- 데이터셋 상세 페이지 **Lineage 탭**도 detection 과 동일한 `LineageTab` 을 그대로 재사용 (2026-04-21 활성화). dag_executor 가 task prefix 무관하게 `transform_config.tasks` / `pipeline.png` / `DatasetLineage` 엣지를 동일 포맷으로 기록하므로 컴포넌트 분기 없이 공유 — `frontend/src/dataset-display-sdk/definitions/classificationDefinition.tsx`
 
 **남은 작업 → §5: Automation 실구현 + Detection 미구현 2종 + Step 2 학습 진입 준비**
 

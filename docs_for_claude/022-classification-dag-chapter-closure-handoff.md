@@ -372,3 +372,24 @@ Detection 은 이 버그가 없다 — `det_rotate_image` / `det_mask_region_by_
 
 신규 이미지 변형 노드 / merge 계열 노드 추가 시 이 규약을 체크 — `setdefault` 또는 `if "key"
 not in record.extra` 가드 둘 중 하나로만 세팅한다.
+
+---
+
+## 12. Post-merge 마이크로 수정 — Classification Lineage 탭 활성화 (2026-04-21)
+
+> 브랜치: `feature/enable-classification-data-lineage` (frontend 단일 파일 / 6 insertion · 8 deletion).
+
+데이터셋 상세 페이지 Lineage 탭이 classification 그룹에서만 `<Empty>` placeholder 였던 것을 detection
+과 동일한 `<LineageTab datasetId={...} />` 로 교체. `frontend/src/dataset-display-sdk/definitions/
+classificationDefinition.tsx` 한 군데 변경.
+
+**왜 placeholder 였나 (역사).** v7.2 Classification DAG 도입 직후, classification 파이프라인 변형이
+실제로 동작할지 불확실해서 UI 만 안전 차단해뒀던 것. v7.6 에서 14종 manipulator 가 전량 실구현되고
+v7.7 에서 cls_merge_datasets 상류 메타 보존 버그까지 수정되면서 차단할 이유가 사라짐.
+
+**왜 컴포넌트 재사용으로 충분한가.** 백엔드 `GET /datasets/{id}/lineage` 가 dataset_type 무관하게
+`DatasetLineage` 엣지를 반환하고, `dag_executor` 가 task prefix(det_/cls_) 와 상관없이
+`transform_config.tasks` / `pipeline.png` 를 동일 포맷으로 기록. `LineageTab` 도 prefix 에 의존하지
+않고 `transform_config.tasks` 만 보고 manipulator 노드를 그리므로 분기 없이 공유 가능.
+
+설계서 §2-10 "완료 범위" 에도 동일 사실을 한 줄 추가했다.
