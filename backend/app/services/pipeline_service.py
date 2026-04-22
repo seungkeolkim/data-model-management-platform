@@ -692,7 +692,55 @@ class PipelineService:
                 head_schema_json=group_head_schema,
             )
 
-        # 2) 모든 소스가 detection (head_schema 없음) 이면 프리뷰 대상이 아님.
+        # 2) target_ref 분기.
+        #
+        # source:<id> 타겟은 config 참조 여부와 무관하게 해당 dataset 의
+        # head_schema 를 DB 에서 직접 읽어 반환한다. dataLoad 노드 단독으로
+        # 선택된 경우 (config.tasks 와 passthrough 가 비어 있어 해당 source 가
+        # source_meta_by_dataset_id 에 포함되지 않을 수 있다) 에도 프리뷰가
+        # 정상 동작하도록 하기 위함.
+        if target_ref.startswith("source:"):
+            source_dataset_id = target_ref.split(":", 1)[1]
+            source_meta = source_meta_by_dataset_id.get(source_dataset_id)
+            if source_meta is None:
+                # config 에 참조되지 않은 source id — dataLoad 단독 선택 등.
+                # DB 에서 해당 dataset + 그룹을 직접 로드해 head_schema 를 얻는다.
+                dataset_row = await self.db.execute(
+                    select(Dataset)
+                    .options(selectinload(Dataset.group))
+                    .where(
+                        Dataset.id == source_dataset_id,
+                        Dataset.deleted_at.is_(None),
+                    )
+                )
+                dataset_obj = dataset_row.scalar_one_or_none()
+                if dataset_obj is None:
+                    return {
+                        "task_kind": "unknown",
+                        "head_schema": None,
+                        "error_code": "SOURCE_NOT_FOUND",
+                        "error_message": (
+                            f"source dataset_id='{source_dataset_id}' 를 DB 에서 "
+                            "찾을 수 없습니다."
+                        ),
+                    }
+                group_head_schema = (
+                    dataset_obj.group.head_schema if dataset_obj.group else None
+                )
+                source_meta = build_stub_source_meta(
+                    dataset_id=source_dataset_id,
+                    head_schema_json=group_head_schema,
+                )
+            head_schema = getattr(source_meta, "head_schema", None)
+            return {
+                "task_kind": "classification" if head_schema is not None else "detection",
+                "head_schema": head_schema_to_list(head_schema),
+                "error_code": None,
+                "error_message": None,
+            }
+
+        # 3) task_{...} 타겟. classification 소스가 하나도 없으면 프리뷰 대상이 아님.
+        #   (source:<id> 분기는 이미 위에서 처리됐으므로 여기 도달하는 경우만 검사)
         any_classification = any(
             getattr(meta, "head_schema", None) is not None
             for meta in source_meta_by_dataset_id.values()
@@ -705,28 +753,6 @@ class PipelineService:
                 "error_message": None,
             }
 
-        # 3) target_ref 분기.
-        if target_ref.startswith("source:"):
-            source_dataset_id = target_ref.split(":", 1)[1]
-            source_meta = source_meta_by_dataset_id.get(source_dataset_id)
-            if source_meta is None:
-                return {
-                    "task_kind": "unknown",
-                    "head_schema": None,
-                    "error_code": "TARGET_NOT_FOUND",
-                    "error_message": (
-                        f"target_ref='{target_ref}' 의 source 를 config 에서 찾지 못했습니다."
-                    ),
-                }
-            head_schema = getattr(source_meta, "head_schema", None)
-            return {
-                "task_kind": "classification" if head_schema is not None else "detection",
-                "head_schema": head_schema_to_list(head_schema),
-                "error_code": None,
-                "error_message": None,
-            }
-
-        # task_{...} 형식.
         try:
             result_meta = preview_head_schema_at_task(
                 config=config,
