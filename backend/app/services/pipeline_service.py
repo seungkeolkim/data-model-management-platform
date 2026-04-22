@@ -107,13 +107,15 @@ class PipelineService:
                 result,
             )
 
-        # (4), (5), (6) — 상류 head_schema 를 preview 로 계산해야 하므로 소스 검증이
-        # 먼저 통과한 경우에만 수행. 세 검사 모두 preview_head_schema_at_task 를
-        # 재사용하므로 source_meta_by_dataset_id 는 한 번만 준비한다.
+        # (4), (5), (6), (7) — 상류/출력 head_schema 를 preview 로 계산해야 하므로
+        # 소스 검증이 먼저 통과한 경우에만 수행. 네 검사 모두
+        # preview_head_schema_at_task 를 재사용하므로 source_meta_by_dataset_id 는
+        # 호출 지점 각자가 필요 시 준비한다 (현재 구조 유지).
         if result.is_valid:
             await self._validate_cls_merge_compatibility(config, result)
             await self._validate_cls_set_head_labels_compatibility(config, result)
             await self._validate_cls_filter_by_class_compatibility(config, result)
+            await self._validate_output_schema_compatibility(config, result)
 
         return result
 
@@ -493,6 +495,156 @@ class PipelineService:
                     message=issue_message,
                     issue_field=f"tasks.{task_name}.params",
                 )
+
+    # -------------------------------------------------------------------------
+    # 출력 head_schema 호환성 검증 — 설계서 §2-8 단일 원칙 강제
+    # -------------------------------------------------------------------------
+
+    async def _validate_output_schema_compatibility(
+        self,
+        config: PipelineConfig,
+        result: PipelineValidationResult,
+    ) -> None:
+        """
+        파이프라인 출력의 head_schema 가 기존 동명 그룹의 head_schema 와 다르면
+        OUTPUT_SCHEMA_MISMATCH ERROR 를 추가한다.
+
+        설계서 §2-8 단일 원칙:
+            "같은 Group 의 모든 Dataset 은 동일 head_schema 를 가진다."
+            schema 가 달라지면 사용자는 다른 그룹명으로 저장해야 한다.
+
+        분기:
+            - 신규 그룹 (동명 그룹 없음) → skip. 파이프라인 완료 시 group.head_schema
+              가 setdefault 로 이번 출력 schema 로 초기화된다.
+            - 기존 그룹이 detection (task_types 에 CLASSIFICATION 없음) → skip.
+              이 시점에서 classification 출력과의 불일치는 상류 compat 검증에서
+              이미 포착되므로 중복 체크하지 않는다.
+            - 기존 그룹이 classification 인데 head_schema NULL → warning. 이번
+              실행이 초기화하므로 통과시키되 사용자에게 주의 환기 (backfill 권고).
+            - classification 그룹 + head_schema 있음 → 출력 schema 를 preview 로
+              계산해 _diff_head_schema 로 비교. 차이가 있으면 ERROR.
+        """
+        from lib.pipeline.schema_preview import (
+            SchemaPreviewError,
+            build_stub_source_meta,
+            preview_head_schema_at_task,
+        )
+        from app.services.dataset_service import _diff_head_schema
+
+        # 1) 출력 대상 기존 그룹 조회 (_find_or_create_dataset_group 과 동일 키 사용)
+        output_name = config.name
+        output_dataset_type = config.output.dataset_type.upper()
+        existing_group_row = await self.db.execute(
+            select(DatasetGroup).where(
+                DatasetGroup.name == output_name,
+                DatasetGroup.dataset_type == output_dataset_type,
+                DatasetGroup.deleted_at.is_(None),
+            )
+        )
+        existing_group = existing_group_row.scalar_one_or_none()
+        if existing_group is None:
+            return  # 신규 그룹 — schema 는 파이프라인 완료 시 setdefault 로 세팅됨
+        if "CLASSIFICATION" not in (existing_group.task_types or []):
+            return  # detection 그룹 — 이 함수의 대상 아님
+        if existing_group.head_schema is None:
+            # classification 그룹인데 head_schema 가 NULL — 과거 버그로 생긴 상태.
+            # 이번 실행이 setdefault 로 초기화해줄 것이므로 warning 만 남긴다.
+            result.add_warning(
+                code="OUTPUT_GROUP_HEAD_SCHEMA_MISSING",
+                message=(
+                    f"기존 출력 그룹 '{output_name}' 의 head_schema 가 비어 있습니다. "
+                    "이번 파이프라인 완료 시 현재 출력 schema 로 초기화됩니다. "
+                    "데이터 무결성 검토를 권장합니다."
+                ),
+                issue_field="name",
+            )
+            return
+
+        # 2) 출력 head_schema 계산 — passthrough / tasks 분기
+        # source_meta_by_dataset_id 를 이번 검증용으로 별도 준비 (다른 compat
+        # 함수와 독립). classification 소스가 없으면 passthrough/preview 모두
+        # head_schema=None 을 리턴하므로 아래 분기에서 자연스럽게 처리됨.
+        source_meta_by_dataset_id: dict[str, Any] = {}
+        for source_id in config.get_all_source_dataset_ids():
+            source_row = await self.db.execute(
+                select(Dataset)
+                .options(selectinload(Dataset.group))
+                .where(Dataset.id == source_id, Dataset.deleted_at.is_(None))
+            )
+            source_dataset = source_row.scalar_one_or_none()
+            if source_dataset is None:
+                # _validate_source_dataset 에서 이미 에러 수집됨.
+                continue
+            group_head_schema = (
+                source_dataset.group.head_schema if source_dataset.group else None
+            )
+            source_meta_by_dataset_id[source_id] = build_stub_source_meta(
+                dataset_id=source_id,
+                head_schema_json=group_head_schema,
+            )
+
+        output_head_schema_list = None
+        if config.is_passthrough and config.passthrough_source_dataset_id:
+            passthrough_meta = source_meta_by_dataset_id.get(
+                config.passthrough_source_dataset_id,
+            )
+            if passthrough_meta is None:
+                return  # 소스 로드 실패 — 다른 검증 항목에서 에러 보고됨
+            output_head_schema_list = getattr(passthrough_meta, "head_schema", None)
+        else:
+            try:
+                terminal_task_name = config.get_terminal_task_name()
+            except ValueError:
+                return  # sink 구성 에러는 정적 검증에서 이미 에러로 수집됨
+            try:
+                terminal_meta = preview_head_schema_at_task(
+                    config=config,
+                    target_task_name=terminal_task_name,
+                    source_meta_by_dataset_id=source_meta_by_dataset_id,  # type: ignore[arg-type]
+                )
+            except SchemaPreviewError:
+                # preview 실패 — merge/set_head_labels/filter compat 에서 이미 보고됨.
+                return
+            output_head_schema_list = terminal_meta.head_schema
+
+        if output_head_schema_list is None:
+            # 출력 schema 가 없는데 기존 그룹이 classification — 타입 자체 불일치.
+            result.add_error(
+                code="OUTPUT_SCHEMA_MISMATCH",
+                message=(
+                    f"파이프라인 출력에 head_schema 가 없는데 기존 그룹 "
+                    f"'{output_name}' 은 classification 입니다. 다른 출력 "
+                    "그룹명을 지정하세요."
+                ),
+                issue_field="name",
+            )
+            return
+
+        # 3) 기존 group.head_schema 와 비교 — _diff_head_schema 를 재사용.
+        new_head_schema_dict = {
+            "heads": [
+                {
+                    "name": head.name,
+                    "multi_label": head.multi_label,
+                    "classes": list(head.classes),
+                }
+                for head in output_head_schema_list
+            ],
+        }
+        try:
+            _diff_head_schema(existing_group.head_schema, new_head_schema_dict)
+        except ValueError as diff_err:
+            result.add_error(
+                code="OUTPUT_SCHEMA_MISMATCH",
+                message=(
+                    f"파이프라인 출력의 head_schema 가 기존 그룹 "
+                    f"'{output_name}' 의 head_schema 와 다릅니다. 설계서 "
+                    "§2-8 에 따라 schema 가 다른 데이터는 새 그룹으로 "
+                    f"저장해야 합니다. 다른 출력 그룹명을 지정하세요. "
+                    f"차이: {str(diff_err)}"
+                ),
+                issue_field="name",
+            )
 
     # -------------------------------------------------------------------------
     # 파이프라인 제출

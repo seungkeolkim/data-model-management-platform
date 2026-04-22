@@ -246,6 +246,24 @@ def _execute_pipeline(
                     "heads": class_info_heads,
                 },
             }
+
+            # ── DatasetGroup.head_schema SSOT 초기화 (setdefault 시맨틱) ──
+            # 설계서 §2-8: "Group 내 모든 Dataset 은 동일 head_schema".
+            # 신규 그룹에 classification 출력이 처음 들어올 때 group.head_schema
+            # 가 아직 None 이면 이번 파이프라인 결과로 초기화한다. 이미 값이
+            # 있는 경우(기존 그룹)는 건드리지 않음 — 불일치 여부는 실행 전
+            # 정적 검증 단계에서 이미 차단되므로 여기서 재검사하지 않는다.
+            if output_dataset.group is not None and output_dataset.group.head_schema is None:
+                output_dataset.group.head_schema = {
+                    "heads": [
+                        {
+                            "name": head.name,
+                            "multi_label": head.multi_label,
+                            "classes": list(head.classes),
+                        }
+                        for head in head_schema
+                    ],
+                }
         else:
             output_dataset.class_count = len(result.output_meta.categories)
             class_mapping = {
