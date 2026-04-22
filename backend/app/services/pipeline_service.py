@@ -664,9 +664,24 @@ class PipelineService:
             preview_head_schema_at_task,
         )
 
-        # 1) 파이프라인에서 참조하는 모든 source dataset 의 head_schema 를 DB 에서 로드.
+        def _is_classification_group(task_types: list[str] | None) -> bool:
+            """
+            DatasetGroup 이 classification 그룹인지 판정.
+
+            판정 SSOT 는 `DatasetGroup.task_types` 컬럼이다. head_schema 컬럼의
+            존재 여부로 판정하지 않는 이유: classification 그룹인데 head_schema
+            가 NULL 인 상태 (파이프라인이 출력한 SOURCE/FUSION 그룹에서 발생) 는
+            내부 데이터 무결성 버그이고, 이를 detection 으로 간주해 UI 에서 숨기면
+            원인 추적이 어렵다. task_types 기준으로 판정하고 head_schema 가
+            없는 경우는 별도 error_message 로 사용자에게 알린다.
+            """
+            return "CLASSIFICATION" in (task_types or [])
+
+        # 1) 파이프라인에서 참조하는 모든 source dataset 의 head_schema + task_types
+        #    를 DB 에서 로드. task_ 분기에서 그룹 판정에 사용한다.
         source_dataset_ids = config.get_all_source_dataset_ids()
         source_meta_by_dataset_id: dict[str, object] = {}
+        source_task_types_by_dataset_id: dict[str, list[str]] = {}
         for dataset_id in source_dataset_ids:
             dataset_row = await self.db.execute(
                 select(Dataset)
@@ -683,14 +698,18 @@ class PipelineService:
                         f"source dataset_id='{dataset_id}' 를 DB 에서 찾을 수 없습니다."
                     ),
                 }
-            # head_schema 는 DatasetGroup 에 위치 (SSOT). Dataset 은 group 에서 상속.
+            # head_schema / task_types 모두 DatasetGroup 에 위치 (SSOT).
             group_head_schema = (
                 dataset_obj.group.head_schema if dataset_obj.group else None
+            )
+            group_task_types = (
+                dataset_obj.group.task_types if dataset_obj.group else None
             )
             source_meta_by_dataset_id[dataset_id] = build_stub_source_meta(
                 dataset_id=dataset_id,
                 head_schema_json=group_head_schema,
             )
+            source_task_types_by_dataset_id[dataset_id] = group_task_types or []
 
         # 2) target_ref 분기.
         #
@@ -702,9 +721,11 @@ class PipelineService:
         if target_ref.startswith("source:"):
             source_dataset_id = target_ref.split(":", 1)[1]
             source_meta = source_meta_by_dataset_id.get(source_dataset_id)
+            group_task_types = source_task_types_by_dataset_id.get(source_dataset_id)
             if source_meta is None:
                 # config 에 참조되지 않은 source id — dataLoad 단독 선택 등.
-                # DB 에서 해당 dataset + 그룹을 직접 로드해 head_schema 를 얻는다.
+                # DB 에서 해당 dataset + 그룹을 직접 로드해 head_schema 와
+                # task_types 를 얻는다.
                 dataset_row = await self.db.execute(
                     select(Dataset)
                     .options(selectinload(Dataset.group))
@@ -727,25 +748,48 @@ class PipelineService:
                 group_head_schema = (
                     dataset_obj.group.head_schema if dataset_obj.group else None
                 )
+                group_task_types = (
+                    dataset_obj.group.task_types if dataset_obj.group else None
+                )
                 source_meta = build_stub_source_meta(
                     dataset_id=source_dataset_id,
                     head_schema_json=group_head_schema,
                 )
             head_schema = getattr(source_meta, "head_schema", None)
+            # task_kind 는 group.task_types 기준으로 판정. classification 그룹인데
+            # head_schema 가 비어 있으면 무결성 에러로 경고한다 (숨기지 않음).
+            if _is_classification_group(group_task_types):
+                if head_schema is None:
+                    return {
+                        "task_kind": "classification",
+                        "head_schema": None,
+                        "error_code": "HEAD_SCHEMA_MISSING",
+                        "error_message": (
+                            "classification 그룹이지만 DatasetGroup.head_schema 가 "
+                            "비어 있습니다. 파이프라인 결과로 생성된 그룹일 경우 "
+                            "데이터 무결성 문제이므로 재생성하거나 백필이 필요합니다."
+                        ),
+                    }
+                return {
+                    "task_kind": "classification",
+                    "head_schema": head_schema_to_list(head_schema),
+                    "error_code": None,
+                    "error_message": None,
+                }
             return {
-                "task_kind": "classification" if head_schema is not None else "detection",
-                "head_schema": head_schema_to_list(head_schema),
+                "task_kind": "detection",
+                "head_schema": None,
                 "error_code": None,
                 "error_message": None,
             }
 
-        # 3) task_{...} 타겟. classification 소스가 하나도 없으면 프리뷰 대상이 아님.
-        #   (source:<id> 분기는 이미 위에서 처리됐으므로 여기 도달하는 경우만 검사)
-        any_classification = any(
-            getattr(meta, "head_schema", None) is not None
-            for meta in source_meta_by_dataset_id.values()
+        # 3) task_{...} 타겟. classification 그룹 source 가 하나도 없으면
+        #    프리뷰 대상이 아님. (source:<id> 분기는 위에서 이미 처리.)
+        any_classification_group = any(
+            _is_classification_group(task_types)
+            for task_types in source_task_types_by_dataset_id.values()
         )
-        if not any_classification:
+        if not any_classification_group:
             return {
                 "task_kind": "detection",
                 "head_schema": None,
@@ -767,9 +811,24 @@ class PipelineService:
                 "error_message": preview_error.message,
             }
 
+        # task_ 분기는 상류가 classification 그룹이라고 판정된 이후이므로
+        # 결과도 classification 으로 확정. head_schema 가 None 이면 상류 그룹의
+        # head_schema 컬럼이 비어 있었다는 뜻 → 사용자에게 경고.
+        result_head_schema = result_meta.head_schema
+        if result_head_schema is None:
+            return {
+                "task_kind": "classification",
+                "head_schema": None,
+                "error_code": "HEAD_SCHEMA_MISSING",
+                "error_message": (
+                    "상류 classification 그룹의 DatasetGroup.head_schema 가 "
+                    "비어 있어 이 노드 시점의 schema 를 계산하지 못했습니다. "
+                    "소스 그룹의 head_schema 복구가 필요합니다."
+                ),
+            }
         return {
-            "task_kind": "classification" if result_meta.head_schema is not None else "detection",
-            "head_schema": head_schema_to_list(result_meta.head_schema),
+            "task_kind": "classification",
+            "head_schema": head_schema_to_list(result_head_schema),
             "error_code": None,
             "error_message": None,
         }
