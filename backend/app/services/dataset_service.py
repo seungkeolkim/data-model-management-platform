@@ -366,9 +366,9 @@ class DatasetGroupService:
                     "지정한 그룹은 CLASSIFICATION 용도가 아닙니다. 다른 그룹을 선택하세요."
                 )
             existing_schema = group.head_schema or {"heads": []}
+            # 단일 원칙 (설계서 §2-8): schema 가 달라지면 ValueError 로 차단.
+            # 통과 = 기존과 동일 → group.head_schema 는 건드리지 않는다.
             warnings = _diff_head_schema(existing_schema, new_head_schema)
-            merged_schema = _merge_head_schema(existing_schema, new_head_schema)
-            group.head_schema = merged_schema
         else:
             existing = await self.db.execute(
                 select(DatasetGroup).where(
@@ -1832,101 +1832,67 @@ def _compute_bbox_area_distribution(
 # =============================================================================
 # Classification head_schema 일관성 헬퍼
 # =============================================================================
-# 규칙:
-# - 기존 head의 class 순서 변경/삭제: 금지 (학습 output index 계약 파괴)
-# - 신규 head 추가: warning 후 허용
-# - 기존 head에 신규 class append: warning 후 허용 (사용자 책임)
-# - multi_label 값 변경: 금지 (라벨 해석 자체가 달라짐)
+# 단일 원칙 (설계서 §2-8):
+#   "같은 Group 의 모든 Dataset 은 동일 head_schema 를 가진다."
+#   head_schema 가 달라지면 type 무관 예외 없이 새 Group 으로 분기해야 한다.
+#
+# 이에 따라 _diff_head_schema 는 어떤 차이든 발견되면 ValueError 로 차단한다.
+# 이전 버전에 있던 NEW_HEAD / NEW_CLASS warning 허용 경로는 제거되었다
+# (학습 index 계약의 암묵 변이를 방지 — 과거 학습 결과 해석이 조용히 바뀌던
+# 회색지대를 없앰).
 
 def _diff_head_schema(
     existing: dict,
     incoming: dict,
 ) -> list["ClassificationHeadWarning"]:
-    """기존 group head_schema 대비 incoming의 차이를 경고로 수집.
-    차단 조건은 ValueError로 즉시 raise."""
-    from app.schemas.dataset import ClassificationHeadWarning
+    """기존 group head_schema 대비 incoming 을 비교. 어떤 차이든 ValueError.
 
+    반환 타입은 기존 시그니처 호환을 위해 list 로 유지되지만, 이제 차이가
+    있으면 반드시 예외로 차단되므로 정상 흐름에서는 빈 리스트만 반환된다.
+    """
+    # 차이 유형을 먼저 전부 수집한 뒤, 하나라도 있으면 묶어서 ValueError 로 raise.
     existing_heads = {h["name"]: h for h in (existing.get("heads") or [])}
-    warnings: list[ClassificationHeadWarning] = []
+    incoming_heads = {h["name"]: h for h in (incoming.get("heads") or [])}
 
-    for incoming_head in incoming.get("heads") or []:
-        head_name = incoming_head["name"]
+    diff_messages: list[str] = []
+
+    # (1) incoming 기준: 신규 head / multi_label 변경 / class 변경 검사
+    for head_name, incoming_head in incoming_heads.items():
         existing_head = existing_heads.get(head_name)
         if existing_head is None:
-            warnings.append(ClassificationHeadWarning(
-                head_name=head_name,
-                kind="NEW_HEAD",
-                detail=(
-                    f"기존 그룹에 없던 head '{head_name}'이(가) 추가됩니다. "
-                    "학습 시 head 정렬을 확인하세요."
-                ),
-            ))
+            diff_messages.append(
+                f"head '{head_name}' 이(가) 기존 그룹에 없습니다 (NEW_HEAD)"
+            )
             continue
 
         if bool(existing_head.get("multi_label")) != bool(incoming_head.get("multi_label")):
-            raise ValueError(
-                f"head '{head_name}'의 multi_label 값이 기존과 다릅니다. "
-                "라벨 해석이 변해 학습 호환성이 깨지므로 변경할 수 없습니다."
+            diff_messages.append(
+                f"head '{head_name}' 의 multi_label 값이 기존과 다릅니다 "
+                f"(기존={bool(existing_head.get('multi_label'))}, "
+                f"요청={bool(incoming_head.get('multi_label'))})"
             )
 
         existing_classes: list[str] = list(existing_head.get("classes") or [])
         incoming_classes: list[str] = list(incoming_head.get("classes") or [])
 
-        # 기존 prefix가 그대로 보존되어야 함 (순서 변경/삭제 금지).
-        if incoming_classes[: len(existing_classes)] != existing_classes:
-            raise ValueError(
-                f"head '{head_name}'의 기존 class 순서가 변경되거나 삭제되었습니다. "
-                f"학습 output index 계약이 깨집니다. "
+        if existing_classes != incoming_classes:
+            diff_messages.append(
+                f"head '{head_name}' 의 classes 가 기존과 다릅니다 "
                 f"(기존={existing_classes}, 요청={incoming_classes})"
             )
 
-        appended_classes = incoming_classes[len(existing_classes):]
-        if appended_classes:
-            warnings.append(ClassificationHeadWarning(
-                head_name=head_name,
-                kind="NEW_CLASS",
-                detail=(
-                    f"head '{head_name}'에 새 class가 추가됩니다: {appended_classes}. "
-                    "기존 모델은 새 class를 예측할 수 없습니다."
-                ),
-            ))
+    # (2) existing 기준: incoming 에서 빠진 head 검사 (head 삭제)
+    for head_name in existing_heads:
+        if head_name not in incoming_heads:
+            diff_messages.append(
+                f"기존 그룹의 head '{head_name}' 이(가) 요청 schema 에서 빠졌습니다"
+            )
 
-    return warnings
-
-
-def _merge_head_schema(existing: dict, incoming: dict) -> dict:
-    """기존 head_schema에 incoming의 신규 head·신규 class를 병합한다.
-    기존 head의 class 순서는 보존되고, 이 함수 호출 전에 _diff_head_schema로
-    규칙 위반을 이미 검증했다고 가정한다."""
-    existing_heads = {h["name"]: dict(h) for h in (existing.get("heads") or [])}
-    merged_heads_ordered: list[dict] = []
-    seen: set[str] = set()
-
-    # 기존 순서 유지하면서 class append만 반영
-    for existing_head in existing.get("heads") or []:
-        head_name = existing_head["name"]
-        incoming_head = next(
-            (h for h in incoming.get("heads") or [] if h["name"] == head_name),
-            None,
+    if diff_messages:
+        raise ValueError(
+            "기존 그룹의 head_schema 와 달라졌습니다. 설계서 §2-8 에 따라 "
+            "schema 가 다른 데이터는 새 그룹으로 등록해야 합니다. 차이: "
+            + "; ".join(diff_messages)
         )
-        if incoming_head is None:
-            merged_heads_ordered.append(dict(existing_head))
-        else:
-            merged_heads_ordered.append({
-                "name": head_name,
-                "multi_label": bool(existing_head.get("multi_label")),
-                "classes": list(incoming_head.get("classes") or []),
-            })
-        seen.add(head_name)
 
-    # incoming 신규 head는 뒤에 append
-    for incoming_head in incoming.get("heads") or []:
-        if incoming_head["name"] in seen:
-            continue
-        merged_heads_ordered.append({
-            "name": incoming_head["name"],
-            "multi_label": bool(incoming_head.get("multi_label")),
-            "classes": list(incoming_head.get("classes") or []),
-        })
-
-    return {"heads": merged_heads_ordered}
+    return []
