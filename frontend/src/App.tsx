@@ -7,6 +7,9 @@ import DatasetDetailPage from './pages/DatasetDetailPage'
 import DatasetViewerPage from './pages/DatasetViewerPage'
 import PipelineEditorPage from './pages/PipelineEditorPage'
 import PipelineHistoryPage from './pages/PipelineHistoryPage'
+import AutomationPage from './pages/AutomationPage'
+import AutomationHistoryPage from './pages/AutomationHistoryPage'
+import AutomationPipelineDetailPage from './pages/AutomationPipelineDetailPage'
 import ManipulatorListPage from './pages/ManipulatorListPage'
 import SystemStatusPage from './pages/SystemStatusPage'
 import ComingSoonPage from './pages/ComingSoonPage'
@@ -37,6 +40,14 @@ export default function App() {
 
             {/* Phase 2 — 파이프라인 (데이터 변형) */}
             <Route path="pipelines" element={<PipelineHistoryPage />} />
+
+            {/* Automation (목업) — 023 §6 기반 파이프라인 자동화 관리 */}
+            <Route path="automation" element={<AutomationPage />} />
+            <Route path="automation/history" element={<AutomationHistoryPage />} />
+            <Route
+              path="automation/pipelines/:pipelineId"
+              element={<AutomationPipelineDetailPage />}
+            />
 
             {/* Phase 2 이후 — 비활성 슬롯 */}
             <Route path="training/*" element={<ComingSoonPage title="모델 학습" phase="2차" />} />
