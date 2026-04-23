@@ -18,7 +18,7 @@ from pathlib import Path
 from app.core.config import settings
 from app.core.database import SyncSessionLocal
 from app.core.storage import get_storage_client
-from app.models.all_models import Dataset
+from app.models.all_models import DatasetVersion
 from app.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -81,7 +81,7 @@ def _execute_register(
     annotation_format: str,
 ) -> dict:
     """데이터셋 등록의 실제 로직."""
-    dataset = db.query(Dataset).filter_by(id=dataset_id).one_or_none()
+    dataset = db.query(DatasetVersion).filter_by(id=dataset_id).one_or_none()
     if dataset is None:
         logger.error("Dataset을 찾을 수 없음: %s", dataset_id)
         return {"status": "FAILED", "error": f"Dataset not found: {dataset_id}"}
@@ -159,7 +159,7 @@ def _execute_register(
 
         # 에러 상태 기록
         try:
-            dataset = db.query(Dataset).filter_by(id=dataset_id).one()
+            dataset = db.query(DatasetVersion).filter_by(id=dataset_id).one()
             dataset.status = "ERROR"
             db.commit()
         except Exception as db_error:
@@ -174,7 +174,7 @@ def _execute_register(
 
 
 def _extract_class_info_sync(
-    dataset: Dataset,
+    dataset: DatasetVersion,
     storage,
     annotation_format: str,
 ) -> None:
@@ -195,7 +195,7 @@ def _extract_class_info_sync(
         _extract_yolo_class_info(dataset, dataset_path)
 
 
-def _extract_coco_class_info(dataset: Dataset, annotations_dir: Path) -> None:
+def _extract_coco_class_info(dataset: DatasetVersion, annotations_dir: Path) -> None:
     """COCO JSON에서 categories를 읽어 class_info 구성."""
     import json
 
@@ -225,7 +225,7 @@ def _extract_coco_class_info(dataset: Dataset, annotations_dir: Path) -> None:
     }
 
 
-def _extract_yolo_class_info(dataset: Dataset, dataset_root: Path) -> None:
+def _extract_yolo_class_info(dataset: DatasetVersion, dataset_root: Path) -> None:
     """YOLO data.yaml에서 names를 읽어 class_info 구성."""
     import yaml
 

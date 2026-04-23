@@ -19,9 +19,11 @@ from app.core.config import settings
 from app.core.database import Base
 
 # 모든 ORM 모델 import (Alembic이 테이블 감지하도록)
+# v7.9 3계층 분리: Dataset → DatasetVersion, DatasetSplit 신규 (핸드오프 025).
 from app.models.all_models import (  # noqa: F401
     DatasetGroup,
-    Dataset,
+    DatasetSplit,
+    DatasetVersion,
     DatasetLineage,
     Manipulator,
     PipelineExecution,

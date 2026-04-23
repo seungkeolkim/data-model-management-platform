@@ -15,8 +15,9 @@ from sqlalchemy.orm import selectinload
 
 from app.core.storage import get_storage_client
 from app.models.all_models import (
-    Dataset,
     DatasetGroup,
+    DatasetSplit,
+    DatasetVersion,
     PipelineExecution,
 )
 from app.schemas.pipeline import PipelineSubmitResponse
@@ -134,11 +135,12 @@ class PipelineService:
           - 상태가 READY인지
           - annotation_files가 비어있지 않은지
         """
-        # Dataset 조회 (group JOIN으로 삭제 여부도 확인)
+        # Dataset 조회 (split → group 경유 JOIN 으로 그룹 정보도 확보)
         query_result = await self.db.execute(
-            select(Dataset, DatasetGroup)
-            .join(DatasetGroup, Dataset.group_id == DatasetGroup.id)
-            .where(Dataset.id == dataset_id)
+            select(DatasetVersion, DatasetGroup)
+            .join(DatasetSplit, DatasetVersion.split_id == DatasetSplit.id)
+            .join(DatasetGroup, DatasetSplit.group_id == DatasetGroup.id)
+            .where(DatasetVersion.id == dataset_id)
         )
         row = query_result.first()
 
@@ -234,9 +236,9 @@ class PipelineService:
         source_meta_by_dataset_id: dict[str, Any] = {}
         for dataset_id in config.get_all_source_dataset_ids():
             dataset_row = await self.db.execute(
-                select(Dataset)
-                .options(selectinload(Dataset.group))
-                .where(Dataset.id == dataset_id, Dataset.deleted_at.is_(None))
+                select(DatasetVersion)
+                .options(selectinload(DatasetVersion.split_slot).selectinload(DatasetSplit.group))
+                .where(DatasetVersion.id == dataset_id, DatasetVersion.deleted_at.is_(None))
             )
             dataset_obj = dataset_row.scalar_one_or_none()
             if dataset_obj is None:
@@ -340,9 +342,9 @@ class PipelineService:
         source_meta_by_dataset_id: dict[str, Any] = {}
         for dataset_id in config.get_all_source_dataset_ids():
             dataset_row = await self.db.execute(
-                select(Dataset)
-                .options(selectinload(Dataset.group))
-                .where(Dataset.id == dataset_id, Dataset.deleted_at.is_(None))
+                select(DatasetVersion)
+                .options(selectinload(DatasetVersion.split_slot).selectinload(DatasetSplit.group))
+                .where(DatasetVersion.id == dataset_id, DatasetVersion.deleted_at.is_(None))
             )
             dataset_obj = dataset_row.scalar_one_or_none()
             if dataset_obj is None:
@@ -438,9 +440,9 @@ class PipelineService:
         source_meta_by_dataset_id: dict[str, Any] = {}
         for dataset_id in config.get_all_source_dataset_ids():
             dataset_row = await self.db.execute(
-                select(Dataset)
-                .options(selectinload(Dataset.group))
-                .where(Dataset.id == dataset_id, Dataset.deleted_at.is_(None))
+                select(DatasetVersion)
+                .options(selectinload(DatasetVersion.split_slot).selectinload(DatasetSplit.group))
+                .where(DatasetVersion.id == dataset_id, DatasetVersion.deleted_at.is_(None))
             )
             dataset_obj = dataset_row.scalar_one_or_none()
             if dataset_obj is None:
@@ -567,9 +569,9 @@ class PipelineService:
         source_meta_by_dataset_id: dict[str, Any] = {}
         for source_id in config.get_all_source_dataset_ids():
             source_row = await self.db.execute(
-                select(Dataset)
-                .options(selectinload(Dataset.group))
-                .where(Dataset.id == source_id, Dataset.deleted_at.is_(None))
+                select(DatasetVersion)
+                .options(selectinload(DatasetVersion.split_slot).selectinload(DatasetSplit.group))
+                .where(DatasetVersion.id == source_id, DatasetVersion.deleted_at.is_(None))
             )
             source_dataset = source_row.scalar_one_or_none()
             if source_dataset is None:
@@ -681,8 +683,9 @@ class PipelineService:
             task_types=source_task_types,
         )
 
-        # ── 버전 자동 생성 ──
-        version = await self._next_version(group.id, split)
+        # ── Split 슬롯 선조회/생성 → 버전 자동 생성 (v7.9 3계층 분리) ──
+        split_slot = await self._get_or_create_split(group.id, split)
+        version = await self._next_version(split_slot.id)
         logger.info(
             "파이프라인 출력 버전 결정",
             group_name=group.name, split=split, version=version,
@@ -696,11 +699,10 @@ class PipelineService:
             version=version,
         )
 
-        # ── Dataset 생성 (status=PENDING) ──
-        dataset = Dataset(
+        # ── DatasetVersion 생성 (status=PENDING) ──
+        dataset = DatasetVersion(
             id=str(uuid.uuid4()),
-            group_id=group.id,
-            split=split,
+            split_id=split_slot.id,
             version=version,
             annotation_format=annotation_format,
             storage_uri=storage_uri,
@@ -752,7 +754,10 @@ class PipelineService:
         """PipelineExecution 단건 조회 (output_dataset eager load)."""
         result = await self.db.execute(
             select(PipelineExecution)
-            .options(selectinload(PipelineExecution.output_dataset))
+            .options(
+                selectinload(PipelineExecution.output_dataset)
+                .selectinload(DatasetVersion.split_slot)
+            )
             .where(PipelineExecution.id == execution_id)
         )
         return result.scalar_one_or_none()
@@ -774,7 +779,10 @@ class PipelineService:
 
         list_query = (
             base_query
-            .options(selectinload(PipelineExecution.output_dataset))
+            .options(
+                selectinload(PipelineExecution.output_dataset)
+                .selectinload(DatasetVersion.split_slot)
+            )
             .order_by(PipelineExecution.created_at.desc())
             .offset((page - 1) * page_size)
             .limit(page_size)
@@ -836,9 +844,9 @@ class PipelineService:
         source_task_types_by_dataset_id: dict[str, list[str]] = {}
         for dataset_id in source_dataset_ids:
             dataset_row = await self.db.execute(
-                select(Dataset)
-                .options(selectinload(Dataset.group))
-                .where(Dataset.id == dataset_id, Dataset.deleted_at.is_(None))
+                select(DatasetVersion)
+                .options(selectinload(DatasetVersion.split_slot).selectinload(DatasetSplit.group))
+                .where(DatasetVersion.id == dataset_id, DatasetVersion.deleted_at.is_(None))
             )
             dataset_obj = dataset_row.scalar_one_or_none()
             if dataset_obj is None:
@@ -879,11 +887,11 @@ class PipelineService:
                 # DB 에서 해당 dataset + 그룹을 직접 로드해 head_schema 와
                 # task_types 를 얻는다.
                 dataset_row = await self.db.execute(
-                    select(Dataset)
-                    .options(selectinload(Dataset.group))
+                    select(DatasetVersion)
+                    .options(selectinload(DatasetVersion.split_slot).selectinload(DatasetSplit.group))
                     .where(
-                        Dataset.id == source_dataset_id,
-                        Dataset.deleted_at.is_(None),
+                        DatasetVersion.id == source_dataset_id,
+                        DatasetVersion.deleted_at.is_(None),
                     )
                 )
                 dataset_obj = dataset_row.scalar_one_or_none()
@@ -1056,11 +1064,12 @@ class PipelineService:
         if not source_dataset_ids:
             return None
 
-        # 소스 데이터셋들의 그룹 task_types 조회
+        # 소스 데이터셋들의 그룹 task_types 조회 (v7.9: split 경유 JOIN)
         result = await self.db.execute(
             select(DatasetGroup.task_types)
-            .join(Dataset, Dataset.group_id == DatasetGroup.id)
-            .where(Dataset.id.in_(source_dataset_ids))
+            .join(DatasetSplit, DatasetSplit.group_id == DatasetGroup.id)
+            .join(DatasetVersion, DatasetVersion.split_id == DatasetSplit.id)
+            .where(DatasetVersion.id.in_(source_dataset_ids))
             .distinct()
         )
         all_task_types_rows = result.scalars().all()
@@ -1081,9 +1090,36 @@ class PipelineService:
 
         return sorted(intersection)
 
-    async def _next_version(self, group_id: str, split: str) -> str:
+    async def _get_or_create_split(
+        self, group_id: str, split: str,
+    ) -> DatasetSplit:
         """
-        해당 group+split의 다음 버전을 자동 계산한다.
+        (group_id, split) 정적 슬롯 조회/생성 (v7.9 3계층 분리).
+        dataset_service._get_or_create_split 과 동일한 시맨틱.
+        """
+        split_upper = split.upper()
+        existing = await self.db.execute(
+            select(DatasetSplit).where(
+                DatasetSplit.group_id == group_id,
+                DatasetSplit.split == split_upper,
+            )
+        )
+        split_obj = existing.scalar_one_or_none()
+        if split_obj is not None:
+            return split_obj
+
+        split_obj = DatasetSplit(
+            id=str(uuid.uuid4()),
+            group_id=group_id,
+            split=split_upper,
+        )
+        self.db.add(split_obj)
+        await self.db.flush()
+        return split_obj
+
+    async def _next_version(self, split_id: str) -> str:
+        """
+        해당 split_id(DatasetSplit)의 다음 버전을 자동 계산한다 (v7.9).
 
         버전 정책: {major}.{minor}
         - major: 사용자가 명시적으로 파이프라인을 실행할 때 증가
@@ -1091,9 +1127,9 @@ class PipelineService:
         파이프라인 실행은 사용자 주도이므로 major를 올린다.
         """
         result = await self.db.execute(
-            select(Dataset.version)
-            .where(Dataset.group_id == group_id, Dataset.split == split.upper())
-            .order_by(Dataset.created_at.desc())
+            select(DatasetVersion.version)
+            .where(DatasetVersion.split_id == split_id)
+            .order_by(DatasetVersion.created_at.desc())
             .limit(1)
         )
         last_version = result.scalar_one_or_none()

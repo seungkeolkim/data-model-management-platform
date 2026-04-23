@@ -1,9 +1,11 @@
 # 자동화 도입 기술 검토 노트 — Step 1 파이프라인 자동화 + Step 2 학습 자동화 공통 고려
 
 > 최초 작성: 2026-04-21
-> 브랜치: `feature/pipeline-automation-mockup`
-> 상위 설계서: `objective_n_plan_7th.md` v7.7 §5 item 16 / item 19~20
-> 직전 핸드오프: `docs_for_claude/022-classification-dag-chapter-closure-handoff.md` §6-1
+> 갱신: 2026-04-23 (§9 사용자 확정 결정 + 실착수 조건 변경 추가)
+> 브랜치: `feature/pipeline-automation-mockup` (이전 세션에서 삭제됨, automation 재개 시 재생성 필요)
+> 상위 설계서: `objective_n_plan_7th.md` v7.8 §5 item 16 / item 19~20
+> 직전 핸드오프: `docs_for_claude/024-head-schema-ssot-enforcement-handoff.md`
+> 선행 블로킹 작업: `docs_for_claude/025-dataset-three-tier-separation-handoff.md` (Dataset 3계층 분리 — 본 작업 재개의 전제)
 
 ---
 
@@ -429,3 +431,95 @@ major/minor 를 어떻게 결정하는지 재확인 + automation 진입 시 `tri
   3. §7-3 ~ §7-6 UI 세부 확정
   4. Mock fixture 설계 (§7-1 의 선택에 따라)
   5. Automation 관리 페이지 / 실행 이력 개편 / 파이프라인 상세 Automation 탭 구현 착수
+
+---
+
+## 9. 사용자 확정 결정 + 실착수 조건 변경 (2026-04-23)
+
+§7 의 7개 블로킹 결정 사항을 2026-04-23 세션에서 전부 확정하고, 파생 이슈 3건을 추가로 정리했다. 동시에 **automation 실착수는 Dataset 3계층 분리(핸드오프 025) 완료 이후** 로 지연됐다. 본 문서 §6 의 목업 스코프 자체는 유효하지만 실제 UI 구현은 3계층 분리 검증 이후 재개한다.
+
+### 9-1. §7-1 mock 데이터 전략 — A 확정
+
+프론트 상수 하드코딩 (`frontend/src/mocks/automation.ts`). 백엔드 안 건드림. 024 의 classification SSOT 수정이 본 목업 준비 과정에서 발견된 버그의 정리였고, 목업 목적이 "UX 로 동작 모델을 검증" 이라 외부 API 왕복 없이 화면 전환 / 필터 / 토글을 빠르게 만져보는 것이 가장 효율적이다.
+
+### 9-2. §7-2 Pipeline 엔티티 — 옵션 1 확정 + PipelineExecution 재설계 동반
+
+**신규 `Pipeline` 테이블 도입** — id, name, description, config, automation_* 컬럼 + `PipelineExecution.pipeline_id FK`.
+
+**정적 / 동적 경계 명확화.**
+
+| 계층 | 필드 |
+|---|---|
+| Pipeline (정적) | input_group_id / input_split / output_group_id / output_split / tasks (manipulator + params) / automation_* |
+| PipelineExecution (동적) | 실행 시점 resolved input version, 생성된 output version, trigger_kind, automation_batch_id |
+
+**구성 동일성 판정 = 시스템 자동 (옵션 a 안 1).** Pipeline.config 해시 비교. json 복원 후 구성이 바뀌면 신규 Pipeline 자동 생성, 구성 동일하면 기존 Pipeline 재사용. 사용자 명시(안 2)는 "기존 Pipeline ID 에 다른 config" 허용으로 정적성 원칙을 깨므로 미채택.
+
+**구성 변경 시 automation 이관 (옵션 b).** 구성 변경으로 신규 Pipeline 이 생기면 기존 Pipeline 의 automation_status 는 그대로 유지 (`active`→`active`), 신규 Pipeline 은 `stopped` 로 시작. 사용자가 명시적으로 구/신 automation 을 전환해야 함. `superseded_by` 포인터는 추후 필요 시 추가.
+
+**PipelineExecution.transform_config 유지 (옵션 c).** Pipeline.config + resolved_inputs 조합으로 대체하지 않고 실행 시점 snapshot 을 계속 남김. 과거 실행 immutable 보존 + 재현성 + Lineage view 로직 호환 (024 §2-10 의 `LineageTab` 이 `transform_config.tasks` 기반). Pipeline 이 삭제돼도 과거 실행 해석 가능.
+
+### 9-3. §7-3 pipeline_name — 수동 입력 + 자동 생성 둘 다 허용
+
+- 신규 Pipeline 저장 시 이름 수동 입력 가능. 미입력 시 output dataset group 명 기반 자동 생성.
+- PipelineExecution 이름도 실행 전 override 가능 (현재는 output group 명 자동 생성 고정).
+
+### 9-4. §7-4 네비게이션 — 주 네비 독립 메뉴
+
+사이드바 (데이터셋 / 데이터 변형 등) 에 "Automation" 메뉴 신규 추가. 기능 확장 여지를 위해 파이프라인 관리 서브탭으로 두지 않는다.
+
+### 9-5. §7-5 수동 재실행 UX
+
+- **확인 모달 O**. 모달 내부에 버튼 2개:
+  - `[변경사항 존재시 재실행]` — delta 체크 후 있으면 실행, 없으면 skip
+  - `[강제 최신 재실행]` — delta 무시, 항상 실행
+- **버튼 위치**: 파이프라인 상세탭 only (목록 행에는 배치 X). 사용자가 내용 확인 후 실행하도록 강제.
+- **실행 결과 피드백**: async dispatch + 실행 결과 확인 안내 모달. 시간 걸리는 작업이므로 즉시 결과 기다리지 않음.
+- **no-delta skip 가시화**: 변경사항이 없어 실행되지 않은 경우를 실행 이력 / UI 에서 확인 가능하도록 명시적 레코드 남김.
+
+### 9-6. §7-6 미실행 파이프라인 chaining DAG 표시 — 표시 X
+
+등록은 됐지만 PipelineExecution 이력 0 건인 파이프라인은 chaining DAG 에 그리지 않는다. 필요해지면 후속 챕터에서 재검토.
+
+### 9-7. §7-7 버전 정책
+
+**버전 증가 규칙 (경로 기반, 단순 일관 규칙):**
+- **데이터 변형 탭 수동 실행** — 경로 무관 → **major++**
+  - 신규 Pipeline 최초 실행
+  - 기존 Pipeline 재실행 (json 복원, 구성 동일)
+- **Automation 경로 (자동 실행 + 수동 재실행)** → **minor++**
+- **Pipeline 구성 변경 감지** (§9-2 해시 비교): json 복원 후 구성이 바뀌면 신규 Pipeline 으로 자동 등록 후 실행 = 데이터 변형 탭 신규 최초 실행 케이스 = **major++**
+
+**PipelineExecution.trigger_kind 이력 분류 (필터 카테고리 3종):**
+- `manual_from_editor` — 데이터 변형 탭 수동 실행
+- `automation_auto` — polling / triggering
+- `automation_manual_rerun` — Automation 페이지 수동 재실행
+
+### 9-8. 신규 결정 — Dataset 3계층 분리 선행
+
+§7 결정 과정에서 "split 까지 정적으로 취급하고 싶다" 는 요구가 드러나, automation 이전에 **DB Schema 3계층 분리** 를 선행 과제로 확정. 상세는 **핸드오프 025**.
+
+- **현 구조의 문제**: `Dataset (group_id, split, version)` 에서 split 과 version 이 모두 동적. Pipeline 이 "TRAIN split 최신 버전" 을 참조하려면 `(group_id, split)` 을 JSONB 로 들고 있어야 하고 FK 무결성이 사라진다.
+- **3계층 모델** (네이밍 X+Y 하이브리드 확정):
+  ```
+  DatasetGroup          (정적)
+    └─ DatasetSplit     (정적)  신규 테이블
+       └─ DatasetVersion (동적)  기존 Dataset 을 ORM/테이블명까지 rename
+  ```
+- **Automation 실착수 조건**: 3계층 분리 후 모든 데이터셋 기능 (RAW 등록 / classification 등록 / 파이프라인 실행 / lineage / 샘플 뷰어 / 그룹 목록) 회귀 통과 + 수동 스모크 확인.
+
+### 9-9. 현재 상태 스냅샷 (2026-04-23 세션 종료)
+
+- **브랜치** — `feature/pipeline-automation-mockup` 은 이전 세션에서 삭제된 상태. automation 재개 시 재생성 필요.
+- **다음 작업** — 핸드오프 025 에서 Dataset 3계층 분리 실구현. automation 은 025 완료 후 재개.
+- **§6 목업 스코프 유효성** — §6-2 ~ §6-4 세 화면, mock fixture 전략(A), 데이터 모델 스케치 모두 유효. 실제 UI 구현 시 §9 결정을 반영해 진행.
+- **재개 시 참조 순서**: 023 §9 (확정 결정) → 025 (3계층 분리 완료 시점 상태) → 023 §6 (목업 화면 스코프) → §2-2 (실구현 컴포넌트).
+
+### 9-10. 테스트용 dataset 후보 (재개 시 mock fixture 참조)
+
+사용자가 classification DAG 버그 수정 과정에서 확보한 실제 dataset 2건. Automation mock fixture 에서 "polling 대상 체인" 의 input / intermediate 예시로 쓰기 적합.
+
+- `hardhat_headcrop_visible_added` — `83f76037-df56-4575-a343-2ade37299225`
+- `hardhat_headcrop_original_merged` — `4d2afb95-f7e6-4297-afff-6c435b9af9cf`
+
+3계층 분리 후 이 두 dataset 의 (group, split, version) 이 (group, split_id, version) 구조로 재배치된 상태에서 mock chaining DAG 의 실데이터 레퍼런스로 활용.
