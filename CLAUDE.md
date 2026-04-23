@@ -25,8 +25,8 @@ Step 1의 세부적인 작업:
 - 4차 설계: `docs_history/objective_n_plan_4th.md`
 - 5차 설계: `docs_history/objective_n_plan_5th.md`
 - 6차 설계: `docs_history/objective_n_plan_6th.md`
-- **7차 설계 (현행)**: `objective_n_plan_7th.md`
-- 통합 핸드오프 (현행): `docs_for_claude/022-classification-dag-chapter-closure-handoff.md` (001~021은 `docs_history/handoffs/`)
+- **7차 설계 (현행, v7.9)**: `objective_n_plan_7th.md`
+- 통합 핸드오프 (현행): `docs_for_claude/025-dataset-three-tier-separation-handoff.md` (001~021은 `docs_history/handoffs/`, 022~024는 `docs_for_claude/`)
 
 | Phase | 내용 | 상태 |
 |-------|------|------|
@@ -82,7 +82,7 @@ Docker Compose로 4개 서비스 운영: **postgres:16**, **backend** (Uvicorn),
 
 - **진입점:** `backend/app/main.py` — FastAPI 앱, CORS, lifespan, health 엔드포인트
 - **API 라우터:** `backend/app/api/v1/` — 도메인별 분리: `dataset_groups/`, `datasets/`, `pipelines/`, `manipulators/`, `eda/`, `lineage/`, `training/`, `filebrowser/`
-- **ORM 모델:** `backend/app/models/all_models.py` — 전체 SQLAlchemy 모델 단일 파일 (DatasetGroup, Dataset, DatasetLineage, Manipulator, PipelineExecution, Objective)
+- **ORM 모델:** `backend/app/models/all_models.py` — 전체 SQLAlchemy 모델 단일 파일 (DatasetGroup, DatasetSplit, DatasetVersion, DatasetLineage, Manipulator, PipelineExecution, Objective). v7.9 부터 Dataset 은 3계층 분리됨 — §핵심 도메인 개념 참조.
 - **비즈니스 로직:** `backend/app/services/` — 라우터와 모델 사이 서비스 레이어
 - **설정:** `backend/app/core/config.py` — Pydantic Settings로 `.env` 로드; 비민감 설정은 루트 `config.ini`
 - **DB 세션:** `backend/app/core/database.py` — async engine + session factory
@@ -121,8 +121,9 @@ Docker Compose로 4개 서비스 운영: **postgres:16**, **backend** (Uvicorn),
 
 ### 핵심 도메인 개념
 
-- **DatasetGroup**: 데이터셋 split/version의 논리적 묶음. dataset_type (RAW/SOURCE/PROCESSED/FUSION), annotation_format, task_types (JSONB) 보유
-- **Dataset**: 그룹 하위의 개별 split (TRAIN/VAL/TEST/NONE) × version (`{major}.{minor}` 형식). (group_id, split, version) 유니크 제약
+- **DatasetGroup**: 데이터셋의 논리적 묶음 (정적). dataset_type (RAW/SOURCE/PROCESSED/FUSION), annotation_format, task_types (JSONB), head_schema (classification SSOT) 보유
+- **DatasetSplit** (v7.9 신규): DatasetGroup 아래 split 슬롯 (정적). split = TRAIN/VAL/TEST/NONE. `(group_id, split)` 유니크. 한 번 생성되면 버전이 쌓여도 재사용.
+- **DatasetVersion** (v7.9 — 기존 `Dataset` 을 rename): DatasetSplit 아래 버전 단위 (동적). `version = {major}.{minor}`, `(split_id, version)` 유니크. storage_uri, annotation_files, status, metadata 보유. ORM 편의로 `version.split / group / group_id` 는 `split_slot` relationship 경유 association_proxy 로 투명 노출.
 - **Manipulator**: 사전 정의된 데이터 처리 함수. params_schema (JSONB)로 동적 UI 생성
 - **DatasetLineage**: 파이프라인을 통한 변환 이력을 추적하는 parent→child 엣지
 - **PipelineExecution**: 파이프라인 실행 이력 + Celery 태스크 추적
