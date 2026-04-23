@@ -141,7 +141,7 @@ export interface DatasetSummary {
   created_at: string
 }
 
-export interface Dataset extends DatasetSummary {
+export interface DatasetVersion extends DatasetSummary {
   group_id: string
   annotation_format: AnnotationFormat | null
   updated_at: string

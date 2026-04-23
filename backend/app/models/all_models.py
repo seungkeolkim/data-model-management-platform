@@ -21,6 +21,7 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.ext.associationproxy import AssociationProxy, association_proxy
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -87,17 +88,39 @@ class DatasetGroup(Base):
     )
 
     # Relationships
-    datasets: Mapped[list[Dataset]] = relationship("Dataset", back_populates="group", lazy="select")
+    # v7.9 (핸드오프 025): split → version 2단 계층.
+    splits: Mapped[list[DatasetSplit]] = relationship(
+        "DatasetSplit", back_populates="group", lazy="select",
+        cascade="all, delete-orphan",
+    )
+
+    @property
+    def datasets(self) -> list[DatasetVersion]:
+        """
+        하위 호환 proxy — 기존 group.datasets 호출 코드와 호환.
+        모든 split 의 모든 version 을 flat list 로 반환한다.
+
+        association_proxy("splits", "versions") 는 collection-of-collections 패턴에서
+        중첩 리스트를 돌려주어 Pydantic 직렬화가 깨지므로 명시적 property 로 flatten.
+        쿼리(조건절) 에는 쓰지 않는다 — 서비스 계층은 splits/versions 를 직접 JOIN.
+        """
+        flat: list[DatasetVersion] = []
+        for split_obj in self.splits:
+            flat.extend(split_obj.versions)
+        return flat
 
 
-class Dataset(Base):
+class DatasetSplit(Base):
     """
-    split x version 단위 실제 데이터셋.
-    DatasetGroup의 하위 단위.
+    DatasetGroup 아래의 정적 split 슬롯 (TRAIN / VAL / TEST / NONE).
+    v7.9 신규 — 핸드오프 025.
+
+    split 은 Group 내에서 유일하며 한 번 생성되면 재사용된다. 버전이 쌓여도 이 행은 변하지 않는다.
+    Pipeline / automation 이 "특정 group 의 TRAIN split 최신 버전" 을 FK 무결성 하에 참조하기 위한 레이어.
     """
-    __tablename__ = "datasets"
+    __tablename__ = "dataset_splits"
     __table_args__ = (
-        UniqueConstraint("group_id", "split", "version", name="uq_dataset_group_split_version"),
+        UniqueConstraint("group_id", "split", name="uq_dataset_split_group_split"),
     )
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
@@ -108,7 +131,35 @@ class Dataset(Base):
         String(10), nullable=False, default="NONE",
         comment="TRAIN | VAL | TEST | NONE"
     )
-    version: Mapped[str] = mapped_column(String(20), nullable=False, comment="v1.0.0 형식")
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=False), nullable=False, default=_now, server_default=func.now()
+    )
+
+    # Relationships
+    group: Mapped[DatasetGroup] = relationship("DatasetGroup", back_populates="splits")
+    versions: Mapped[list[DatasetVersion]] = relationship(
+        "DatasetVersion", back_populates="split_slot", lazy="select",
+        cascade="all, delete-orphan",
+    )
+
+
+class DatasetVersion(Base):
+    """
+    실제 데이터셋의 동적 단위. 한 DatasetSplit 아래에 여러 version 이 쌓인다.
+    v7.9 — 기존 `Dataset` 을 rename. DB 테이블명도 `datasets` → `dataset_versions` 로 변경.
+
+    (split_id, version) 유니크. version 은 `{major}.{minor}` 문자열.
+    """
+    __tablename__ = "dataset_versions"
+    __table_args__ = (
+        UniqueConstraint("split_id", "version", name="uq_dataset_versions_split_version"),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    split_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("dataset_splits.id", ondelete="CASCADE"), nullable=False
+    )
+    version: Mapped[str] = mapped_column(String(20), nullable=False, comment="{major}.{minor} 형식")
     annotation_format: Mapped[str | None] = mapped_column(
         String(30), nullable=True,
         comment="group 기본값 상속, version별 override 가능"
@@ -148,7 +199,19 @@ class Dataset(Base):
     )
 
     # Relationships
-    group: Mapped[DatasetGroup] = relationship("DatasetGroup", back_populates="datasets")
+    # split_slot — 정적 DatasetSplit 엔티티 (DB 측 FK = split_id). ORM 관계 이름을
+    # "split_slot" 으로 둔 이유는 기존 코드 / Pydantic 스키마가 `version.split` 을
+    # '문자열 split 이름' 으로 쓰고 있기 때문. 충돌을 피하기 위해 relationship 이름은
+    # split_slot 으로, 문자열 노출은 아래 association_proxy 로 분리했다.
+    split_slot: Mapped[DatasetSplit] = relationship(
+        "DatasetSplit", back_populates="versions",
+    )
+    # 기존 Dataset.split (문자열) 사용 코드와 호환. DatasetSplit.split 컬럼을 투명 노출.
+    split: AssociationProxy[str] = association_proxy("split_slot", "split")
+    # 기존 Dataset.group / .group_id 사용 코드와 호환.
+    group: AssociationProxy[DatasetGroup] = association_proxy("split_slot", "group")
+    group_id: AssociationProxy[str] = association_proxy("split_slot", "group_id")
+
     lineage_as_parent: Mapped[list[DatasetLineage]] = relationship(
         "DatasetLineage", foreign_keys="DatasetLineage.parent_id", back_populates="parent"
     )
@@ -168,15 +231,15 @@ class Dataset(Base):
 
 
 class DatasetLineage(Base):
-    """datasets 단위 부모-자식 lineage 엣지."""
+    """dataset_versions 단위 부모-자식 lineage 엣지. 테이블 이름은 역사적 호환을 위해 유지."""
     __tablename__ = "dataset_lineage"
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
     parent_id: Mapped[str] = mapped_column(
-        UUID(as_uuid=False), ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=False), ForeignKey("dataset_versions.id", ondelete="CASCADE"), nullable=False
     )
     child_id: Mapped[str] = mapped_column(
-        UUID(as_uuid=False), ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=False), ForeignKey("dataset_versions.id", ondelete="CASCADE"), nullable=False
     )
     transform_config: Mapped[dict | None] = mapped_column(
         JSONB, nullable=True,
@@ -187,8 +250,8 @@ class DatasetLineage(Base):
     )
 
     # Relationships
-    parent: Mapped[Dataset] = relationship("Dataset", foreign_keys=[parent_id])
-    child: Mapped[Dataset] = relationship("Dataset", foreign_keys=[child_id])
+    parent: Mapped[DatasetVersion] = relationship("DatasetVersion", foreign_keys=[parent_id])
+    child: Mapped[DatasetVersion] = relationship("DatasetVersion", foreign_keys=[child_id])
 
 
 class Manipulator(Base):
@@ -238,7 +301,7 @@ class PipelineExecution(Base):
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
     output_dataset_id: Mapped[str] = mapped_column(
-        UUID(as_uuid=False), ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=False), ForeignKey("dataset_versions.id", ondelete="CASCADE"), nullable=False
     )
     config: Mapped[dict | None] = mapped_column(
         JSONB, nullable=True,
@@ -267,7 +330,7 @@ class PipelineExecution(Base):
     )
 
     # Relationships
-    output_dataset: Mapped[Dataset] = relationship("Dataset", back_populates="pipeline_executions")
+    output_dataset: Mapped[DatasetVersion] = relationship("DatasetVersion", back_populates="pipeline_executions")
 
 
 # =============================================================================
@@ -325,13 +388,13 @@ class Solution(Base):
         UUID(as_uuid=False), ForeignKey("recipes.id", ondelete="CASCADE"), nullable=False
     )
     train_dataset_id: Mapped[str | None] = mapped_column(
-        UUID(as_uuid=False), ForeignKey("datasets.id", ondelete="SET NULL"), nullable=True
+        UUID(as_uuid=False), ForeignKey("dataset_versions.id", ondelete="SET NULL"), nullable=True
     )
     val_dataset_id: Mapped[str | None] = mapped_column(
-        UUID(as_uuid=False), ForeignKey("datasets.id", ondelete="SET NULL"), nullable=True
+        UUID(as_uuid=False), ForeignKey("dataset_versions.id", ondelete="SET NULL"), nullable=True
     )
     test_dataset_id: Mapped[str | None] = mapped_column(
-        UUID(as_uuid=False), ForeignKey("datasets.id", ondelete="SET NULL"), nullable=True
+        UUID(as_uuid=False), ForeignKey("dataset_versions.id", ondelete="SET NULL"), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=False), nullable=False, default=_now, server_default=func.now()

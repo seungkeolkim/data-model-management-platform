@@ -13,7 +13,7 @@ import type {
   DatasetValidateRequest,
   FormatValidateRequest,
   FormatValidateResponse,
-  Dataset,
+  DatasetVersion,
   FileBrowserListResponse,
   FileBrowserRootsResponse,
   ClassificationScanResponse,
@@ -82,22 +82,22 @@ export const datasetGroupsApi = {
 // Individual Datasets
 export const datasetsApi = {
   list: (params?: { group_id?: string; split?: string; status?: string }) =>
-    api.get<Dataset[]>('/datasets', { params }),
+    api.get<DatasetVersion[]>('/datasets', { params }),
 
   get: (datasetId: string) =>
-    api.get<Dataset>(`/datasets/${datasetId}`),
+    api.get<DatasetVersion>(`/datasets/${datasetId}`),
 
   delete: (datasetId: string) =>
     api.delete<{ message: string }>(`/datasets/${datasetId}`),
 
   update: (datasetId: string, data: { annotation_format?: string }) =>
-    api.patch<Dataset>(`/datasets/${datasetId}`, data),
+    api.patch<DatasetVersion>(`/datasets/${datasetId}`, data),
 
   validate: (datasetId: string, data: DatasetValidateRequest) =>
     api.post<FormatValidateResponse>(`/datasets/${datasetId}/validate`, data),
 
   replaceMetaFile: (datasetId: string, sourceMetaFilePath: string) =>
-    api.put<Dataset>(`/datasets/${datasetId}/meta-file`, {
+    api.put<DatasetVersion>(`/datasets/${datasetId}/meta-file`, {
       source_annotation_meta_file: sourceMetaFilePath,
     }),
 

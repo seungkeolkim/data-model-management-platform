@@ -17,7 +17,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.config import app_config, settings
 from app.core.storage import get_storage_client
-from app.models.all_models import Dataset, DatasetGroup
+from app.models.all_models import DatasetGroup, DatasetSplit, DatasetVersion
 from app.schemas.dataset import (
     ClassificationHeadWarning,
     DatasetGroupCreate,
@@ -86,16 +86,19 @@ class DatasetGroupService:
 
         소프트 삭제된 그룹은 항상 제외한다.
         """
-        # 활성 Dataset 집계 서브쿼리.
-        # 삭제되지 않은 Dataset 만 카운트/합산해서, 그룹별 데이터셋 개수와 총 이미지 수를 뽑는다.
+        # 활성 DatasetVersion 집계 서브쿼리.
+        # v7.9 (3계층 분리): DatasetSplit 을 경유해 group_id 를 얻고, 활성 버전만 집계.
         datasets_aggregate_subquery = (
             select(
-                Dataset.group_id.label("group_id"),
-                func.count(Dataset.id).label("dataset_count"),
-                func.coalesce(func.sum(Dataset.image_count), 0).label("total_image_count"),
+                DatasetSplit.group_id.label("group_id"),
+                func.count(DatasetVersion.id).label("dataset_count"),
+                func.coalesce(
+                    func.sum(DatasetVersion.image_count), 0
+                ).label("total_image_count"),
             )
-            .where(Dataset.deleted_at.is_(None))
-            .group_by(Dataset.group_id)
+            .join(DatasetSplit, DatasetVersion.split_id == DatasetSplit.id)
+            .where(DatasetVersion.deleted_at.is_(None))
+            .group_by(DatasetSplit.group_id)
             .subquery()
         )
 
@@ -107,8 +110,12 @@ class DatasetGroupService:
             )
             .where(DatasetGroup.deleted_at.is_(None))
             .options(
-                selectinload(DatasetGroup.datasets.and_(Dataset.deleted_at.is_(None)))
-                .selectinload(Dataset.pipeline_executions)
+                # group.splits → split.versions (활성만) → version.pipeline_executions
+                selectinload(DatasetGroup.splits)
+                .selectinload(
+                    DatasetSplit.versions.and_(DatasetVersion.deleted_at.is_(None))
+                )
+                .selectinload(DatasetVersion.pipeline_executions)
             )
         )
 
@@ -185,13 +192,16 @@ class DatasetGroupService:
     # -------------------------------------------------------------------------
 
     async def get_group(self, group_id: str) -> DatasetGroup | None:
-        """단건 DatasetGroup 조회 (datasets + pipeline_executions 포함). 소프트 삭제된 그룹은 제외."""
+        """단건 DatasetGroup 조회 (splits + versions + pipeline_executions 포함). 소프트 삭제된 그룹은 제외."""
         result = await self.db.execute(
             select(DatasetGroup)
             .where(DatasetGroup.id == group_id, DatasetGroup.deleted_at.is_(None))
             .options(
-                selectinload(DatasetGroup.datasets.and_(Dataset.deleted_at.is_(None)))
-                .selectinload(Dataset.pipeline_executions)
+                selectinload(DatasetGroup.splits)
+                .selectinload(
+                    DatasetSplit.versions.and_(DatasetVersion.deleted_at.is_(None))
+                )
+                .selectinload(DatasetVersion.pipeline_executions)
             )
         )
         return result.scalar_one_or_none()
@@ -217,7 +227,9 @@ class DatasetGroupService:
         )
         self.db.add(group)
         await self.db.flush()
-        await self.db.refresh(group, ["datasets"])
+        # datasets 는 association_proxy 이므로 refresh 로 바로 채울 수 없다.
+        # splits 관계만 명시적으로 갱신하면 association_proxy 가 동작한다.
+        await self.db.refresh(group, ["splits"])
         return group
 
     # -------------------------------------------------------------------------
@@ -240,31 +252,47 @@ class DatasetGroupService:
     async def delete_group(self, group: DatasetGroup) -> int:
         """
         DatasetGroup 소프트 삭제.
-        하위 활성 데이터셋의 스토리지 파일을 먼저 삭제한 뒤 DB를 소프트 삭제한다.
+        하위 활성 데이터셋(DatasetVersion)의 스토리지 파일을 먼저 삭제한 뒤 DB를 소프트 삭제한다.
         삭제된 레코드의 버전 이력은 보존되어 다음 버전 자동 계산에 반영된다.
-        반환값: 함께 삭제된 데이터셋 수.
+        반환값: 함께 삭제된 DatasetVersion 수.
         """
-        # 하위 활성 데이터셋의 스토리지 파일 삭제
-        active_datasets_result = await self.db.execute(
-            select(Dataset)
-            .where(Dataset.group_id == group.id, Dataset.deleted_at.is_(None))
+        # 하위 활성 DatasetVersion 의 스토리지 파일 삭제 (split 경유 JOIN)
+        active_versions_result = await self.db.execute(
+            select(DatasetVersion)
+            .join(DatasetSplit, DatasetVersion.split_id == DatasetSplit.id)
+            .where(
+                DatasetSplit.group_id == group.id,
+                DatasetVersion.deleted_at.is_(None),
+            )
         )
-        active_datasets = list(active_datasets_result.scalars().all())
+        active_versions = list(active_versions_result.scalars().all())
 
-        for dataset in active_datasets:
+        for dataset in active_versions:
             self._delete_dataset_storage(dataset.storage_uri)
 
         # DB 소프트 삭제
         now = datetime.utcnow()
         group.deleted_at = now
 
+        # Bulk update — split 경유 subquery 로 대상 id 수집.
+        # 이 경로는 ORM 이벤트를 트리거하지 않지만, group 자체가 ORM 경로로
+        # 수정되므로 group.updated_at 은 onupdate 로 자연스럽게 갱신된다.
+        target_version_ids_subquery = (
+            select(DatasetVersion.id)
+            .join(DatasetSplit, DatasetVersion.split_id == DatasetSplit.id)
+            .where(
+                DatasetSplit.group_id == group.id,
+                DatasetVersion.deleted_at.is_(None),
+            )
+            .scalar_subquery()
+        )
         await self.db.execute(
-            update(Dataset)
-            .where(Dataset.group_id == group.id, Dataset.deleted_at.is_(None))
+            update(DatasetVersion)
+            .where(DatasetVersion.id.in_(target_version_ids_subquery))
             .values(deleted_at=now)
         )
         await self.db.flush()
-        return len(active_datasets)
+        return len(active_versions)
 
     async def delete_dataset(self, dataset: Dataset) -> None:
         """
@@ -286,6 +314,40 @@ class DatasetGroupService:
                 storage_uri=storage_uri,
                 error=str(storage_error),
             )
+
+    # -------------------------------------------------------------------------
+    # Split 슬롯 조회/생성 헬퍼 (v7.9 3계층 분리)
+    # -------------------------------------------------------------------------
+
+    async def _get_or_create_split(
+        self, group_id: str, split: str,
+    ) -> DatasetSplit:
+        """
+        (group_id, split) 정적 슬롯을 가져오거나 없으면 생성한다.
+
+        split 은 DatasetGroup 내에서 유일하며, 동일 (group_id, split) 의 재호출은
+        항상 같은 DatasetSplit 행을 반환한다. 이 호출이 flush 를 트리거하므로
+        caller 가 별도 flush 를 부를 필요는 없다.
+        """
+        split_upper = split.upper()
+        existing = await self.db.execute(
+            select(DatasetSplit).where(
+                DatasetSplit.group_id == group_id,
+                DatasetSplit.split == split_upper,
+            )
+        )
+        split_obj = existing.scalar_one_or_none()
+        if split_obj is not None:
+            return split_obj
+
+        split_obj = DatasetSplit(
+            id=str(uuid.uuid4()),
+            group_id=group_id,
+            split=split_upper,
+        )
+        self.db.add(split_obj)
+        await self.db.flush()
+        return split_obj
 
     # -------------------------------------------------------------------------
     # Classification 등록
@@ -396,15 +458,15 @@ class DatasetGroupService:
             await self.db.flush()
 
         # ------------------------------------------------------------------
-        # 버전·Dataset 선생성
+        # Split 슬롯 선조회/생성 → 버전 계산 → DatasetVersion 선생성
         # ------------------------------------------------------------------
-        version = await self._next_version(group.id, req.split)
+        split_obj = await self._get_or_create_split(group.id, req.split)
+        version = await self._next_version(split_obj.id)
         dup = await self.db.execute(
-            select(Dataset).where(
-                Dataset.group_id == group.id,
-                Dataset.split == req.split.upper(),
-                Dataset.version == version,
-                Dataset.deleted_at.is_(None),
+            select(DatasetVersion).where(
+                DatasetVersion.split_id == split_obj.id,
+                DatasetVersion.version == version,
+                DatasetVersion.deleted_at.is_(None),
             )
         )
         if dup.scalar_one_or_none():
@@ -416,10 +478,9 @@ class DatasetGroupService:
         storage_uri = self.storage.build_dataset_uri(
             "RAW", group.name, req.split, version,
         )
-        dataset = Dataset(
+        dataset = DatasetVersion(
             id=str(uuid.uuid4()),
-            group_id=group.id,
-            split=req.split.upper(),
+            split_id=split_obj.id,
             version=version,
             annotation_format="CLS_MANIFEST",
             storage_uri=storage_uri,
@@ -534,17 +595,17 @@ class DatasetGroupService:
             logger.info("신규 그룹 DB 저장 완료", group_id=group.id)
 
         # ------------------------------------------------------------------
-        # 버전 자동 생성
+        # Split 슬롯 선조회/생성 → 버전 자동 생성
         # ------------------------------------------------------------------
-        version = await self._next_version(group.id, req.split)
+        split_obj = await self._get_or_create_split(group.id, req.split)
+        version = await self._next_version(split_obj.id)
         logger.info("버전 자동 생성", version=version, split=req.split)
 
         dup = await self.db.execute(
-            select(Dataset).where(
-                Dataset.group_id == group.id,
-                Dataset.split == req.split.upper(),
-                Dataset.version == version,
-                Dataset.deleted_at.is_(None),
+            select(DatasetVersion).where(
+                DatasetVersion.split_id == split_obj.id,
+                DatasetVersion.version == version,
+                DatasetVersion.deleted_at.is_(None),
             )
         )
         if dup.scalar_one_or_none():
@@ -554,15 +615,14 @@ class DatasetGroupService:
             )
 
         # ------------------------------------------------------------------
-        # storage_uri 결정 + Dataset 즉시 생성 (PROCESSING)
+        # storage_uri 결정 + DatasetVersion 즉시 생성 (PROCESSING)
         # ------------------------------------------------------------------
         group_name = group.name
         storage_uri = self.storage.build_dataset_uri("RAW", group_name, req.split, version)
 
-        dataset = Dataset(
+        dataset = DatasetVersion(
             id=str(uuid.uuid4()),
-            group_id=group.id,
-            split=req.split.upper(),
+            split_id=split_obj.id,
             version=version,
             annotation_format=req.annotation_format,
             storage_uri=storage_uri,
@@ -885,9 +945,9 @@ class DatasetGroupService:
 
         return FormatValidateResponse(valid=is_valid, errors=errors, summary=summary)
 
-    async def _next_version(self, group_id: str, split: str) -> str:
+    async def _next_version(self, split_id: str) -> str:
         """
-        해당 group+split의 다음 버전 자동 계산.
+        해당 split_id(DatasetSplit)의 다음 버전 자동 계산 (v7.9 3계층 분리 반영).
 
         버전 정책: {major}.{minor}
         - major: 사용자가 명시적으로 파이프라인을 실행할 때 증가
@@ -895,9 +955,9 @@ class DatasetGroupService:
         RAW 데이터셋 수동 등록 시에는 항상 major를 올린다.
         """
         result = await self.db.execute(
-            select(Dataset.version)
-            .where(Dataset.group_id == group_id, Dataset.split == split.upper())
-            .order_by(Dataset.created_at.desc())
+            select(DatasetVersion.version)
+            .where(DatasetVersion.split_id == split_id)
+            .order_by(DatasetVersion.created_at.desc())
             .limit(1)
         )
         last_version = result.scalar_one_or_none()
@@ -915,14 +975,21 @@ class DatasetGroupService:
     # Dataset 개별 조회 / 수정
     # -------------------------------------------------------------------------
 
-    async def get_dataset(self, dataset_id: str) -> Dataset | None:
-        """단건 Dataset 조회. 소프트 삭제된 데이터셋은 제외. group, pipeline_executions 관계도 함께 로드."""
+    async def get_dataset(self, dataset_id: str) -> DatasetVersion | None:
+        """단건 DatasetVersion 조회. 소프트 삭제된 데이터셋은 제외.
+        split → group 체인과 pipeline_executions 관계를 함께 로드한다 (v7.9 3계층 분리).
+        """
         result = await self.db.execute(
-            select(Dataset)
-            .where(Dataset.id == dataset_id, Dataset.deleted_at.is_(None))
+            select(DatasetVersion)
+            .where(
+                DatasetVersion.id == dataset_id,
+                DatasetVersion.deleted_at.is_(None),
+            )
             .options(
-                selectinload(Dataset.group),
-                selectinload(Dataset.pipeline_executions),
+                # split.group 은 association_proxy 로 노출되지만 selectinload 는 실제
+                # relationship 체인 (split → group) 을 따라가야 한다.
+                selectinload(DatasetVersion.split_slot).selectinload(DatasetSplit.group),
+                selectinload(DatasetVersion.pipeline_executions),
             )
         )
         return result.scalar_one_or_none()

@@ -19,9 +19,10 @@ from datetime import datetime
 from app.core.database import SyncSessionLocal
 from app.core.storage import get_storage_client
 from app.models.all_models import (
-    Dataset,
     DatasetGroup,
     DatasetLineage,
+    DatasetSplit,
+    DatasetVersion,
     PipelineExecution,
 )
 from app.tasks.celery_app import celery_app
@@ -58,8 +59,8 @@ class _DbAwareDagExecutor(PipelineDagExecutor):
     def _load_source_meta(self, dataset_id: str) -> DatasetMeta:
         """DB에서 소스 데이터셋 정보를 조회하여 DatasetMeta를 로드한다."""
         source_dataset = (
-            self._sync_db.query(Dataset)
-            .filter(Dataset.id == dataset_id)
+            self._sync_db.query(DatasetVersion)
+            .filter(DatasetVersion.id == dataset_id)
             .one_or_none()
         )
         if source_dataset is None:
@@ -77,10 +78,12 @@ class _DbAwareDagExecutor(PipelineDagExecutor):
             dataset_id=dataset_id,
         )
 
-        # merge 파이프라인에서 파일명 prefix 생성 시 사용할 dataset_name 주입
+        # merge 파이프라인에서 파일명 prefix 생성 시 사용할 dataset_name 주입.
+        # v7.9: group_id 접근은 split_slot 경유 (association_proxy).
+        group_id_value = source_dataset.group_id  # association_proxy 로 split_slot → group_id
         group = (
             self._sync_db.query(DatasetGroup)
-            .filter(DatasetGroup.id == source_dataset.group_id)
+            .filter(DatasetGroup.id == group_id_value)
             .one()
         )
         meta.extra["dataset_name"] = group.name
@@ -135,7 +138,7 @@ def _execute_pipeline(
     execution.current_stage = "annotation_processing"
     db.commit()
 
-    output_dataset = db.query(Dataset).filter_by(id=execution.output_dataset_id).one()
+    output_dataset = db.query(DatasetVersion).filter_by(id=execution.output_dataset_id).one()
     output_dataset.status = "PROCESSING"
     db.commit()
 
@@ -156,12 +159,16 @@ def _execute_pipeline(
             # 소스 데이터셋의 그룹 이름을 조회하여 표시용 매핑 생성
             source_dataset_names: dict[str, str] = {}
             for source_id in config.get_all_source_dataset_ids():
-                source_ds = db.query(Dataset).filter_by(id=source_id).one_or_none()
+                source_ds = db.query(DatasetVersion).filter_by(id=source_id).one_or_none()
                 if source_ds:
-                    source_group = db.query(DatasetGroup).filter_by(id=source_ds.group_id).one_or_none()
+                    # association_proxy 로 split_slot → group_id 해결.
+                    group_id_value = source_ds.group_id
+                    source_group = db.query(DatasetGroup).filter_by(id=group_id_value).one_or_none()
                     if source_group:
+                        # association_proxy 로 split 문자열 조회.
+                        split_name_value = source_ds.split
                         source_dataset_names[source_id] = (
-                            f"{source_group.name}\n{source_ds.split}/{source_ds.version}"
+                            f"{source_group.name}\n{split_name_value}/{source_ds.version}"
                         )
 
             png_output_dir = storage.resolve_path(output_dataset.storage_uri)
@@ -327,7 +334,7 @@ def _execute_pipeline(
             execution.current_stage = "failed"
             execution.task_progress = dict(task_progress_state) if task_progress_state else None
 
-            output_dataset = db.query(Dataset).filter_by(
+            output_dataset = db.query(DatasetVersion).filter_by(
                 id=execution.output_dataset_id
             ).one()
             output_dataset.status = "ERROR"

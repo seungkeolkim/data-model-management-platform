@@ -31,7 +31,7 @@ from typing import Any
 
 from app.core.database import SyncSessionLocal
 from app.core.storage import get_storage_client
-from app.models.all_models import Dataset
+from app.models.all_models import DatasetVersion
 from app.tasks.celery_app import celery_app
 from lib.classification import (
     ClassificationHeadInput,
@@ -154,7 +154,7 @@ def _execute_classification_register(
     storage_uri: str,
     heads_payload: list[dict[str, Any]],
 ) -> dict:
-    dataset = db.query(Dataset).filter_by(id=dataset_id).one_or_none()
+    dataset = db.query(DatasetVersion).filter_by(id=dataset_id).one_or_none()
     if dataset is None:
         logger.error("Classification Dataset 조회 실패: %s", dataset_id)
         return {"status": "FAILED", "error": f"Dataset not found: {dataset_id}"}
@@ -286,7 +286,7 @@ def _execute_classification_register(
         _purge_dest_except_log(dest_abs)
 
         try:
-            dataset = db.query(Dataset).filter_by(id=dataset_id).one()
+            dataset = db.query(DatasetVersion).filter_by(id=dataset_id).one()
             dataset.status = "ERROR"
             dataset.metadata_ = {
                 "error": {

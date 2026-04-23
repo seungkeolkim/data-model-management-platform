@@ -10,7 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
-from app.models.all_models import Dataset, DatasetGroup, DatasetLineage
+from app.models.all_models import (
+    DatasetGroup,
+    DatasetLineage,
+    DatasetSplit,
+    DatasetVersion,
+)
 from app.schemas.dataset import (
     DatasetMetaFileReplaceRequest,
     DatasetResponse,
@@ -36,16 +41,28 @@ async def list_datasets(
     status: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ):
-    """Dataset 목록 조회. 소프트 삭제된 데이터셋은 제외."""
+    """DatasetVersion 목록 조회. 소프트 삭제된 데이터셋은 제외.
+    v7.9: group_id / split 필터는 DatasetSplit 경유 JOIN 으로 적용.
+    """
     logger.info("데이터셋 목록 조회", group_id=group_id, split=split, status=status)
-    query = select(Dataset).where(Dataset.deleted_at.is_(None))
-    if group_id:
-        query = query.where(Dataset.group_id == group_id)
-    if split:
-        query = query.where(Dataset.split == split.upper())
+    query = select(DatasetVersion).where(DatasetVersion.deleted_at.is_(None))
+    if group_id or split:
+        # split 슬롯 기준으로 필터하려면 DatasetSplit 과 JOIN 필요.
+        query = query.join(DatasetSplit, DatasetVersion.split_id == DatasetSplit.id)
+        if group_id:
+            query = query.where(DatasetSplit.group_id == group_id)
+        if split:
+            query = query.where(DatasetSplit.split == split.upper())
     if status:
-        query = query.where(Dataset.status == status.upper())
-    query = query.order_by(Dataset.created_at.desc())
+        query = query.where(DatasetVersion.status == status.upper())
+    # 응답 직렬화에 필요한 관계 선로드:
+    #  - split_slot: split 문자열을 association_proxy 로 꺼내기 위함
+    #  - pipeline_executions: DatasetVersion.pipeline_execution_id 프로퍼티 접근용
+    query = query.options(
+        selectinload(DatasetVersion.split_slot),
+        selectinload(DatasetVersion.pipeline_executions),
+    )
+    query = query.order_by(DatasetVersion.created_at.desc())
     result = await db.execute(query)
     datasets = list(result.scalars().all())
     logger.info("데이터셋 목록 조회 완료", count=len(datasets))
@@ -237,11 +254,11 @@ async def get_dataset_lineage(
     현재 데이터셋의 upstream(부모) 전체를 재귀적으로 탐색하여
     React Flow 형식(nodes + edges)으로 반환한다.
     """
-    # 대상 데이터셋 존재 확인
+    # 대상 데이터셋 존재 확인 (v7.9: split_slot 경유로 group 확보)
     target_result = await db.execute(
-        select(Dataset)
-        .where(Dataset.id == dataset_id, Dataset.deleted_at.is_(None))
-        .options(selectinload(Dataset.group))
+        select(DatasetVersion)
+        .where(DatasetVersion.id == dataset_id, DatasetVersion.deleted_at.is_(None))
+        .options(selectinload(DatasetVersion.split_slot).selectinload(DatasetSplit.group))
     )
     target_dataset = target_result.scalar_one_or_none()
     if not target_dataset:
@@ -251,7 +268,7 @@ async def get_dataset_lineage(
     visited_dataset_ids: set[str] = set()
     queue = [dataset_id]
     lineage_edges: list[DatasetLineage] = []
-    dataset_map: dict[str, Dataset] = {dataset_id: target_dataset}
+    dataset_map: dict[str, DatasetVersion] = {dataset_id: target_dataset}
 
     while queue:
         current_id = queue.pop(0)
@@ -264,7 +281,9 @@ async def get_dataset_lineage(
             select(DatasetLineage)
             .where(DatasetLineage.child_id == current_id)
             .options(
-                selectinload(DatasetLineage.parent).selectinload(Dataset.group)
+                selectinload(DatasetLineage.parent)
+                .selectinload(DatasetVersion.split_slot)
+                .selectinload(DatasetSplit.group)
             )
         )
         edges = list(edge_result.scalars().all())
@@ -281,7 +300,9 @@ async def get_dataset_lineage(
         select(DatasetLineage)
         .where(DatasetLineage.parent_id == dataset_id)
         .options(
-            selectinload(DatasetLineage.child).selectinload(Dataset.group)
+            selectinload(DatasetLineage.child)
+            .selectinload(DatasetVersion.split_slot)
+            .selectinload(DatasetSplit.group)
         )
     )
     downstream_edges = list(downstream_result.scalars().all())

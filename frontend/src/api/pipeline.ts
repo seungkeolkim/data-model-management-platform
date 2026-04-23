@@ -14,7 +14,7 @@ import type {
   PipelineExecutionResponse,
   PipelineListResponse,
 } from '../types/pipeline'
-import type { Manipulator, Dataset, DatasetGroup, DatasetGroupListResponse } from '../types/dataset'
+import type { Manipulator, DatasetVersion, DatasetGroup, DatasetGroupListResponse } from '../types/dataset'
 
 // =============================================================================
 // Pipeline 실행 관련
@@ -79,7 +79,7 @@ export const manipulatorsApi = {
 export const datasetsForPipelineApi = {
   /** READY 상태 데이터셋만 조회 (파이프라인 입력 소스용) */
   listReady: () =>
-    api.get<Dataset[]>('/datasets', { params: { status: 'READY' } }),
+    api.get<DatasetVersion[]>('/datasets', { params: { status: 'READY' } }),
 
   /** 삭제되지 않은 DatasetGroup 목록 조회 (task_types 필터 가능) */
   listGroups: (params?: { page?: number; page_size?: number; search?: string }) =>
