@@ -24,6 +24,16 @@ from app.schemas.pipeline import (
     OutputConfig,
     PipelineRunResponse,
     PipelineSubmitResponse,
+    # Pipeline 엔티티 (v7.10 027 §2-1)
+    PipelineResponse,
+    PipelineListItemResponse,
+    PipelineListPageResponse,
+    PipelineUpdateRequest,
+    PipelineRunSubmitRequest,
+    # Automation (v7.10 027 §2-3)
+    PipelineAutomationResponse,
+    PipelineAutomationUpsertRequest,
+    PipelineAutomationRerunRequest,
     EDAResult,
     HealthResponse,
 )
@@ -51,6 +61,14 @@ __all__ = [
     "OutputConfig",
     "PipelineRunResponse",
     "PipelineSubmitResponse",
+    "PipelineResponse",
+    "PipelineListItemResponse",
+    "PipelineListPageResponse",
+    "PipelineUpdateRequest",
+    "PipelineRunSubmitRequest",
+    "PipelineAutomationResponse",
+    "PipelineAutomationUpsertRequest",
+    "PipelineAutomationRerunRequest",
     "EDAResult",
     "HealthResponse",
 ]

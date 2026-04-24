@@ -112,6 +112,148 @@ class PipelineListResponse(BaseModel):
 
 
 # =============================================================================
+# Pipeline 엔티티 스키마 (v7.10, 핸드오프 027 §2-1)
+# =============================================================================
+
+class PipelineResponse(BaseModel):
+    """Pipeline 엔티티 응답 (정적 템플릿)."""
+    id: str
+    name: str
+    version: str
+    description: str | None
+    output_split_id: str
+    output_group_id: str | None = Field(
+        default=None,
+        description="output_split 의 상위 group id (association_proxy 경유, 조회 편의)",
+    )
+    output_group_name: str | None = None
+    output_split: str | None = Field(
+        default=None,
+        description="TRAIN | VAL | TEST | NONE — DatasetSplit.split 문자열",
+    )
+    config: dict[str, Any]
+    task_type: str
+    is_active: bool
+    has_automation: bool = Field(
+        default=False,
+        description="is_active=TRUE 인 자동화 등록 여부 (partial unique index, §12-3)",
+    )
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class PipelineListItemResponse(BaseModel):
+    """Pipeline 목록 행 응답 — config 는 제외해 페이로드 축소."""
+    id: str
+    name: str
+    version: str
+    description: str | None
+    output_split_id: str
+    output_group_id: str | None = None
+    output_group_name: str | None = None
+    output_split: str | None = None
+    task_type: str
+    is_active: bool
+    has_automation: bool = False
+    run_count: int = Field(default=0, description="이 Pipeline 을 참조한 PipelineRun 누적 수")
+    last_run_at: datetime | None = Field(
+        default=None, description="가장 최근 PipelineRun.created_at",
+    )
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class PipelineListPageResponse(BaseModel):
+    """Pipeline 목록 페이지 응답."""
+    items: list[PipelineListItemResponse]
+    total: int
+    limit: int
+    offset: int
+
+
+class PipelineUpdateRequest(BaseModel):
+    """
+    Pipeline 편집 요청 — §12-4 자유 편집, §6-1 config immutable.
+
+    description / name / is_active 만 받는다. config 필드는 받지 않는다 (immutable).
+    변경하고 싶으면 새 version 또는 새 name 으로 별도 Pipeline 을 만든다.
+    """
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = None
+    is_active: bool | None = Field(
+        default=None, description="soft delete 토글. FALSE 로 전환하면 자동화 / 새 run 제출 차단",
+    )
+
+
+# =============================================================================
+# PipelineRun 제출 (Version Resolver Modal — 027 §4-3)
+# =============================================================================
+
+class PipelineRunSubmitRequest(BaseModel):
+    """
+    `POST /pipelines/{id}/runs` 요청 바디.
+
+    resolved_input_versions — `{split_id: version}`. 사용자가 각 source split 의
+    version 을 드롭다운에서 선택해 확정. 기본값 (UI 에서 채움) = 각 split 의 최신 version.
+    """
+    resolved_input_versions: dict[str, str] = Field(
+        default_factory=dict,
+        description="{split_id: version} — run 시점 input 해석 맵",
+    )
+
+
+# =============================================================================
+# PipelineAutomation 스키마 (§2-3 + §12-3 soft delete)
+# =============================================================================
+
+class PipelineAutomationResponse(BaseModel):
+    id: str
+    pipeline_id: str
+    status: str
+    mode: str | None
+    poll_interval: str | None
+    error_reason: str | None
+    last_seen_input_versions: dict[str, Any] | None
+    is_active: bool
+    deleted_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class PipelineAutomationUpsertRequest(BaseModel):
+    """
+    자동화 등록 / 업데이트 요청. `POST /pipelines/{id}/automation` 또는 PATCH.
+
+    Pipeline 당 is_active=TRUE 인 자동화는 최대 1개 (partial unique index 강제).
+    같은 Pipeline 에 다시 POST 하면 기존 active 행을 덮어쓴다.
+    """
+    status: str = Field(default="stopped", description="stopped | active | error")
+    mode: str | None = Field(default=None, description="polling | triggering | NULL")
+    poll_interval: str | None = Field(
+        default=None, description="10m | 1h | 6h | 24h | NULL (polling 외)",
+    )
+
+
+class PipelineAutomationRerunRequest(BaseModel):
+    """
+    수동 재실행 요청 — 026 §5-2a 2-버튼 UX.
+
+    - if_delta: 상류 delta 판정 후 있으면 dispatch, 없으면 SKIPPED_NO_DELTA
+    - force_latest: delta 무시, 각 source split 의 최신 version 으로 항상 dispatch
+    """
+    mode: str = Field(
+        default="if_delta",
+        description="if_delta | force_latest",
+    )
+
+
+# =============================================================================
 # Schema Preview (파이프라인 노드 시점별 head_schema 프리뷰)
 # =============================================================================
 
