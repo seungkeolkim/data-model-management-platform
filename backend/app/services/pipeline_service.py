@@ -82,33 +82,34 @@ class PipelineService:
         """
         DB 조회가 필요한 검증을 수행한다.
 
-        검증 항목:
-          1. source dataset_id가 DB에 존재하는지
-          2. source dataset의 상태가 READY인지
-          3. source dataset에 annotation 파일이 등록되어 있는지
-          4. cls_merge_datasets 태스크 입력들의 head_schema 호환성
-             (objective_n_plan_7th.md §2-11-2 표의 9종 충돌을 검사)
-          5. cls_set_head_labels_for_all_images 태스크의 params 가 상류 head_schema
-             와 양립하는지 (single-label head 에 2개+ classes 등을 사전 차단)
-          6. cls_filter_by_class 태스크의 params 가 상류 head_schema 와 양립하는지
-             (head_name 존재 / classes SSOT / no-op 조합 사전 차단)
+        v1 (schema_version != 2) 경로: `source:<dataset_version_id>` 를 v1 방식으로 검증
+        v2 (schema_version == 2)  경로: `source:<split_id>` 를 v2 방식으로 검증
+            (split 존재 + group deleted 여부만 체크. version 은 실행 시점에 Resolver 에서)
+
+        cls_merge / cls_set_head_labels / cls_filter_by_class / output_schema 호환성
+        검증은 v1/v2 공통 — head_schema 는 group 레벨이므로 schema_version 과 무관.
         """
         result = PipelineValidationResult()
 
-        # 모든 source dataset_id 수집 (태스크별로 추적하여 field 정보 제공)
+        # 모든 source ref 수집 (태스크별로 추적하여 field 정보 제공)
         for task_name, task_config in config.tasks.items():
-            for source_dataset_id in task_config.get_source_dataset_ids():
-                await self._validate_source_dataset(
-                    source_dataset_id, task_name, result,
+            for source_ref in task_config.get_source_dataset_ids():
+                await self._validate_source_ref(
+                    source_ref, task_name, result, is_schema_v2=config.is_schema_v2,
                 )
 
         # Passthrough 모드(tasks 비어있음)에서도 소스 검증
-        if config.is_passthrough and config.passthrough_source_dataset_id:
-            await self._validate_source_dataset(
-                config.passthrough_source_dataset_id,
-                "__passthrough__",
-                result,
-            )
+        if config.is_passthrough:
+            if config.is_schema_v2 and config.passthrough_source_split_id:
+                await self._validate_source_ref(
+                    config.passthrough_source_split_id, "__passthrough__",
+                    result, is_schema_v2=True,
+                )
+            elif not config.is_schema_v2 and config.passthrough_source_dataset_id:
+                await self._validate_source_ref(
+                    config.passthrough_source_dataset_id, "__passthrough__",
+                    result, is_schema_v2=False,
+                )
 
         # (4), (5), (6), (7) — 상류/출력 head_schema 를 preview 로 계산해야 하므로
         # 소스 검증이 먼저 통과한 경우에만 수행. 네 검사 모두
@@ -122,22 +123,72 @@ class PipelineService:
 
         return result
 
-    async def _validate_source_dataset(
+    async def _validate_source_ref(
+        self,
+        source_ref: str,
+        task_name: str,
+        result: PipelineValidationResult,
+        *,
+        is_schema_v2: bool,
+    ) -> None:
+        """
+        단일 `source:<X>` 참조에 대한 DB 검증 (v1/v2 분기).
+
+        v2 (split_id 참조) — 저장 시점 검증:
+          - DatasetSplit 존재
+          - 상위 DatasetGroup 이 soft-delete 되지 않음
+          (실제 version 선택 및 READY 상태 체크는 실행 시점 Version Resolver 에서)
+
+        v1 (dataset_version_id 참조) — legacy 경로:
+          - DatasetVersion 존재 + group soft-delete 아님 + status=READY + annotation_files 존재
+        """
+        if is_schema_v2:
+            await self._validate_source_split_ref(source_ref, task_name, result)
+        else:
+            await self._validate_source_dataset_version_ref(
+                source_ref, task_name, result,
+            )
+
+    async def _validate_source_split_ref(
+        self,
+        split_id: str,
+        task_name: str,
+        result: PipelineValidationResult,
+    ) -> None:
+        """v2 저장 시점 검증 — split_id 존재 + group 활성만 확인."""
+        row = (await self.db.execute(
+            select(DatasetSplit, DatasetGroup)
+            .join(DatasetGroup, DatasetSplit.group_id == DatasetGroup.id)
+            .where(DatasetSplit.id == split_id)
+        )).first()
+        if row is None:
+            result.add_error(
+                code="SOURCE_SPLIT_NOT_FOUND",
+                message=(
+                    f"태스크 '{task_name}'의 입력 split '{split_id}'를 찾을 수 없습니다. "
+                    f"데이터셋이 삭제되었거나 다른 DB 환경일 수 있습니다."
+                ),
+                issue_field=f"tasks.{task_name}.inputs",
+            )
+            return
+        _split, group = row.tuple()
+        if group.deleted_at is not None:
+            result.add_error(
+                code="SOURCE_DATASET_GROUP_DELETED",
+                message=(
+                    f"태스크 '{task_name}'의 입력 split 이 속한 그룹 '{group.name}'이(가) "
+                    f"삭제되었습니다."
+                ),
+                issue_field=f"tasks.{task_name}.inputs",
+            )
+
+    async def _validate_source_dataset_version_ref(
         self,
         dataset_id: str,
         task_name: str,
         result: PipelineValidationResult,
     ) -> None:
-        """
-        단일 source dataset_id에 대한 DB 검증을 수행한다.
-
-        검증 항목:
-          - DB에 존재하는지
-          - 소프트 삭제되지 않았는지
-          - 상태가 READY인지
-          - annotation_files가 비어있지 않은지
-        """
-        # Dataset 조회 (split → group 경유 JOIN 으로 그룹 정보도 확보)
+        """v1 legacy 경로 — 기존 검증 로직 그대로."""
         query_result = await self.db.execute(
             select(DatasetVersion, DatasetGroup)
             .join(DatasetSplit, DatasetVersion.split_id == DatasetSplit.id)
@@ -159,7 +210,6 @@ class PipelineService:
 
         dataset, dataset_group = row.tuple()
 
-        # 소프트 삭제 확인
         if dataset_group.deleted_at is not None:
             result.add_error(
                 code="SOURCE_DATASET_GROUP_DELETED",
@@ -171,7 +221,6 @@ class PipelineService:
             )
             return
 
-        # 상태 확인 (READY만 허용)
         if dataset.status != "READY":
             result.add_error(
                 code="SOURCE_DATASET_NOT_READY",
@@ -183,7 +232,6 @@ class PipelineService:
                 issue_field=f"tasks.{task_name}.inputs",
             )
 
-        # annotation_files 존재 확인
         if not dataset.annotation_files:
             result.add_warning(
                 code="SOURCE_DATASET_NO_ANNOTATIONS",
@@ -193,6 +241,65 @@ class PipelineService:
                 ),
                 issue_field=f"tasks.{task_name}.inputs",
             )
+
+    # v7.10 호환용 — 외부/테스트 호출부가 남아있으면 기존 v1 검증을 유지.
+    _validate_source_dataset = _validate_source_dataset_version_ref
+
+    async def _build_source_meta_map(
+        self, config: PipelineConfig,
+    ) -> dict[str, Any]:
+        """
+        config 의 모든 source ref 에 대해 head_schema 기반 stub meta 를 생성 (v7.10).
+
+        반환 dict 의 key = source ref 값 (v1=dataset_version_id, v2=split_id).
+        4개 validator (cls_merge / cls_set_head_labels / cls_filter_by_class /
+        output_schema_compatibility) 가 동일한 key 로 meta 를 조회한다.
+
+        head_schema 는 group 레벨 SSOT 이므로 version 무관 — v2 에서도 group 을 거슬러
+        올라가면 동일 schema 를 얻는다.
+        """
+        from lib.pipeline.schema_preview import build_stub_source_meta
+
+        meta_map: dict[str, Any] = {}
+        if config.is_schema_v2:
+            split_ids = config.get_all_source_split_ids()
+            if not split_ids:
+                return meta_map
+            rows = (await self.db.execute(
+                select(DatasetSplit)
+                .options(selectinload(DatasetSplit.group))
+                .where(DatasetSplit.id.in_(split_ids))
+            )).scalars().all()
+            for split_obj in rows:
+                head_schema = split_obj.group.head_schema if split_obj.group else None
+                meta_map[split_obj.id] = build_stub_source_meta(
+                    dataset_id=split_obj.id,  # key 는 split_id, stub 의 dataset_id 도 같은 값
+                    head_schema_json=head_schema,
+                )
+        else:
+            for dataset_id in config.get_all_source_dataset_ids():
+                dataset_row = await self.db.execute(
+                    select(DatasetVersion)
+                    .options(
+                        selectinload(DatasetVersion.split_slot)
+                        .selectinload(DatasetSplit.group)
+                    )
+                    .where(
+                        DatasetVersion.id == dataset_id,
+                        DatasetVersion.deleted_at.is_(None),
+                    )
+                )
+                dataset_obj = dataset_row.scalar_one_or_none()
+                if dataset_obj is None:
+                    continue
+                head_schema = (
+                    dataset_obj.group.head_schema if dataset_obj.group else None
+                )
+                meta_map[dataset_id] = build_stub_source_meta(
+                    dataset_id=dataset_id,
+                    head_schema_json=head_schema,
+                )
+        return meta_map
 
     # -------------------------------------------------------------------------
     # cls_merge_datasets 호환성 검증 (§2-11-2)
@@ -234,25 +341,8 @@ class PipelineService:
         if not cls_merge_tasks:
             return
 
-        # cls_merge 태스크가 하나라도 있으면 source head_schema 를 미리 로드해둔다.
-        source_meta_by_dataset_id: dict[str, Any] = {}
-        for dataset_id in config.get_all_source_dataset_ids():
-            dataset_row = await self.db.execute(
-                select(DatasetVersion)
-                .options(selectinload(DatasetVersion.split_slot).selectinload(DatasetSplit.group))
-                .where(DatasetVersion.id == dataset_id, DatasetVersion.deleted_at.is_(None))
-            )
-            dataset_obj = dataset_row.scalar_one_or_none()
-            if dataset_obj is None:
-                # 앞선 _validate_source_dataset 에서 이미 에러로 잡혔을 것이므로 건너뛴다.
-                continue
-            group_head_schema = (
-                dataset_obj.group.head_schema if dataset_obj.group else None
-            )
-            source_meta_by_dataset_id[dataset_id] = build_stub_source_meta(
-                dataset_id=dataset_id,
-                head_schema_json=group_head_schema,
-            )
+        # source head_schema stub meta 미리 로드 — v7.10 공통 헬퍼 사용 (v1/v2 분기 포함)
+        source_meta_by_dataset_id = await self._build_source_meta_map(config)
 
         for task_name, task_config in cls_merge_tasks:
             input_head_schemas: list[Any] = []
@@ -340,24 +430,8 @@ class PipelineService:
         if not target_tasks:
             return
 
-        # 필요한 source dataset 의 head_schema 를 한 번만 로드.
-        source_meta_by_dataset_id: dict[str, Any] = {}
-        for dataset_id in config.get_all_source_dataset_ids():
-            dataset_row = await self.db.execute(
-                select(DatasetVersion)
-                .options(selectinload(DatasetVersion.split_slot).selectinload(DatasetSplit.group))
-                .where(DatasetVersion.id == dataset_id, DatasetVersion.deleted_at.is_(None))
-            )
-            dataset_obj = dataset_row.scalar_one_or_none()
-            if dataset_obj is None:
-                continue
-            group_head_schema = (
-                dataset_obj.group.head_schema if dataset_obj.group else None
-            )
-            source_meta_by_dataset_id[dataset_id] = build_stub_source_meta(
-                dataset_id=dataset_id,
-                head_schema_json=group_head_schema,
-            )
+        # v7.10 공통 헬퍼로 source head_schema stub meta 로드 (cls_set_head_labels compat)
+        source_meta_by_dataset_id = await self._build_source_meta_map(config)
 
         for task_name, task_config in target_tasks:
             if len(task_config.inputs) != 1:
@@ -439,23 +513,8 @@ class PipelineService:
         if not target_tasks:
             return
 
-        source_meta_by_dataset_id: dict[str, Any] = {}
-        for dataset_id in config.get_all_source_dataset_ids():
-            dataset_row = await self.db.execute(
-                select(DatasetVersion)
-                .options(selectinload(DatasetVersion.split_slot).selectinload(DatasetSplit.group))
-                .where(DatasetVersion.id == dataset_id, DatasetVersion.deleted_at.is_(None))
-            )
-            dataset_obj = dataset_row.scalar_one_or_none()
-            if dataset_obj is None:
-                continue
-            group_head_schema = (
-                dataset_obj.group.head_schema if dataset_obj.group else None
-            )
-            source_meta_by_dataset_id[dataset_id] = build_stub_source_meta(
-                dataset_id=dataset_id,
-                head_schema_json=group_head_schema,
-            )
+        # v7.10 공통 헬퍼 — cls_filter_by_class compat
+        source_meta_by_dataset_id = await self._build_source_meta_map(config)
 
         for task_name, task_config in target_tasks:
             if len(task_config.inputs) != 1:
@@ -565,33 +624,21 @@ class PipelineService:
             return
 
         # 2) 출력 head_schema 계산 — passthrough / tasks 분기
-        # source_meta_by_dataset_id 를 이번 검증용으로 별도 준비 (다른 compat
-        # 함수와 독립). classification 소스가 없으면 passthrough/preview 모두
-        # head_schema=None 을 리턴하므로 아래 분기에서 자연스럽게 처리됨.
-        source_meta_by_dataset_id: dict[str, Any] = {}
-        for source_id in config.get_all_source_dataset_ids():
-            source_row = await self.db.execute(
-                select(DatasetVersion)
-                .options(selectinload(DatasetVersion.split_slot).selectinload(DatasetSplit.group))
-                .where(DatasetVersion.id == source_id, DatasetVersion.deleted_at.is_(None))
-            )
-            source_dataset = source_row.scalar_one_or_none()
-            if source_dataset is None:
-                # _validate_source_dataset 에서 이미 에러 수집됨.
-                continue
-            group_head_schema = (
-                source_dataset.group.head_schema if source_dataset.group else None
-            )
-            source_meta_by_dataset_id[source_id] = build_stub_source_meta(
-                dataset_id=source_id,
-                head_schema_json=group_head_schema,
-            )
+        # v7.10 공통 헬퍼 사용 (v1/v2 둘 다 처리). classification 소스가 없으면
+        # passthrough/preview 모두 head_schema=None 을 리턴해 아래 분기에서 자연 처리.
+        source_meta_by_dataset_id = await self._build_source_meta_map(config)
+
+        # passthrough 참조 해석 — v2 는 split_id, v1 은 dataset_version_id
+        passthrough_source_ref: str | None = None
+        if config.is_passthrough:
+            if config.is_schema_v2 and config.passthrough_source_split_id:
+                passthrough_source_ref = config.passthrough_source_split_id
+            elif not config.is_schema_v2 and config.passthrough_source_dataset_id:
+                passthrough_source_ref = config.passthrough_source_dataset_id
 
         output_head_schema_list = None
-        if config.is_passthrough and config.passthrough_source_dataset_id:
-            passthrough_meta = source_meta_by_dataset_id.get(
-                config.passthrough_source_dataset_id,
-            )
+        if passthrough_source_ref:
+            passthrough_meta = source_meta_by_dataset_id.get(passthrough_source_ref)
             if passthrough_meta is None:
                 return  # 소스 로드 실패 — 다른 검증 항목에서 에러 보고됨
             output_head_schema_list = getattr(passthrough_meta, "head_schema", None)
@@ -874,39 +921,72 @@ class PipelineService:
             """
             return "CLASSIFICATION" in (task_types or [])
 
-        # 1) 파이프라인에서 참조하는 모든 source dataset 의 head_schema + task_types
-        #    를 DB 에서 로드. task_ 분기에서 그룹 판정에 사용한다.
-        source_dataset_ids = config.get_all_source_dataset_ids()
+        # 1) 파이프라인에서 참조하는 모든 source 의 head_schema + task_types 를 DB 에서 로드.
+        #    v1 (dataset_version_id) / v2 (split_id) 분기. task_ 분기에서 그룹 판정에 사용.
         source_meta_by_dataset_id: dict[str, object] = {}
         source_task_types_by_dataset_id: dict[str, list[str]] = {}
-        for dataset_id in source_dataset_ids:
-            dataset_row = await self.db.execute(
-                select(DatasetVersion)
-                .options(selectinload(DatasetVersion.split_slot).selectinload(DatasetSplit.group))
-                .where(DatasetVersion.id == dataset_id, DatasetVersion.deleted_at.is_(None))
-            )
-            dataset_obj = dataset_row.scalar_one_or_none()
-            if dataset_obj is None:
-                return {
-                    "task_kind": "unknown",
-                    "head_schema": None,
-                    "error_code": "SOURCE_NOT_FOUND",
-                    "error_message": (
-                        f"source dataset_id='{dataset_id}' 를 DB 에서 찾을 수 없습니다."
-                    ),
-                }
-            # head_schema / task_types 모두 DatasetGroup 에 위치 (SSOT).
-            group_head_schema = (
-                dataset_obj.group.head_schema if dataset_obj.group else None
-            )
-            group_task_types = (
-                dataset_obj.group.task_types if dataset_obj.group else None
-            )
-            source_meta_by_dataset_id[dataset_id] = build_stub_source_meta(
-                dataset_id=dataset_id,
-                head_schema_json=group_head_schema,
-            )
-            source_task_types_by_dataset_id[dataset_id] = group_task_types or []
+
+        is_v2 = getattr(config, "is_schema_v2", False) or (
+            getattr(config, "schema_version", None) == 2
+        )
+        if is_v2:
+            split_ids = config.get_all_source_split_ids()
+            for split_id in split_ids:
+                split_row = await self.db.execute(
+                    select(DatasetSplit)
+                    .options(selectinload(DatasetSplit.group))
+                    .where(DatasetSplit.id == split_id)
+                )
+                split_obj = split_row.scalar_one_or_none()
+                if split_obj is None:
+                    return {
+                        "task_kind": "unknown",
+                        "head_schema": None,
+                        "error_code": "SOURCE_NOT_FOUND",
+                        "error_message": (
+                            f"source split_id='{split_id}' 를 DB 에서 찾을 수 없습니다."
+                        ),
+                    }
+                group_head_schema = (
+                    split_obj.group.head_schema if split_obj.group else None
+                )
+                group_task_types = (
+                    split_obj.group.task_types if split_obj.group else None
+                )
+                source_meta_by_dataset_id[split_id] = build_stub_source_meta(
+                    dataset_id=split_id,
+                    head_schema_json=group_head_schema,
+                )
+                source_task_types_by_dataset_id[split_id] = group_task_types or []
+        else:
+            source_dataset_ids = config.get_all_source_dataset_ids()
+            for dataset_id in source_dataset_ids:
+                dataset_row = await self.db.execute(
+                    select(DatasetVersion)
+                    .options(selectinload(DatasetVersion.split_slot).selectinload(DatasetSplit.group))
+                    .where(DatasetVersion.id == dataset_id, DatasetVersion.deleted_at.is_(None))
+                )
+                dataset_obj = dataset_row.scalar_one_or_none()
+                if dataset_obj is None:
+                    return {
+                        "task_kind": "unknown",
+                        "head_schema": None,
+                        "error_code": "SOURCE_NOT_FOUND",
+                        "error_message": (
+                            f"source dataset_id='{dataset_id}' 를 DB 에서 찾을 수 없습니다."
+                        ),
+                    }
+                group_head_schema = (
+                    dataset_obj.group.head_schema if dataset_obj.group else None
+                )
+                group_task_types = (
+                    dataset_obj.group.task_types if dataset_obj.group else None
+                )
+                source_meta_by_dataset_id[dataset_id] = build_stub_source_meta(
+                    dataset_id=dataset_id,
+                    head_schema_json=group_head_schema,
+                )
+                source_task_types_by_dataset_id[dataset_id] = group_task_types or []
 
         # 2) target_ref 분기.
         #
@@ -916,40 +996,54 @@ class PipelineService:
         # source_meta_by_dataset_id 에 포함되지 않을 수 있다) 에도 프리뷰가
         # 정상 동작하도록 하기 위함.
         if target_ref.startswith("source:"):
-            source_dataset_id = target_ref.split(":", 1)[1]
-            source_meta = source_meta_by_dataset_id.get(source_dataset_id)
-            group_task_types = source_task_types_by_dataset_id.get(source_dataset_id)
+            source_ref_value = target_ref.split(":", 1)[1]
+            source_meta = source_meta_by_dataset_id.get(source_ref_value)
+            group_task_types = source_task_types_by_dataset_id.get(source_ref_value)
             if source_meta is None:
-                # config 에 참조되지 않은 source id — dataLoad 단독 선택 등.
-                # DB 에서 해당 dataset + 그룹을 직접 로드해 head_schema 와
-                # task_types 를 얻는다.
-                dataset_row = await self.db.execute(
-                    select(DatasetVersion)
-                    .options(selectinload(DatasetVersion.split_slot).selectinload(DatasetSplit.group))
-                    .where(
-                        DatasetVersion.id == source_dataset_id,
-                        DatasetVersion.deleted_at.is_(None),
+                # config 에 참조되지 않은 source — dataLoad 단독 선택 등.
+                # v1 (dataset_version_id) / v2 (split_id) 분기하여 DB 에서 직접 로드.
+                group_obj = None
+                if is_v2:
+                    split_row = await self.db.execute(
+                        select(DatasetSplit)
+                        .options(selectinload(DatasetSplit.group))
+                        .where(DatasetSplit.id == source_ref_value)
                     )
-                )
-                dataset_obj = dataset_row.scalar_one_or_none()
-                if dataset_obj is None:
-                    return {
-                        "task_kind": "unknown",
-                        "head_schema": None,
-                        "error_code": "SOURCE_NOT_FOUND",
-                        "error_message": (
-                            f"source dataset_id='{source_dataset_id}' 를 DB 에서 "
-                            "찾을 수 없습니다."
-                        ),
-                    }
-                group_head_schema = (
-                    dataset_obj.group.head_schema if dataset_obj.group else None
-                )
-                group_task_types = (
-                    dataset_obj.group.task_types if dataset_obj.group else None
-                )
+                    split_obj = split_row.scalar_one_or_none()
+                    if split_obj is None:
+                        return {
+                            "task_kind": "unknown",
+                            "head_schema": None,
+                            "error_code": "SOURCE_NOT_FOUND",
+                            "error_message": (
+                                f"source split_id='{source_ref_value}' 를 DB 에서 찾을 수 없습니다."
+                            ),
+                        }
+                    group_obj = split_obj.group
+                else:
+                    dataset_row = await self.db.execute(
+                        select(DatasetVersion)
+                        .options(selectinload(DatasetVersion.split_slot).selectinload(DatasetSplit.group))
+                        .where(
+                            DatasetVersion.id == source_ref_value,
+                            DatasetVersion.deleted_at.is_(None),
+                        )
+                    )
+                    dataset_obj = dataset_row.scalar_one_or_none()
+                    if dataset_obj is None:
+                        return {
+                            "task_kind": "unknown",
+                            "head_schema": None,
+                            "error_code": "SOURCE_NOT_FOUND",
+                            "error_message": (
+                                f"source dataset_id='{source_ref_value}' 를 DB 에서 찾을 수 없습니다."
+                            ),
+                        }
+                    group_obj = dataset_obj.group
+                group_head_schema = group_obj.head_schema if group_obj else None
+                group_task_types = group_obj.task_types if group_obj else None
                 source_meta = build_stub_source_meta(
-                    dataset_id=source_dataset_id,
+                    dataset_id=source_ref_value,
                     head_schema_json=group_head_schema,
                 )
             head_schema = getattr(source_meta, "head_schema", None)
