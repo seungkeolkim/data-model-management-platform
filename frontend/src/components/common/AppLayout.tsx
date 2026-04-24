@@ -4,6 +4,7 @@ import { Button, Layout, Menu, Typography, Tag } from 'antd'
 import {
   DatabaseOutlined,
   BranchesOutlined,
+  ThunderboltOutlined,
   RocketOutlined,
   SettingOutlined,
   ExperimentOutlined,
@@ -27,6 +28,12 @@ const menuItems = [
     icon: <BranchesOutlined />,
     label: '데이터 변형',
     path: '/pipelines',
+  },
+  {
+    key: 'automation',
+    icon: <ThunderboltOutlined />,
+    label: 'Automation',
+    path: '/automation',
   },
   {
     key: 'training',
@@ -73,6 +80,8 @@ export default function AppLayout() {
     ? 'datasets'
     : location.pathname.startsWith('/pipelines')
     ? 'pipelines'
+    : location.pathname.startsWith('/automation')
+    ? 'automation'
     : location.pathname.startsWith('/training')
     ? 'training'
     : location.pathname.startsWith('/settings/manipulators')
