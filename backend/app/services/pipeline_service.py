@@ -728,15 +728,29 @@ class PipelineService:
             split=split,
         )
 
-        # ── resolved_input_versions 추출 (현재 시점의 input 버전 스냅샷) ──
+        # ── resolved_input_versions 추출 (현재 시점의 input 버전 스냅샷, 기본 = 최신) ──
         resolved_input_versions = await self._extract_resolved_input_versions(config)
+
+        # ── v2 config 을 실행용 resolved config 으로 치환 (§9-5) ──
+        # source:<split_id> → source:<dataset_version_id>. Celery executor 는 기존대로
+        # dataset_version_id 를 읽어서 동작. transform_config 스냅샷에도 동일 resolved 저장.
+        config_dict_raw = config.model_dump()
+        if config.is_schema_v2:
+            split_to_dataset = await self._resolve_versions_to_dataset_ids(
+                resolved_input_versions
+            )
+            resolved_config_dict = self._substitute_v2_to_resolved_config(
+                config_dict_raw, split_to_dataset,
+            )
+        else:
+            resolved_config_dict = config_dict_raw
 
         # ── PipelineRun 생성 (v7.10 — 기존 PipelineExecution rename + 확장) ──
         execution = PipelineRun(
             id=str(uuid.uuid4()),
             pipeline_id=pipeline.id,
             output_dataset_id=dataset.id,
-            transform_config=config.model_dump(),
+            transform_config=resolved_config_dict,
             resolved_input_versions=resolved_input_versions,
             trigger_kind="manual_from_editor",
             status="PENDING",
@@ -744,12 +758,12 @@ class PipelineService:
         self.db.add(execution)
         await self.db.flush()
 
-        # ── Celery 태스크 디스패치 ──
+        # ── Celery 태스크 디스패치 — executor 는 v1 형식으로 해석하므로 resolved 를 전달 ──
         from app.tasks.pipeline_tasks import run_pipeline
 
         celery_result = run_pipeline.delay(
             execution.id,
-            config.model_dump(),
+            resolved_config_dict,
         )
         celery_task_id = celery_result.id
 
@@ -760,6 +774,7 @@ class PipelineService:
             "파이프라인 Celery 태스크 디스패치 완료",
             execution_id=execution.id,
             celery_task_id=celery_task_id,
+            schema_version=config.schema_version,
         )
 
         return PipelineSubmitResponse(
@@ -1164,26 +1179,95 @@ class PipelineService:
         self, config: PipelineConfig,
     ) -> dict[str, str]:
         """
-        config 가 참조하는 모든 source dataset_version_id 를 DB 에서 조회해
-        `{split_id: version}` 딕셔너리로 반환 (v7.10).
+        config 가 참조하는 source split 들의 **현재 최신 READY 버전** 을 `{split_id: version}`
+        으로 반환 (v7.10). submit_pipeline 호환 경로에서 자동 기본값 생성용.
 
-        schema_version=1 config 기준 (source:<dataset_version_id>). §9-4 에서
-        schema_version=2 (source:<split_id>) 로 전환되면 이 함수도 경로 분기.
+        §4-2 schema_version 분기:
+          v2 — config.get_all_source_split_ids() 로 split_id 직접
+          v1 — dataset_version_id 들을 DB 에서 조회해 split_id 로 해석 (legacy 경로)
+
+        두 경우 모두 마지막에 "split_id 별 최신 READY 버전" 을 DB 에서 조회한다.
+        submit_run_from_pipeline 은 사용자가 선택한 resolved_input_versions 를 그대로
+        받으므로 이 함수를 거치지 않음.
         """
-        dataset_version_ids = config.get_all_source_dataset_ids()
-        if not dataset_version_ids:
+        if config.is_schema_v2:
+            split_ids: set[str] = set(config.get_all_source_split_ids())
+        else:
+            dataset_version_ids = config.get_all_source_dataset_ids()
+            if not dataset_version_ids:
+                return {}
+            rs = await self.db.execute(
+                select(DatasetVersion)
+                .where(DatasetVersion.id.in_(dataset_version_ids))
+                .options(selectinload(DatasetVersion.split_slot))
+            )
+            split_ids = {v.split_slot.id for v in rs.scalars().all()}
+
+        if not split_ids:
             return {}
 
+        # 각 split 의 최신 READY 버전 수집
         result = await self.db.execute(
             select(DatasetVersion)
-            .where(DatasetVersion.id.in_(dataset_version_ids))
-            .options(selectinload(DatasetVersion.split_slot))
+            .where(
+                DatasetVersion.split_id.in_(split_ids),
+                DatasetVersion.status == "READY",
+            )
+            .order_by(DatasetVersion.split_id, DatasetVersion.created_at.desc())
         )
-        resolved: dict[str, str] = {}
-        for dataset_version in result.scalars().all():
-            # 같은 split 에서 여러 version 참조 시 마지막 값이 남음 — 현 schema_version=1
-            # 은 하나의 source 가 한 split 의 특정 version 만 가리키므로 문제 없음.
-            resolved[dataset_version.split_slot.id] = dataset_version.version
+        latest: dict[str, str] = {}
+        for dv in result.scalars().all():
+            if dv.split_id not in latest:
+                latest[dv.split_id] = dv.version
+        return latest
+
+    def _substitute_v2_to_resolved_config(
+        self,
+        config_dict: dict[str, Any],
+        split_to_dataset_version_id: dict[str, str],
+    ) -> dict[str, Any]:
+        """
+        v7.10 schema_version=2 config 의 `source:<split_id>` 참조를 실제 선택된
+        `source:<dataset_version_id>` 로 치환한 **resolved** dict 반환.
+
+        이 치환된 dict 가:
+          - `PipelineRun.transform_config` 스냅샷으로 저장되고 (027 §2-2 의 "실행 시점
+            최종 config 스냅샷 · resolved version 포함"),
+          - Celery `run_pipeline` 태스크에 전달되어 기존 executor (v1 형식 assume) 가
+            변경 없이 돌게 한다.
+
+        v1 config 이거나 schema_version 이 없으면 deep copy 만 반환 (no-op).
+        순수 파이썬 — DB 접근 없음.
+        """
+        import copy
+        resolved = copy.deepcopy(config_dict)
+        if resolved.get("schema_version") != 2:
+            return resolved
+
+        # tasks[*].inputs 치환
+        for task_config in (resolved.get("tasks") or {}).values():
+            inputs = task_config.get("inputs") or []
+            new_inputs: list[str] = []
+            for inp in inputs:
+                if inp.startswith("source:"):
+                    split_id = inp[len("source:"):]
+                    dataset_version_id = split_to_dataset_version_id.get(split_id)
+                    if dataset_version_id:
+                        new_inputs.append(f"source:{dataset_version_id}")
+                    else:
+                        # resolved 가 부족하면 원본 유지 — executor 에서 에러 날 가능성
+                        new_inputs.append(inp)
+                else:
+                    new_inputs.append(inp)
+            task_config["inputs"] = new_inputs
+
+        # v2 passthrough_source_split_id → v1 passthrough_source_dataset_id 치환
+        passthrough_split_id = resolved.get("passthrough_source_split_id")
+        if passthrough_split_id:
+            dataset_version_id = split_to_dataset_version_id.get(passthrough_split_id)
+            if dataset_version_id:
+                resolved["passthrough_source_dataset_id"] = dataset_version_id
+
         return resolved
 
     async def _get_or_create_split(
@@ -1489,15 +1573,19 @@ class PipelineService:
         self.db.add(dataset)
         await self.db.flush()
 
-        # PipelineRun 생성 — Pipeline.config 를 transform_config 로 스냅샷
-        # (schema v1 config 는 source:<dataset_version_id> 가 Pipeline.config 안에 박혀
-        #  있어서 resolved_input_versions 와 이중화됨. schema v2 전환 §9-4 때 정리)
+        # PipelineRun 생성 — Pipeline.config 는 v2 (split_id) 템플릿이므로, 실행 시점에
+        # source:<split_id> → source:<dataset_version_id> 로 치환한 resolved dict 를
+        # transform_config 에 저장 (027 §2-2 "실행 시점 최종 config 스냅샷 · resolved
+        # version 포함"). Celery executor 는 이 resolved dict 로 기존 v1 경로를 돈다.
+        resolved_config_dict = self._substitute_v2_to_resolved_config(
+            pipeline.config, runtime_dataset_ids,
+        )
         run = PipelineRun(
             id=str(uuid.uuid4()),
             pipeline_id=pipeline.id,
             automation_id=None,
             output_dataset_id=dataset.id,
-            transform_config=pipeline.config,
+            transform_config=resolved_config_dict,
             resolved_input_versions=resolved_input_versions,
             trigger_kind="manual_from_editor",
             status="PENDING",
@@ -1505,11 +1593,9 @@ class PipelineService:
         self.db.add(run)
         await self.db.flush()
 
-        # Celery dispatch — 기존 pipeline_tasks 는 pipeline_config dict 를 받으므로
-        # transform_config 그대로 넘김. runtime_dataset_ids 는 현재 v1 schema 하에서는
-        # Pipeline.config 안의 dataset_version_id 와 동일하므로 별도 치환 불필요.
+        # Celery dispatch — resolved dict (v1 형식) 을 executor 에 전달
         from app.tasks.pipeline_tasks import run_pipeline
-        celery_result = run_pipeline.delay(run.id, pipeline.config)
+        celery_result = run_pipeline.delay(run.id, resolved_config_dict)
         run.celery_task_id = celery_result.id
         await self.db.flush()
 

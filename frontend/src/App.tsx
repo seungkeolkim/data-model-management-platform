@@ -7,6 +7,7 @@ import DatasetDetailPage from './pages/DatasetDetailPage'
 import DatasetViewerPage from './pages/DatasetViewerPage'
 import PipelineEditorPage from './pages/PipelineEditorPage'
 import PipelineHistoryPage from './pages/PipelineHistoryPage'
+import { PipelineListPage } from './pages/PipelineListPage'
 import AutomationPage from './pages/AutomationPage'
 import AutomationHistoryPage from './pages/AutomationHistoryPage'
 import AutomationPipelineDetailPage from './pages/AutomationPipelineDetailPage'
@@ -39,7 +40,12 @@ export default function App() {
             <Route path="datasets/:groupId/:datasetId" element={<DatasetViewerPage />} />
 
             {/* Phase 2 — 파이프라인 (데이터 변형) */}
-            <Route path="pipelines" element={<PipelineHistoryPage />} />
+            {/* v7.10 §9-7 재배선:
+                - /pipelines          → PipelineListPage (Pipeline 정적 템플릿 목록 + 실행 버튼)
+                - /pipelines/runs     → PipelineHistoryPage (실행 이력)
+                (기존 경로 /pipelines 를 쓰던 곳은 /pipelines/runs 로 자동 이동 Alert 필요 — TODO §9-9) */}
+            <Route path="pipelines" element={<PipelineListPage />} />
+            <Route path="pipelines/runs" element={<PipelineHistoryPage />} />
 
             {/* Automation (목업) — 023 §6 기반 파이프라인 자동화 관리 */}
             <Route path="automation" element={<AutomationPage />} />

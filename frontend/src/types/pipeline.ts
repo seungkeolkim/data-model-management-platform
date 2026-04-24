@@ -121,6 +121,91 @@ export interface PipelineListResponse {
 }
 
 // =============================================================================
+// Pipeline 엔티티 (v7.10, 핸드오프 027 §2-1 / §12)
+// =============================================================================
+
+export interface PipelineEntityResponse {
+  id: string
+  name: string
+  version: string
+  description: string | null
+  output_split_id: string
+  output_group_id: string | null
+  output_group_name: string | null
+  output_split: string | null
+  config: Record<string, unknown>
+  task_type: string
+  is_active: boolean
+  has_automation: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface PipelineListItem {
+  id: string
+  name: string
+  version: string
+  description: string | null
+  output_split_id: string
+  output_group_id: string | null
+  output_group_name: string | null
+  output_split: string | null
+  task_type: string
+  is_active: boolean
+  has_automation: boolean
+  run_count: number
+  last_run_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface PipelineListPageResponse {
+  items: PipelineListItem[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export interface PipelineUpdateRequest {
+  name?: string | null
+  description?: string | null
+  is_active?: boolean | null
+}
+
+/** POST /pipelines/entities/{id}/runs 요청 바디 */
+export interface PipelineRunSubmitRequest {
+  resolved_input_versions: Record<string, string>  // {split_id: version}
+}
+
+// =============================================================================
+// PipelineAutomation (v7.10, 027 §2-3 / §12-3 soft delete)
+// =============================================================================
+
+export interface PipelineAutomationRealResponse {
+  id: string
+  pipeline_id: string
+  status: 'stopped' | 'active' | 'error'
+  mode: 'polling' | 'triggering' | null
+  poll_interval: '10m' | '1h' | '6h' | '24h' | null
+  error_reason: string | null
+  last_seen_input_versions: Record<string, unknown> | null
+  is_active: boolean
+  deleted_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface PipelineAutomationUpsertRequest {
+  status?: 'stopped' | 'active' | 'error'
+  mode?: 'polling' | 'triggering' | null
+  poll_interval?: '10m' | '1h' | '6h' | '24h' | null
+}
+
+export interface PipelineAutomationRerunRequest {
+  mode: 'if_delta' | 'force_latest'
+}
+
+// =============================================================================
 // 노드 데이터 타입 — React Flow node.data에 저장되는 도메인 데이터
 // =============================================================================
 
