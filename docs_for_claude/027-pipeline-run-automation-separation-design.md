@@ -440,6 +440,8 @@ interface DataLoadNodeData {
 
 ## 10. 미결 / 실구현 진입 전 추가 결정 필요
 
+**2026-04-24 착수 준비 세션에서 본 §의 4건 전부 해소 + 파생 이슈 3건 추가 결정 — §12 참조.**
+
 - **Pipeline 생성 UX의 구체적 동선** — 에디터에서 "실행" 이 아닌 "저장 + 실행 분리" 가 필요한가?
   - 현 데이터 변형 탭은 "에디터에서 실행" 단일 경로. 저장 분리 필요 시 UI 확장
 - **Pipeline name 정책** — 자유 문자열인가, output group 명 기반 권장인가? 023 §9-3 에서는 "수동 입력
@@ -459,3 +461,119 @@ interface DataLoadNodeData {
 - 024 head_schema SSOT: `docs_history/handoffs/024-head-schema-ssot-enforcement-handoff.md`
 - 026 Automation 목업 (이 문서의 직접 계기): `docs_for_claude/026-automation-mockup-completion-handoff.md`
 - 노드 SDK 가이드: `docs/pipeline-node-sdk-guide.md`
+
+---
+
+## 12. 실착수 전 최종 결정 (2026-04-24 세션)
+
+§10 미결 4건 해소 + 파생 이슈 3건 (E / H / M) 확정. 다음 세션부터 §9 의 9단계 구현에 순차
+착수. 브랜치 `feature/pipeline-run-automation-separation` 이미 생성됨 (main 985acc2 기준,
+커밋 없음).
+
+### 12-1. Pipeline 생성 / 실행 UX — 저장/실행 완전 분리 (§10-A 확정)
+
+- **에디터 역할**: 순수 편집기. "저장" 만 수행. 에디터 안에 "실행" 버튼 없음.
+- **Load Node UI 는 1원화 유지** — DAG 구성용 하나만. `(group, split)` 까지만 입력. DAG 전체
+  복원이나 실행 전용 Load Node ver2 UI 는 만들지 않는다.
+- **실행 버튼 위치** — Pipeline **목록 각 행 우측** 에 "실행" 버튼. 클릭 시 모달 / 드로워 /
+  별개 페이지 (구현 편의 우선) 로 `source:<split_id>` 각각에 대해 version 드롭다운만 받고
+  dispatch. `is_active=FALSE` (legacy) Pipeline 은 버튼 비활성.
+- **기본 기능 우선** — "저장 후 실행" 병치, 에디터 내부 실행 등 편의 기능은 기본 flow 가
+  돌아간 뒤 별도 판단.
+
+### 12-2. Pipeline name 자동 생성 규칙 (§10-B 확정)
+
+- **자동 생성 기본값**: `{output_group_name}_{output_split}` (예: `hardhat_merged_train`)
+- **충돌 시**: 같은 `(name, version)` 이 이미 있으면 뒤에 숫자 suffix 자동 추가
+  (`_2`, `_3`, ...)
+- **변경 시점**: 에디터 저장 전 / Pipeline 생성 후 상세에서 언제든 rename 가능.
+  `Pipeline.config` immutable 규약과 별개 (name 은 수정 허용).
+- 자동 생성 rule 은 formatted string 한 줄이므로 사용해 보고 쉽게 조정.
+
+### 12-3. PipelineAutomation soft delete (§10-C 확정)
+
+- 027 §2-3 `PipelineAutomation` 에 컬럼 추가: `is_active: bool = True`,
+  `deleted_at: datetime | None`
+- **FK 제약 그대로 유지** — dangling 아님. 과거 `PipelineRun.automation_id` 참조는 row 가
+  살아있으므로 영원히 유효. 과거 사실 완전 불변 보존 + DB 무결성 유지.
+- 목록 기본 필터 `is_active=TRUE`. 삭제 = `is_active=FALSE` + `deleted_at=NOW()`.
+  재활성화 가능.
+- Pipeline 의 soft delete 패턴(§6-2) 과 대칭.
+- `ON DELETE SET NULL` 은 차선책으로 검토됐지만 soft delete 가 "과거 사실 불변" 의도에
+  더 부합해 본 안 채택.
+
+### 12-4. RBAC 없는 자유 편집 (§10-D 확정)
+
+- Pipeline description / name 은 인증 없이 누구나 편집. 인증 레이어는 이후 세션.
+- `updated_at` 자동 갱신으로 audit 충분.
+
+### 12-5. 저장 시점 vs 실행 시점 검증 책임 분리 (파생 E)
+
+기존 `pipeline_service._validate_with_database` 를 두 단계로 쪼갠다. §12-1 "Load Node UI
+1원화" + "실행 모달은 version 드롭다운만" 이 성립하려면 이 분리가 전제.
+
+- **저장 시점 (`validate_structural`)** — version 무관한 구조적 검증 전부:
+  - §2-8 head_schema SSOT 비교 (`_validate_output_schema_compatibility`)
+  - §2-11-2 cls_add_head duplicate (`_validate_cls_add_head_duplicates`)
+  - `cls_filter_by_class` / `cls_set_head_labels_for_all_images` compat 정적 검증
+  - DAG 토폴로지 / sink 유일성 등 구조 검증
+- **실행 시점 (`validate_runtime`)** — `resolved_input_versions` 기준:
+  - 선택된 DatasetVersion 이 존재 + READY 상태인지
+  - `resolved_input_versions` 의 `split_id` 가 Pipeline 의 `input_split` 과 일치하는지
+
+이 분리 덕분에 실행 모달은 정말 "version 드롭다운 + 실행" 버튼만으로 충분.
+
+### 12-6. Automation reassign — 자동 처리 X, 노티만 (파생 H)
+
+v1 → v2 새 버전 생성 시, automation 은 v1 에 그대로 유지 (§3-3 원칙 재확인). 다만 사용자
+인지를 돕기 위해:
+
+- 새 버전 생성 완료 시점 / 새 버전 상세 페이지 진입 시 **"이 Pipeline 계열에 Automation 이
+  v<old> 에 등록돼 있습니다 — v<new> 로 이동할지 확인하세요" 노티** 1회 표시
+- 자동 이동 / 강제 모달은 **하지 않음** — 사용자가 의도적으로 유지 / 이동 판단
+- 실제 이동은 기존 Automation 상세의 "Pipeline reassign" UX(§6-4) 로 수행
+
+**이유.** 자동 이동은 호의처럼 보이지만 사용자가 의도하지 않은 자동 실행 동작 변경을
+유발할 수 있다. 이런 경우 **노티만 띄워 선택권을 사용자에게 남기는 것이 안전**.
+
+### 12-7. Pipeline 생성 시 output DatasetGroup / DatasetSplit 선행 생성 (파생 M)
+
+**문제.** 027 §2-1 은 `output_split_id FK NOT NULL` 이지만, SOURCE / PROCESSED / FUSION
+output 은 대개 파이프라인 실행으로 **처음 생성**되므로 Pipeline 저장 시점에 DatasetSplit
+(그리고 상위 DatasetGroup) 이 존재하지 않는 경우가 많다. split 만이 아니라 **group 도 없는
+상태에서 최초 group + split 이 같이 생기는 케이스** 가 일반적.
+
+**확정 — 저장 시점에 output DatasetGroup → DatasetSplit 순서대로 자동 생성**:
+
+- Pipeline 저장 시 output `(group_name, split)` 이 DB 에 없으면 **DatasetGroup 먼저,
+  이어서 DatasetSplit 자동 생성**. head_schema / class 구성은 Pipeline config 에서
+  `preview_head_schema_at_task` 로 저장 시점에 이미 결정 가능 → group 의 `head_schema`
+  / `task_types` / `dataset_type` 도 같은 시점에 채워짐.
+- 실제 DatasetVersion 은 파이프라인 실행이 있어야 생성됨. 저장 후 첫 실행 전까지는
+  "빈 group + 빈 split (version 0 건)" 상태.
+- 025 의 "split = 정적 슬롯" 원칙과 일치 — 한 번 만들어진 슬롯은 version 이 쌓여도 재사용.
+
+**빈 그룹의 목록 노출 — 별도 로직 없이 그대로 보여준다.**
+
+- "등록된 그룹은 반드시 데이터가 있다" 는 규약은 **원래 없었다** — 단순히 RAW 등록만 해온
+  결과로 우연히 그렇게 보였을 뿐.
+- 그룹 목록 UI 는 빈 그룹도 그대로 노출. `dataset_count=0`, `total_image_count=0` 으로
+  자연스럽게 표시됨.
+- 사용해 보고 UX 가 혼란스럽다고 판단되면 이후 filter / badge 추가. **중복 개발 예상
+  되는데 목업이라도 미리 만들어 둬야 하는 케이스가 아니면, 일단 그대로 간다.**
+
+**구현 위치.** `pipeline_service.create_pipeline` 내부에서 025 에서 만든 헬퍼를 재사용:
+- `dataset_service._get_or_create_group(name, dataset_type, task_types, head_schema)` —
+  없으면 생성, 있으면 SSOT 비교 후 재사용 (§2-8 강제)
+- `dataset_service._get_or_create_split(group_id, split)` — 025 기존 헬퍼
+
+### 12-8. 현재 상태 스냅샷 (2026-04-24 결정 세션 종료)
+
+- **브랜치** — `feature/pipeline-run-automation-separation` 생성 완료 (main `985acc2` 기준,
+  커밋 없음).
+- **다음 작업** — §9 의 9단계를 순서대로 착수. 첫 단계는 **Alembic 031** (§5-2 + §12-3
+  soft delete 컬럼 반영 + §12-7 output group/split 선행 생성 경로에 필요한 스키마 정합성
+  재확인).
+- **§10 미결 4건** — 전부 §12-1 ~ §12-4 에서 해소.
+- **재개 시 참조 순서**: §12 (본 절, 최종 결정) → §2 ~ §6 (엔티티 / 버전 / 마이그레이션 /
+  생명주기) → §9 (진행 순서 9단계) → §8 (영향 범위 상세).
