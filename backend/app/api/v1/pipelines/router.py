@@ -10,10 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.storage import get_storage_client
-from app.models.all_models import PipelineExecution
+from app.models.all_models import PipelineRun
 from app.schemas.pipeline import (
     PipelineConfig,
-    PipelineExecutionResponse,
+    PipelineRunResponse,
     PipelineListResponse,
     PipelineSubmitResponse,
     PipelineValidationIssueResponse,
@@ -26,9 +26,9 @@ from app.services.pipeline_service import PipelineService
 router = APIRouter()
 
 
-def _build_execution_response(execution: PipelineExecution) -> PipelineExecutionResponse:
+def _build_execution_response(execution: PipelineRun) -> PipelineRunResponse:
     """
-    PipelineExecution ORM → PipelineExecutionResponse 변환.
+    PipelineRun ORM → PipelineRunResponse 변환.
 
     pipeline_image_url은 output_dataset의 storage_uri를 통해 생성한다.
     output_dataset relationship이 로드된 상태여야 한다.
@@ -50,10 +50,10 @@ def _build_execution_response(execution: PipelineExecution) -> PipelineExecution
         output_dataset_version = output_dataset.version
         output_dataset_group_id = output_dataset.group_id
 
-    return PipelineExecutionResponse(
+    return PipelineRunResponse(
         id=execution.id,
         output_dataset_id=execution.output_dataset_id,
-        config=execution.config,
+        config=execution.transform_config,
         status=execution.status,
         current_stage=execution.current_stage,
         processed_count=execution.processed_count,
@@ -140,7 +140,7 @@ async def execute_pipeline(
     return await service.submit_pipeline(config)
 
 
-@router.get("/{execution_id}/status", response_model=PipelineExecutionResponse)
+@router.get("/{execution_id}/status", response_model=PipelineRunResponse)
 async def get_pipeline_status(
     execution_id: str,
     db: AsyncSession = Depends(get_db),
@@ -154,7 +154,7 @@ async def get_pipeline_status(
 
 
 @router.get("", response_model=PipelineListResponse)
-async def list_pipeline_executions(
+async def list_pipeline_runs(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),

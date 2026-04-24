@@ -52,7 +52,7 @@ class ManipulatorListResponse(BaseModel):
     total: int
 
 
-class PipelineExecutionResponse(BaseModel):
+class PipelineRunResponse(BaseModel):
     """파이프라인 실행 응답."""
     id: str
     output_dataset_id: str
@@ -107,7 +107,7 @@ class PipelineSubmitResponse(BaseModel):
 
 class PipelineListResponse(BaseModel):
     """파이프라인 실행 이력 목록 응답."""
-    items: list[PipelineExecutionResponse]
+    items: list[PipelineRunResponse]
     total: int
 
 

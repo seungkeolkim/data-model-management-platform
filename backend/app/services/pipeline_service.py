@@ -18,7 +18,7 @@ from app.models.all_models import (
     DatasetGroup,
     DatasetSplit,
     DatasetVersion,
-    PipelineExecution,
+    PipelineRun,
 )
 from app.schemas.pipeline import PipelineSubmitResponse
 from lib.pipeline.config import PartialPipelineConfig, PipelineConfig
@@ -658,7 +658,7 @@ class PipelineService:
 
         1. DatasetGroup 조회 또는 생성 (config.name + config.output.dataset_type)
         2. Dataset 생성 (status=PENDING)
-        3. PipelineExecution 생성 (status=PENDING)
+        3. PipelineRun 생성 (status=PENDING)
         4. Celery 태스크 디스패치
         5. PipelineSubmitResponse 반환
 
@@ -712,11 +712,31 @@ class PipelineService:
         await self.db.flush()
         logger.info("출력 Dataset 생성", dataset_id=dataset.id, storage_uri=storage_uri)
 
-        # ── PipelineExecution 생성 ──
-        execution = PipelineExecution(
+        # ── Pipeline (정적 템플릿) 조회 또는 생성 (v7.10, 027 §2-1 + §12-1) ──
+        # TODO §9-3: "저장/실행 분리" UX 구현 시 이 경로는 "실행" 엔드포인트 전용이 되고,
+        # Pipeline 생성은 별도 "저장" 엔드포인트로 분리된다. 현재는 호환을 위해 submit 에서
+        # Pipeline 을 get-or-create 한다. name 자동 생성 규칙은 §12-2 (`{group}_{split}`)
+        # 이지만 현 단계에서는 config.name (= group 이름) 에 `_{split}` 를 붙여 UNIQUE
+        # (name, version) 을 만족시키는 최소 규칙으로.
+        pipeline_task_type = (source_task_types[0] if source_task_types else "DETECTION")
+        pipeline = await self._get_or_create_pipeline_for_submit(
+            config=config,
+            output_split_id=split_slot.id,
+            task_type=pipeline_task_type,
+            split=split,
+        )
+
+        # ── resolved_input_versions 추출 (현재 시점의 input 버전 스냅샷) ──
+        resolved_input_versions = await self._extract_resolved_input_versions(config)
+
+        # ── PipelineRun 생성 (v7.10 — 기존 PipelineExecution rename + 확장) ──
+        execution = PipelineRun(
             id=str(uuid.uuid4()),
+            pipeline_id=pipeline.id,
             output_dataset_id=dataset.id,
-            config=config.model_dump(),
+            transform_config=config.model_dump(),
+            resolved_input_versions=resolved_input_versions,
+            trigger_kind="manual_from_editor",
             status="PENDING",
         )
         self.db.add(execution)
@@ -750,15 +770,15 @@ class PipelineService:
     # 실행 상태 조회
     # -------------------------------------------------------------------------
 
-    async def get_execution_status(self, execution_id: str) -> PipelineExecution | None:
-        """PipelineExecution 단건 조회 (output_dataset eager load)."""
+    async def get_execution_status(self, execution_id: str) -> PipelineRun | None:
+        """PipelineRun 단건 조회 (output_dataset eager load)."""
         result = await self.db.execute(
-            select(PipelineExecution)
+            select(PipelineRun)
             .options(
-                selectinload(PipelineExecution.output_dataset)
+                selectinload(PipelineRun.output_dataset)
                 .selectinload(DatasetVersion.split_slot)
             )
-            .where(PipelineExecution.id == execution_id)
+            .where(PipelineRun.id == execution_id)
         )
         return result.scalar_one_or_none()
 
@@ -770,9 +790,9 @@ class PipelineService:
         self,
         page: int = 1,
         page_size: int = 20,
-    ) -> tuple[list[PipelineExecution], int]:
-        """PipelineExecution 목록 조회 (페이지네이션, 최신순, output_dataset eager load)."""
-        base_query = select(PipelineExecution)
+    ) -> tuple[list[PipelineRun], int]:
+        """PipelineRun 목록 조회 (페이지네이션, 최신순, output_dataset eager load)."""
+        base_query = select(PipelineRun)
 
         count_query = select(func.count()).select_from(base_query.subquery())
         total = await self.db.scalar(count_query) or 0
@@ -780,10 +800,10 @@ class PipelineService:
         list_query = (
             base_query
             .options(
-                selectinload(PipelineExecution.output_dataset)
+                selectinload(PipelineRun.output_dataset)
                 .selectinload(DatasetVersion.split_slot)
             )
-            .order_by(PipelineExecution.created_at.desc())
+            .order_by(PipelineRun.created_at.desc())
             .offset((page - 1) * page_size)
             .limit(page_size)
         )
@@ -1089,6 +1109,80 @@ class PipelineService:
             return None
 
         return sorted(intersection)
+
+    async def _get_or_create_pipeline_for_submit(
+        self,
+        config: PipelineConfig,
+        output_split_id: str,
+        task_type: str,
+        split: str,
+    ) -> "Pipeline":
+        """
+        submit_pipeline 호환용 Pipeline get-or-create (v7.10, 027 §12-1 임시).
+
+        §12-1 "저장/실행 분리" UX 가 §9-3 에서 정식 반영되기 전까지, 기존 "에디터에서 실행"
+        경로가 그대로 동작하도록 Pipeline 엔티티를 자동 get-or-create 한다. §12-2 네이밍
+        규칙에 맞춰 `{config.name}_{split.lower()}` 로 자동 생성. 동일 이름 Pipeline 이 이미
+        있으면 재사용 (version='1.0' 고정). config.name / split 이 바뀌면 새 Pipeline 이
+        만들어짐 — 사용자 명시적 의도는 없지만 legacy 흐름 호환을 위한 임시 정책.
+
+        TODO §9-3: "저장" 엔드포인트 분리 시 이 함수는 제거하고 사용자 명시 create 로 대체.
+        """
+        from app.models.all_models import Pipeline
+
+        base_name = f"{config.name}_{split.lower()}"
+        result = await self.db.execute(
+            select(Pipeline).where(
+                Pipeline.name == base_name, Pipeline.version == "1.0",
+            )
+        )
+        existing = result.scalars().first()
+        if existing is not None:
+            return existing
+
+        pipeline = Pipeline(
+            id=str(uuid.uuid4()),
+            name=base_name,
+            version="1.0",
+            description=config.description,
+            output_split_id=output_split_id,
+            config=config.model_dump(),
+            task_type=task_type,
+            is_active=True,
+        )
+        self.db.add(pipeline)
+        await self.db.flush()
+        logger.info(
+            "Pipeline 자동 생성 (submit_pipeline 호환)",
+            pipeline_id=pipeline.id, name=base_name, task_type=task_type,
+        )
+        return pipeline
+
+    async def _extract_resolved_input_versions(
+        self, config: PipelineConfig,
+    ) -> dict[str, str]:
+        """
+        config 가 참조하는 모든 source dataset_version_id 를 DB 에서 조회해
+        `{split_id: version}` 딕셔너리로 반환 (v7.10).
+
+        schema_version=1 config 기준 (source:<dataset_version_id>). §9-4 에서
+        schema_version=2 (source:<split_id>) 로 전환되면 이 함수도 경로 분기.
+        """
+        dataset_version_ids = config.get_all_source_dataset_ids()
+        if not dataset_version_ids:
+            return {}
+
+        result = await self.db.execute(
+            select(DatasetVersion)
+            .where(DatasetVersion.id.in_(dataset_version_ids))
+            .options(selectinload(DatasetVersion.split_slot))
+        )
+        resolved: dict[str, str] = {}
+        for dataset_version in result.scalars().all():
+            # 같은 split 에서 여러 version 참조 시 마지막 값이 남음 — 현 schema_version=1
+            # 은 하나의 source 가 한 split 의 특정 version 만 가리키므로 문제 없음.
+            resolved[dataset_version.split_slot.id] = dataset_version.version
+        return resolved
 
     async def _get_or_create_split(
         self, group_id: str, split: str,

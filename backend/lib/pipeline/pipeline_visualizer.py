@@ -4,7 +4,7 @@
 파이프라인 실행 시점(Celery 태스크 시작 직후)에 호출되어,
 출력 데이터셋 폴더에 pipeline.png를 생성한다.
 
-나중에 PipelineExecution.config 포맷이 변경되어
+나중에 PipelineRun.config 포맷이 변경되어
 DB에서 시각화가 불가능해질 때의 폴백용 보험 역할.
 """
 from __future__ import annotations

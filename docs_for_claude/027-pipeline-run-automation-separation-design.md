@@ -567,13 +567,81 @@ output 은 대개 파이프라인 실행으로 **처음 생성**되므로 Pipeli
   없으면 생성, 있으면 SSOT 비교 후 재사용 (§2-8 강제)
 - `dataset_service._get_or_create_split(group_id, split)` — 025 기존 헬퍼
 
-### 12-8. 현재 상태 스냅샷 (2026-04-24 결정 세션 종료)
+### 12-9. Pipeline input / output 카디널리티 — 비대칭 확정 (파생 N)
 
-- **브랜치** — `feature/pipeline-run-automation-separation` 생성 완료 (main `985acc2` 기준,
-  커밋 없음).
-- **다음 작업** — §9 의 9단계를 순서대로 착수. 첫 단계는 **Alembic 031** (§5-2 + §12-3
-  soft delete 컬럼 반영 + §12-7 output group/split 선행 생성 경로에 필요한 스키마 정합성
-  재확인).
-- **§10 미결 4건** — 전부 §12-1 ~ §12-4 에서 해소.
-- **재개 시 참조 순서**: §12 (본 절, 최종 결정) → §2 ~ §6 (엔티티 / 버전 / 마이그레이션 /
-  생명주기) → §9 (진행 순서 9단계) → §8 (영향 범위 상세).
+착수 단계에서 현 DB 의 `pipeline_executions.config` 를 점검하며 발견한 이슈. §2-1 원안은
+`input_split_id: UUID FK NOT NULL` 로 단일 input 을 가정했으나, 실제 파이프라인은
+`det_merge_datasets` / `cls_merge_datasets` 등 **multi-input 이 흔하다** (현 DB 의 execution
+57건 중 merge 체인 다수).
+
+**3 안 비교 후 C 채택**:
+
+- **(A) 원안 유지 — `input_split_id` 단일 FK (대표 input)** — multi-input 시 "대표" 를 임의로
+  고르는 것이 애매하고 legacy 백필도 어렵다. 탈락
+- **(B) M:N 조인 테이블 `pipeline_inputs(pipeline_id, split_id)`** — SQL 정석. 다만 Pipeline.
+  config 가 immutable(§6-1) 이라 denormalization 동기화 부담이 원천 차단되므로 B 의 정석적
+  이점이 실은 약하다. Alembic 테이블 1개 + 생성 경로마다 iterate/insert 부담
+- **(C) top-level FK 제거, `config.tasks[*].inputs` 의 `source:<split_id>` 만으로** — 채택
+
+**C 채택 근거**:
+
+1. **JSON copy 기반 흐름 친화** — Pipeline 클론(새 버전 생성) / PipelineRun 스냅샷 생성 모두
+   JSONB deep copy 한 번으로 끝남. B 로 가면 매번 `pipeline_inputs` iterate/insert 수반
+2. **저장 경로 수렴** — `config.tasks[*].inputs` 가 유일 진리. 이중화 없음
+3. **Alembic 단순화** — 테이블 1개 덜 만듦
+4. **나중에 B 로 확장 가능** — Pipeline.config immutable 이므로 필요 시점에 `pipeline_inputs`
+   만들고 한 번 백필하면 끝. 하루짜리 작업
+
+**C 채택 시 추가 작업**:
+
+- `lib/pipeline/config.py` 에 `extract_source_split_ids(config) -> list[str]` 순수 헬퍼 함수.
+  chaining 분석기 / automation triggering 훅 / "이 split 을 쓰는 Pipeline 찾기" UI filter 에서
+  재사용
+- **GIN 인덱스는 당장 만들지 않음** — 현 규모(수십 개 Pipeline) 에서 불필요. JSONB 스캔으로
+  충분. 성능 이슈 발생 시
+  `CREATE INDEX ix_pipelines_config_gin ON pipelines USING GIN (config jsonb_path_ops);`
+  한 줄 추가로 해결. 해당 위치에 주석으로 명시
+
+**비대칭 유지 — output 은 여전히 단일 FK**:
+
+`Pipeline.output_split_id` 는 NOT NULL FK 그대로. output 은 항상 단일 DatasetVersion 을
+생성하므로 FK 가 자연스럽다. **"싱글은 FK, 복수는 JSONB"** 원칙.
+
+**미래 확장 — multi-output 의 경우 (보류, 별개 개념 예정)**:
+
+Palantir Foundry 의 data pipeline 은 여러 논리 파이프라인을 한 파일에 모아 정의하고 실제
+실행은 단일 단위로 뽑아 쓰는 형태. 우리도 multi-output 이 필요해지는 시점이 오면 현재
+`Pipeline` 모델을 확장하지 않고 **`PipelineSet` 같은 상위 개념을 별개 엔티티로** 도입해 여러
+Pipeline 을 묶는 것으로 처리. 이번 범위 밖.
+
+### 12-8. 현재 상태 스냅샷 (최신 갱신: 2026-04-24 §9-2 종료)
+
+- **브랜치** — `feature/pipeline-run-automation-separation`
+- **머지 대상** — 현행 `main = 985acc2`
+- **§9 진행 상황**:
+    - ✅ §9-1 — **Alembic 031 완료**. pipelines / pipeline_automations 신규,
+      pipeline_executions → pipeline_runs rename + 컬럼 확장. legacy 57건 전부 백필
+      (pipeline_id 100%, resolved_input_versions 57/57, passthrough 포함).
+      upgrade / downgrade 왕복 성공
+    - ✅ §9-2 — **ORM rename 완료**. `Pipeline` / `PipelineAutomation` ORM 신규 +
+      `PipelineExecution` → `PipelineRun` rename + `DatasetVersion.pipeline_runs`
+      relationship rename + `pipeline_run_id` 프로퍼티 rename. 호출부 10개 파일 전수
+      교체. backend 회귀 446/446 통과
+    - 🟡 §9-3 — **일부 착수**. `pipeline_service.submit_pipeline` 에 임시
+      `_get_or_create_pipeline_for_submit` + `_extract_resolved_input_versions` 삽입해
+      기존 "에디터에서 실행" 호환 유지. Pipeline CRUD 엔드포인트 / Automation 서비스 /
+      validate_structural+runtime 분리는 **다음 세션**
+    - ⬜ §9-4 ~ §9-9 — 미착수
+- **§10 미결 4건** — 전부 §12-1 ~ §12-4 에서 해소 (파생 E/H/M/N 추가 결정 §12-5 ~ §12-9)
+- **재개 시 참조 순서**: §12 (본 절, 최종 결정) → §9 (진행 순서 9단계) → §2 ~ §6 (엔티티 /
+  버전 / 마이그레이션 / 생명주기) → §8 (영향 범위 상세)
+- **재개 시 체크리스트 (§9-3 이어서)**:
+    1. `pipeline_service` 에 Pipeline CRUD (create / get / list / patch name+description+is_active)
+    2. `pipeline_automation_service` 신규 (register / update / delete soft / reassign / trigger_manual_rerun)
+    3. `_validate_with_database` → `validate_structural` / `validate_runtime` 분리 (§12-5)
+    4. 라우터 신규: `POST /pipelines` / `GET /pipelines` / `GET /pipelines/{id}` /
+       `PATCH /pipelines/{id}` / `POST /pipelines/{id}/runs` (Version Resolver Modal 제출 경로) /
+       `POST /pipelines/{id}/automation` + rerun
+    5. Pydantic 스키마 신규 (PipelineResponse / PipelineAutomationResponse / ...)
+    6. 사용자 명시 create 로 전환하면서 `_get_or_create_pipeline_for_submit` 제거 검토
+       (legacy 호환 계속 필요하면 유지)
