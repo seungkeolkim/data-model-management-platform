@@ -10,8 +10,12 @@ import { getNodeDefinition } from '../registry'
 import type { AnyNodeData, NodeKind } from '../types'
 import type { PipelineNode } from '@/types/pipeline'
 
-/** 현재 SDK가 생성하는 PipelineConfig의 schema_version */
-export const CURRENT_SCHEMA_VERSION = 1
+/**
+ * 현재 SDK 가 생성하는 PipelineConfig 의 schema_version.
+ * v7.10 (핸드오프 027 §4-2) — 2 로 승격: source 참조가 dataset_version_id 에서
+ * split_id 로 격상됨. v1 config 은 legacy (placeholder 로 복원, 재실행 차단).
+ */
+export const CURRENT_SCHEMA_VERSION = 2
 
 export function graphToPipelineConfig(
   nodes: PipelineNode[],
@@ -51,8 +55,11 @@ export function graphToPipelineConfig(
     throw new Error('Save 노드가 없습니다.')
   }
   // tasks 가 비어있어도 허용 — Load→Save 직결(passthrough) 모드.
-  // 이 경우 Save 노드가 passthrough_source_dataset_id 를 root 에 기여해야 한다.
-  if (Object.keys(tasks).length === 0 && !rootParts.passthrough_source_dataset_id) {
+  // v7.10: Save 노드가 passthrough_source_split_id 를 root 에 기여.
+  const rootWithPassthrough = rootParts as Partial<PipelineConfig> & {
+    passthrough_source_split_id?: string | null
+  }
+  if (Object.keys(tasks).length === 0 && !rootWithPassthrough.passthrough_source_split_id) {
     throw new Error('DataLoad 노드와 Save 노드를 직접 연결하거나 처리 노드를 추가해 주세요.')
   }
 
@@ -61,8 +68,9 @@ export function graphToPipelineConfig(
     description: rootParts.description,
     output: rootParts.output,
     tasks,
-    passthrough_source_dataset_id: rootParts.passthrough_source_dataset_id ?? null,
-    // schema_version은 백엔드 Pydantic 모델에도 선언되어 있으면 그대로 전달된다.
+    // v7.10: v1 호환 필드는 null 로 명시 (백엔드가 v2 를 우선 해석)
+    passthrough_source_dataset_id: null,
+    passthrough_source_split_id: rootWithPassthrough.passthrough_source_split_id ?? null,
     schema_version: CURRENT_SCHEMA_VERSION,
   } as PipelineConfig
 }
@@ -140,12 +148,16 @@ export function graphToPartialPipelineConfig(
     }
   }
 
+  const rootPartial = rootParts as Partial<PipelineConfig> & {
+    passthrough_source_split_id?: string | null
+  }
   return {
     name: rootParts.name ?? '<draft>',
     description: rootParts.description,
     output: rootParts.output ?? null,
     tasks,
-    passthrough_source_dataset_id: rootParts.passthrough_source_dataset_id ?? null,
+    passthrough_source_dataset_id: null,
+    passthrough_source_split_id: rootPartial.passthrough_source_split_id ?? null,
     schema_version: CURRENT_SCHEMA_VERSION,
-  }
+  } as PartialPipelineConfig
 }

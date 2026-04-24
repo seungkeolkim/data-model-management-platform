@@ -1,13 +1,16 @@
 /**
- * DataLoadDefinition — 소스 데이터셋 3단계 선택 노드.
+ * DataLoadDefinition — 소스 데이터셋 2단계 선택 노드.
  *
- * 그룹 → Split → 버전 순서로 선택하여 최종 dataset_id를 확정.
- * 이 노드는 task를 발생시키지 않고 `source:<dataset_id>` 토큰만 outputRef로 제공한다.
- * 하위 노드가 이 토큰을 inputs에 포함시킨다.
+ * v7.10 (핸드오프 027 §4-1, §12-1) — schema_version=2 전환.
+ * 그룹 → Split 까지만 선택. 버전은 실행 시점 Version Resolver Modal 에서 확정.
+ * 이 노드는 task 를 발생시키지 않고 `source:<split_id>` 토큰만 outputRef 로 제공.
+ *
+ * schema v1 (legacy) config 은 configToGraph 에서 placeholder 노드로 복원되어
+ * 읽기 전용이며 재실행 차단. 본 정의는 v2 config 만 생성 / 복원.
  */
 import { memo, useMemo } from 'react'
 import type { NodeProps } from '@xyflow/react'
-import { Select, Typography, Tag, Divider } from 'antd'
+import { Select, Typography, Tag, Divider, Alert } from 'antd'
 import { useQuery } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
 import { datasetsForPipelineApi } from '@/api/pipeline'
@@ -36,6 +39,17 @@ function readyDatasets(datasets: DatasetSummary[]): DatasetSummary[] {
   return datasets.filter((ds) => ds.status === 'READY')
 }
 
+/** 그룹 datasets 에서 split 별 splitId 를 1:1 매핑 추출 (정적 슬롯 기준). */
+function collectSplitSlots(datasets: DatasetSummary[]): Map<string, string> {
+  const slotMap = new Map<string, string>()
+  for (const ds of datasets) {
+    if (!slotMap.has(ds.split)) {
+      slotMap.set(ds.split, ds.split_id)
+    }
+  }
+  return slotMap
+}
+
 const DataLoadNodeComponent = memo(function DataLoadNodeInner({ id }: NodeProps) {
   const nodeData = useNodeData<'dataLoad'>(id)
   const setNodeData = useSetNodeData()
@@ -50,7 +64,7 @@ const DataLoadNodeComponent = memo(function DataLoadNodeInner({ id }: NodeProps)
 
   const availableGroups = useMemo(() => {
     const groups = groupsResponse?.items ?? []
-    // 현재 에디터 taskType 에 맞는 그룹만 노출. 그룹이 비어 있어도 (READY 데이터셋 없음) 숨긴다.
+    // taskType 일치 + READY 데이터셋 1건 이상 보유 그룹만.
     return groups.filter(
       (g) => isCompatibleGroup(g, taskType) && readyDatasets(g.datasets).length > 0,
     )
@@ -60,18 +74,16 @@ const DataLoadNodeComponent = memo(function DataLoadNodeInner({ id }: NodeProps)
     () => availableGroups.find((g) => g.id === nodeData?.groupId) ?? null,
     [availableGroups, nodeData?.groupId],
   )
-  const availableSplits = useMemo(() => {
-    if (!selectedGroup) return []
+  // (split 문자열 → split_id) 매핑. group 안에서 split 당 하나만 존재.
+  const splitSlots = useMemo(() => {
+    if (!selectedGroup) return new Map<string, string>()
     const ready = readyDatasets(selectedGroup.datasets)
-    return [...new Set(ready.map((ds) => ds.split))].sort()
+    return collectSplitSlots(ready)
   }, [selectedGroup])
-  const availableVersions = useMemo(() => {
-    if (!selectedGroup || !nodeData?.split) return []
-    const ready = readyDatasets(selectedGroup.datasets)
-    return ready
-      .filter((ds) => ds.split === nodeData.split)
-      .sort((a, b) => b.version.localeCompare(a.version))
-  }, [selectedGroup, nodeData?.split])
+  const availableSplits = useMemo(
+    () => Array.from(splitSlots.keys()).sort(),
+    [splitSlots],
+  )
 
   if (!nodeData) return null
 
@@ -82,27 +94,17 @@ const DataLoadNodeComponent = memo(function DataLoadNodeInner({ id }: NodeProps)
       groupId,
       groupName: group?.name ?? '',
       split: null,
-      datasetId: null,
-      version: null,
+      splitId: null,
       datasetLabel: group?.name ?? '',
     })
   }
   const handleSplitChange = (split: string) => {
+    const splitId = splitSlots.get(split) ?? null
     setNodeData(id, {
       ...nodeData,
       split,
-      datasetId: null,
-      version: null,
+      splitId,
       datasetLabel: `${nodeData.groupName} / ${split}`,
-    })
-  }
-  const handleVersionChange = (datasetId: string) => {
-    const dataset = availableVersions.find((ds) => ds.id === datasetId)
-    setNodeData(id, {
-      ...nodeData,
-      datasetId,
-      version: dataset?.version ?? null,
-      datasetLabel: `${nodeData.groupName} / ${nodeData.split} / ${dataset?.version ?? ''}`,
     })
   }
 
@@ -144,24 +146,9 @@ const DataLoadNodeComponent = memo(function DataLoadNodeInner({ id }: NodeProps)
             options={availableSplits.map((s) => ({ value: s, label: s }))}
           />
         </div>
-        <div>
-          <Text style={{ fontSize: 11, color: '#8c8c8c' }}>버전</Text>
-          <Select
-            size="small"
-            placeholder="버전 선택"
-            value={nodeData.datasetId || undefined}
-            disabled={!nodeData.split}
-            style={{ width: '100%' }}
-            onChange={handleVersionChange}
-            options={availableVersions.map((ds) => ({
-              value: ds.id,
-              label: `${ds.version} (${ds.image_count ?? '?'} images)`,
-            }))}
-          />
-        </div>
-        {nodeData.datasetId && (
+        {nodeData.splitId && (
           <Text type="secondary" style={{ fontSize: 10 }}>
-            ID: {nodeData.datasetId.slice(0, 8)}...
+            split: {nodeData.splitId.slice(0, 8)}...
           </Text>
         )}
       </div>
@@ -169,8 +156,7 @@ const DataLoadNodeComponent = memo(function DataLoadNodeInner({ id }: NodeProps)
   )
 })
 
-// DataLoad 전용 PropertiesPanel — 그룹/버전 정보 + 클래스 매핑 테이블 표시.
-// 기존 PropertiesPanel의 DataLoadProperties를 그대로 이관.
+// DataLoad 전용 PropertiesPanel — 그룹/split 정보 + 해당 split 의 클래스 매핑 표시.
 import { Table } from 'antd'
 
 function PropRow({ label, value }: { label: string; value: React.ReactNode }) {
@@ -190,14 +176,17 @@ function DataLoadPropertiesComponent({ data }: { nodeId: string; data: DataLoadN
     staleTime: 30_000,
   })
 
-  const selectedDataset = useMemo(() => {
-    if (!groupData || !data.datasetId) return null
-    return groupData.datasets.find((ds) => ds.id === data.datasetId) ?? null
-  }, [groupData, data.datasetId])
+  // 선택 split 의 최신 버전 (참고 표시용) — 구성 spec 에는 박지 않음.
+  const latestDatasetInSplit = useMemo(() => {
+    if (!groupData || !data.split) return null
+    const ready = (groupData.datasets ?? []).filter(
+      (ds) => ds.status === 'READY' && ds.split === data.split,
+    )
+    return ready.sort((a, b) => b.version.localeCompare(a.version))[0] ?? null
+  }, [groupData, data.split])
 
   const classTableData = useMemo(() => {
-    // Data Load 노드는 detection 전제(파이프라인이 detection만 지원) → detection class_mapping만 표시
-    const classInfo = selectedDataset?.metadata?.class_info
+    const classInfo = latestDatasetInSplit?.metadata?.class_info
     const classMapping = classInfo && 'class_mapping' in classInfo && !('heads' in classInfo)
       ? classInfo.class_mapping
       : undefined
@@ -205,14 +194,14 @@ function DataLoadPropertiesComponent({ data }: { nodeId: string; data: DataLoadN
     return Object.entries(classMapping)
       .sort(([a], [b]) => Number(a) - Number(b))
       .map(([index, name]) => ({ index, name }))
-  }, [selectedDataset])
+  }, [latestDatasetInSplit])
 
   return (
     <>
       <Tag color="green">Data Load</Tag>
       <Divider style={{ margin: '8px 0' }} />
       <Text type="secondary" style={{ fontSize: 12 }}>
-        데이터셋 · Split · 버전을 노드에서 순서대로 선택합니다.
+        데이터셋 · Split 까지 선택합니다. 버전은 실행 시 별도 모달에서 확정 (v7.10).
       </Text>
       {data.groupName && (
         <div style={{ marginTop: 8 }}>
@@ -220,18 +209,23 @@ function DataLoadPropertiesComponent({ data }: { nodeId: string; data: DataLoadN
         </div>
       )}
       {data.split && <PropRow label="Split" value={data.split} />}
-      {data.version && <PropRow label="버전" value={data.version} />}
-      {data.datasetId && (
-        <PropRow label="ID" value={<Text code style={{ fontSize: 10 }}>{data.datasetId.slice(0, 12)}...</Text>} />
+      {data.splitId && (
+        <PropRow label="Split ID" value={<Text code style={{ fontSize: 10 }}>{data.splitId.slice(0, 12)}...</Text>} />
       )}
-      {selectedDataset && groupData && (
+      {latestDatasetInSplit && groupData && (
         <>
           <Divider style={{ margin: '8px 0' }} />
-          <Text strong style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>데이터셋 정보</Text>
+          <Alert
+            type="info" showIcon
+            message={`참고: 최신 버전 ${latestDatasetInSplit.version}`}
+            description="실행 시 다른 버전을 선택할 수 있습니다 (Version Resolver)."
+            style={{ fontSize: 11, marginBottom: 8 }}
+          />
+          <Text strong style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>데이터셋 정보 (최신 버전 기준)</Text>
           <PropRow label="데이터 타입" value={<Tag color="blue" style={{ margin: 0 }}>{groupData.dataset_type}</Tag>} />
-          <PropRow label="어노테이션 포맷" value={<Tag style={{ margin: 0 }}>{selectedDataset.annotation_format ?? '없음'}</Tag>} />
-          <PropRow label="이미지 수" value={selectedDataset.image_count ?? '-'} />
-          <PropRow label="클래스 수" value={selectedDataset.class_count ?? classTableData.length ?? '-'} />
+          <PropRow label="어노테이션 포맷" value={<Tag style={{ margin: 0 }}>{latestDatasetInSplit.annotation_format ?? '없음'}</Tag>} />
+          <PropRow label="최신 이미지 수" value={latestDatasetInSplit.image_count ?? '-'} />
+          <PropRow label="클래스 수" value={latestDatasetInSplit.class_count ?? classTableData.length ?? '-'} />
           {classTableData.length > 0 && (
             <>
               <Divider style={{ margin: '8px 0' }} />
@@ -271,8 +265,7 @@ export const dataLoadDefinition: NodeDefinition<'dataLoad'> = {
       groupId: null,
       groupName: '',
       split: null,
-      datasetId: null,
-      version: null,
+      splitId: null,
       datasetLabel: '',
     }),
   },
@@ -280,54 +273,64 @@ export const dataLoadDefinition: NodeDefinition<'dataLoad'> = {
   PropertiesComponent: DataLoadPropertiesComponent,
 
   validate(data, ctx) {
-    if (!data.datasetId) {
-      return [{ nodeId: ctx.nodeId, message: '데이터셋을 선택해 주세요.' }]
+    if (!data.splitId) {
+      return [{ nodeId: ctx.nodeId, message: '데이터셋과 Split 을 모두 선택해 주세요.' }]
     }
     return []
   },
 
-  // DataLoad는 task를 발생시키지 않고 outputRef만 제공.
+  // v7.10: task 를 발생시키지 않고 `source:<splitId>` outputRef 제공.
   toConfigContribution(data) {
-    if (!data.datasetId) return null
-    return { outputRef: `source:${data.datasetId}` }
+    if (!data.splitId) return null
+    return { outputRef: `source:${data.splitId}` }
   },
 
-  // source:<id> 토큰을 점유하여 DataLoadNode로 복원.
-  // passthrough 모드(tasks 비어있음)에서는 config.passthrough_source_dataset_id 도 포함.
+  /**
+   * schema_version=2 config 의 `source:<split_id>` 토큰을 점유하여 DataLoadNode 로 복원.
+   * passthrough_source_split_id 도 포함. v1 (source:<dataset_version_id>) 토큰은
+   * placeholderDefinition 이 수거해 읽기 전용 노드로 복원.
+   */
   matchFromConfig(ctx) {
     const { config, datasetDisplayMap, claimedSourceDatasetIds } = ctx
-    const sourceIds = new Set<string>()
+    const isV2 = config.schema_version === 2
+
+    // v1 legacy 는 DataLoad 가 수거하지 않는다 — placeholder 로 흘려보냄
+    if (!isV2) return []
+
+    const splitIds = new Set<string>()
     for (const task of Object.values(config.tasks)) {
       for (const input of task.inputs) {
         if (input.startsWith('source:')) {
-          sourceIds.add(input.split(':', 2)[1])
+          splitIds.add(input.split(':', 2)[1])
         }
       }
     }
-    if (config.passthrough_source_dataset_id) {
-      sourceIds.add(config.passthrough_source_dataset_id)
+    const v2PassthroughId = (config as { passthrough_source_split_id?: string | null })
+      .passthrough_source_split_id
+    if (v2PassthroughId) {
+      splitIds.add(v2PassthroughId)
     }
+
     const restored = []
-    for (const datasetId of sourceIds) {
-      if (claimedSourceDatasetIds.has(datasetId)) continue
-      const nodeId = `dl_${datasetId.slice(0, 8)}`
-      const display = datasetDisplayMap[datasetId]
+    for (const splitId of splitIds) {
+      if (claimedSourceDatasetIds.has(splitId)) continue
+      const nodeId = `dl_${splitId.slice(0, 8)}`
+      const display = datasetDisplayMap[splitId]
       const data: DataLoadNodeData = {
         type: 'dataLoad',
         groupId: display?.groupId ?? null,
         groupName: display?.groupName ?? '',
         split: display?.split ?? null,
-        datasetId,
-        version: display?.version ?? null,
+        splitId,
         datasetLabel: display
-          ? `${display.groupName} / ${display.split} / ${display.version}`
-          : `source:${datasetId.slice(0, 8)}...`,
+          ? `${display.groupName} / ${display.split}`
+          : `source:${splitId.slice(0, 8)}...`,
       }
       restored.push({
         nodeId,
         data,
         ownedTaskKeys: [],
-        ownedSourceDatasetIds: [datasetId],
+        ownedSourceDatasetIds: [splitId],
       })
     }
     return restored
@@ -335,7 +338,7 @@ export const dataLoadDefinition: NodeDefinition<'dataLoad'> = {
 
   matchIssueField(issue, data) {
     if (!issue.code?.startsWith('SOURCE_DATASET_')) return false
-    if (!data.datasetId) return false
-    return issue.field.includes(data.datasetId) || issue.message.includes(data.datasetId)
+    if (!data.splitId) return false
+    return issue.field.includes(data.splitId) || issue.message.includes(data.splitId)
   },
 }

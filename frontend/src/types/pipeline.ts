@@ -28,14 +28,16 @@ export interface PipelineConfig {
   description?: string
   output: OutputConfig
   tasks: Record<string, TaskConfig>
-  /**
-   * Load→Save 직결 모드에서 참조할 소스 Dataset.id.
-   * tasks 가 비어있을 때만 의미가 있다.
-   */
+  /** [schema v1 legacy] Load→Save 직결 모드의 소스 DatasetVersion.id */
   passthrough_source_dataset_id?: string | null
   /**
-   * DAG 스키마 버전. 현재 SDK는 v1을 생성.
-   * 하위 버전 migrator는 도입하지 않음 — 미래 파이프라인 변경 대비 완충용 필드.
+   * [schema v2, v7.10 / 027 §4-1] Load→Save 직결 모드의 소스 DatasetSplit.id.
+   * v2 에서는 version 은 실행 시점 Version Resolver Modal 에서 확정된다.
+   */
+  passthrough_source_split_id?: string | null
+  /**
+   * DAG 스키마 버전. 현재 SDK 는 v2 를 생성 (v7.10 부터).
+   * v1 config 은 legacy — placeholder 노드로 복원되어 재실행 차단.
    */
   schema_version?: number
 }
@@ -52,6 +54,7 @@ export interface PartialPipelineConfig {
   output: OutputConfig | null
   tasks: Record<string, TaskConfig>
   passthrough_source_dataset_id?: string | null
+  passthrough_source_split_id?: string | null
   schema_version?: number
 }
 
@@ -121,19 +124,23 @@ export interface PipelineListResponse {
 // 노드 데이터 타입 — React Flow node.data에 저장되는 도메인 데이터
 // =============================================================================
 
-/** DataLoad 노드: 데이터셋 그룹 → Split → 버전 3단계 선택 → source:<dataset_id> 참조 생성 */
+/**
+ * DataLoad 노드: 데이터셋 그룹 → Split 2단계 선택 → `source:<split_id>` 참조 생성.
+ *
+ * v7.10 (핸드오프 027 §4-1, §12-1) — schema_version=2 전환으로 version 입력은 제거.
+ * 버전은 실행 시점에 Version Resolver Modal 에서 선택. Pipeline 저장은 `(group, split)`
+ * 까지만 고정.
+ */
 export interface DataLoadNodeData {
   type: 'dataLoad'
   /** 1단계: 선택된 DatasetGroup ID */
   groupId: string | null
   /** 1단계: 그룹명 (표시용) */
   groupName: string
-  /** 2단계: 선택된 Split */
+  /** 2단계: 선택된 Split 문자열 (TRAIN / VAL / TEST / NONE) */
   split: string | null
-  /** 3단계: 선택된 Dataset ID (split × version으로 확정된 최종 ID) */
-  datasetId: string | null
-  /** 3단계: 선택된 버전 문자열 (표시용) */
-  version: string | null
+  /** 2단계: 선택된 DatasetSplit (정적 슬롯) ID — v7.10 `source:<split_id>` 참조용 */
+  splitId: string | null
   /** 표시용 라벨 */
   datasetLabel: string
   /** 검증 이슈 (validate 후 매핑) */

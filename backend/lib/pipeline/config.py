@@ -4,7 +4,7 @@
 Pydantic BaseModel로 정의하되, DB/FastAPI에 의존하지 않는 순수 설정.
 app/schemas/pipeline.py에서 re-export하여 API 레이어에서도 사용한다.
 
-YAML 구조:
+YAML 구조 (schema_version=1, legacy):
     pipeline:
       name: "출력 그룹명"
       description: "설명"
@@ -15,8 +15,25 @@ YAML 구조:
       tasks:
         task_name:
           operator: det_format_convert_to_coco
-          inputs: ["source:<dataset_id>"]
+          inputs: ["source:<dataset_version_id>"]   # v1: dataset_version_id
           params: { ... }
+      passthrough_source_dataset_id: "<dataset_version_id>"  # v1 passthrough
+
+schema_version=2 (v7.10, 027 §4-2 — 2안 run-time version 해석):
+    pipeline:
+      name: "..."
+      output: { ... }
+      tasks:
+        task_name:
+          operator: ...
+          inputs: ["source:<split_id>"]             # v2: split_id
+          params: { ... }
+      passthrough_source_split_id: "<split_id>"     # v2 passthrough
+      schema_version: 2
+
+v2 는 Pipeline 엔티티 config 로 저장되며, 실제 실행 시 Version Resolver Modal 이
+`{split_id: version}` 을 확정해 `PipelineRun.resolved_input_versions` 에 저장. 즉
+"어느 split 을 쓰는가" 는 Pipeline 이, "어느 version 을 썼는가" 는 Run 이 보유.
 """
 from __future__ import annotations
 
@@ -25,6 +42,11 @@ from typing import Any
 
 import yaml
 from pydantic import BaseModel, Field, model_validator
+
+
+# v7.10 (핸드오프 027 §4-2). FE SDK 가 신규 config 저장 시 반드시 기입.
+# v1 는 legacy, is_active=FALSE Pipeline 의 config 스냅샷에서만 존재. 실행 불가.
+CURRENT_SCHEMA_VERSION: int = 2
 
 
 class TaskConfig(BaseModel):
@@ -89,24 +111,37 @@ class PipelineConfig(BaseModel):
     tasks: dict[str, TaskConfig] = Field(default_factory=dict)
     # DataLoad → Save 직결시 사용되는 소스 데이터셋 ID.
     # tasks 가 비어있을 때만 의미가 있으며, source meta 를 그대로 output 으로 복사한다.
+    # v1: dataset_version_id / v2: 사용 안 함 (passthrough_source_split_id 대체).
     passthrough_source_dataset_id: str | None = Field(
         default=None,
-        description="tasks 가 비어있을 때(= Load→Save 직결 모드) 사용되는 소스 Dataset.id",
+        description="[schema v1] passthrough 모드의 소스 DatasetVersion.id. v2 는 split_id 로 대체",
+    )
+    # v2 passthrough (v7.10, 027 §4-1). split 만 고정 · version 은 run-time 해석.
+    passthrough_source_split_id: str | None = Field(
+        default=None,
+        description="[schema v2] passthrough 모드의 소스 DatasetSplit.id",
     )
     # DAG schema 버전. 프론트 SDK가 config 생성 시 기입.
     # 하위 호환 migrator는 도입하지 않음(YAGNI). 미래 변경 대비 완충 필드.
     schema_version: int | None = Field(
         default=None,
-        description="프론트 SDK가 기입한 DAG 스키마 버전",
+        description="프론트 SDK가 기입한 DAG 스키마 버전 (1=legacy, 2=v7.10+)",
     )
 
     @model_validator(mode="after")
     def _validate_tasks_or_passthrough(self) -> PipelineConfig:
-        """tasks 가 비어있으면 passthrough_source_dataset_id 가 반드시 있어야 한다."""
-        if not self.tasks and not self.passthrough_source_dataset_id:
+        """
+        tasks 가 비어있으면 passthrough_source_dataset_id (v1) 또는
+        passthrough_source_split_id (v2) 중 하나가 반드시 채워져야 한다.
+        """
+        if (
+            not self.tasks
+            and not self.passthrough_source_dataset_id
+            and not self.passthrough_source_split_id
+        ):
             raise ValueError(
-                "tasks 가 비어있을 경우 passthrough_source_dataset_id 가 필요합니다 "
-                "(Load→Save 직결 모드)."
+                "tasks 가 비어있을 경우 passthrough_source_dataset_id (v1) 또는 "
+                "passthrough_source_split_id (v2) 가 필요합니다 (Load→Save 직결 모드)."
             )
         return self
 
@@ -188,6 +223,10 @@ class PipelineConfig(BaseModel):
         """파이프라인 전체에서 참조하는 모든 source dataset_id를 중복 제거하여 반환.
 
         passthrough 모드(tasks 비어있음)의 경우 passthrough_source_dataset_id 도 포함한다.
+
+        주의: v1 (source:<dataset_version_id>) 와 v2 (source:<split_id>) 를 **구분하지
+        않는다** — schema_version 필드 확인 후 호출할 것. v2 config 에서 호출하면
+        반환값은 split_id 들이고, v1 에서는 dataset_version_id 들이다.
         """
         seen: set[str] = set()
         result: list[str] = []
@@ -201,10 +240,37 @@ class PipelineConfig(BaseModel):
                     result.append(dataset_id)
         return result
 
+    def get_all_source_split_ids(self) -> list[str]:
+        """
+        v7.10 (핸드오프 027 §4-2, §12-9) — **schema_version=2 전용**.
+
+        `source:<split_id>` 들과 `passthrough_source_split_id` 를 중복 제거해 반환.
+        v1 config 에서 호출하지 말 것 (의미가 다름, 반환값은 dataset_version_id 가 됨).
+        """
+        seen: set[str] = set()
+        result: list[str] = []
+        if self.passthrough_source_split_id:
+            seen.add(self.passthrough_source_split_id)
+            result.append(self.passthrough_source_split_id)
+        for task_config in self.tasks.values():
+            for split_id in task_config.get_source_dataset_ids():
+                # TaskConfig.get_source_dataset_ids 는 이름만 dataset 이지 실제로는
+                # "source:" prefix 뒤의 값을 그대로 반환하는 순수 파서이므로 v2 에서도
+                # 호출 가능. 반환값은 split_id 들.
+                if split_id not in seen:
+                    seen.add(split_id)
+                    result.append(split_id)
+        return result
+
     @property
     def is_passthrough(self) -> bool:
         """Load→Save 직결 모드 (tasks 비어있음) 여부."""
         return len(self.tasks) == 0
+
+    @property
+    def is_schema_v2(self) -> bool:
+        """schema_version=2 (v7.10 이후) 여부. v1/null 은 legacy."""
+        return self.schema_version == 2
 
     def get_terminal_task_name(self) -> str:
         """
@@ -249,6 +315,7 @@ class PartialPipelineConfig(BaseModel):
     )
     tasks: dict[str, TaskConfig] = Field(default_factory=dict)
     passthrough_source_dataset_id: str | None = None
+    passthrough_source_split_id: str | None = None  # v7.10 (schema v2)
     schema_version: int | None = None
 
     @model_validator(mode="after")
@@ -310,7 +377,7 @@ class PartialPipelineConfig(BaseModel):
         return order
 
     def get_all_source_dataset_ids(self) -> list[str]:
-        """파이프라인 전체에서 참조하는 모든 source dataset_id 를 중복 제거 반환."""
+        """파이프라인 전체에서 참조하는 모든 source dataset_id 를 중복 제거 반환 (v1)."""
         seen: set[str] = set()
         result: list[str] = []
         if self.passthrough_source_dataset_id:
@@ -322,6 +389,37 @@ class PartialPipelineConfig(BaseModel):
                     seen.add(dataset_id)
                     result.append(dataset_id)
         return result
+
+    def get_all_source_split_ids(self) -> list[str]:
+        """v2 config 의 source split_id 들 중복 제거 반환 (§12-9)."""
+        seen: set[str] = set()
+        result: list[str] = []
+        if self.passthrough_source_split_id:
+            seen.add(self.passthrough_source_split_id)
+            result.append(self.passthrough_source_split_id)
+        for task_config in self.tasks.values():
+            for split_id in task_config.get_source_dataset_ids():
+                if split_id not in seen:
+                    seen.add(split_id)
+                    result.append(split_id)
+        return result
+
+
+def extract_source_split_ids(
+    config: PipelineConfig | PartialPipelineConfig,
+) -> list[str]:
+    """
+    핸드오프 027 §12-9 에서 약속한 순수 헬퍼.
+
+    schema_version=2 config 에서 참조하는 모든 source DatasetSplit.id 를 중복 제거해
+    반환. chaining 분석기 / automation triggering 훅 / "이 split 을 쓰는 Pipeline
+    찾기" UI filter 에서 재사용.
+
+    v1 config 에서는 빈 리스트 가까이 반환 (passthrough_source_split_id 필드가 없고,
+    source:<...> 도 dataset_version_id 라 split_id 집합과 다름). 호출부에서
+    `config.is_schema_v2` 를 먼저 체크하는 것이 안전.
+    """
+    return config.get_all_source_split_ids()
 
 
 def load_pipeline_config_from_yaml(yaml_path: str | Path) -> PipelineConfig:

@@ -312,19 +312,24 @@ class PipelineAutomationService:
         """
         config 가 참조하는 source split 들의 현재 최신 version 수집.
 
-        schema v1 기준: config 의 source:<dataset_version_id> 를 split_id 로 해석 후
-        split 별 최신 version 을 쿼리. schema v2 (§9-4 이후) 는 source:<split_id> 직접.
+        §4-2 schema_version 분기:
+          v2 — config.get_all_source_split_ids() 로 split_id 직접 추출
+          v1 — dataset_version_id → split_id 매핑 후 split 별 최신 조회 (legacy 경로)
         """
-        dataset_version_ids = config.get_all_source_dataset_ids()
-        if not dataset_version_ids:
-            return {}
-        # v1: dataset_version_id → split_id 매핑
-        result = await self.db.execute(
-            select(DatasetVersion)
-            .where(DatasetVersion.id.in_(dataset_version_ids))
-            .options(selectinload(DatasetVersion.split_slot))
-        )
-        split_ids = {v.split_slot.id for v in result.scalars().all()}
+        if config.is_schema_v2:
+            split_ids = set(config.get_all_source_split_ids())
+        else:
+            # v1 legacy: dataset_version_id → split_id 매핑
+            dataset_version_ids = config.get_all_source_dataset_ids()
+            if not dataset_version_ids:
+                return {}
+            result = await self.db.execute(
+                select(DatasetVersion)
+                .where(DatasetVersion.id.in_(dataset_version_ids))
+                .options(selectinload(DatasetVersion.split_slot))
+            )
+            split_ids = {v.split_slot.id for v in result.scalars().all()}
+
         if not split_ids:
             return {}
         # split 별 최신 version 조회 (READY 상태만)

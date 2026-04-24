@@ -1423,7 +1423,6 @@ class PipelineService:
 
         # config 에서 PipelineConfig Pydantic 복원 (실행 파이프라인의 진짜 스펙)
         config = PipelineConfig(**pipeline.config)
-        source_dataset_ids = config.get_all_source_dataset_ids()
 
         # output 스키마 결정 — Pipeline.output_split 기준으로 그룹 / split 재사용
         output_split_slot = pipeline.output_split
@@ -1434,9 +1433,17 @@ class PipelineService:
                 "Pipeline 상세를 확인하세요."
             )
 
-        # 실행 시점 runtime 검증: resolved_input_versions 의 split_id 가 실제 input
-        # source 와 일치하는지 (config 의 source:<dataset_version_id> 들의 split_id 집합).
-        expected_split_ids = await self._resolve_expected_input_split_ids(source_dataset_ids)
+        # 실행 시점 runtime 검증: resolved_input_versions 에 모든 source split 이 있는지.
+        # §4-2 schema_version 분기:
+        #   v2 (source:<split_id>) — split_id 직접 추출
+        #   v1 (source:<dataset_version_id>) — dataset_version_id 를 split_id 로 해석
+        #     (legacy 경로이고 Pipeline.is_active=FALSE 라 실제로 도달하지 않음)
+        if config.is_schema_v2:
+            expected_split_ids = set(config.get_all_source_split_ids())
+        else:
+            expected_split_ids = await self._resolve_expected_input_split_ids(
+                config.get_all_source_dataset_ids()
+            )
         missing = expected_split_ids - set(resolved_input_versions.keys())
         if missing:
             raise ValueError(

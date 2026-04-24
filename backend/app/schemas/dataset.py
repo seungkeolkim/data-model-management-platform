@@ -88,6 +88,9 @@ class DatasetSummary(BaseModel):
     """DatasetGroup 내 Dataset 요약 (목록 조회용)."""
     id: str
     split: str
+    # v7.10 (핸드오프 027 §4-1) — Pipeline.output_split_id / config 의 source:<split_id>
+    # 참조에 필요. DatasetVersion.split_slot.id 를 association_proxy 로 투명 노출.
+    split_id: str
     version: str
     status: str
     image_count: int | None
