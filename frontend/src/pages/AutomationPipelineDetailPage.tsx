@@ -239,6 +239,11 @@ export default function AutomationPipelineDetailPage() {
       <Card size="small" style={{ marginBottom: 16 }}>
         <Space direction="vertical" style={{ width: '100%' }} size={4}>
           <Space size={8} wrap>
+            <Text strong>기반 파이프라인:</Text>
+            <Tag color="purple">{pipeline.pipeline_template.name}</Tag>
+            <Tag color="purple">v{pipeline.pipeline_template.version}</Tag>
+          </Space>
+          <Space size={8} wrap>
             <Text strong>입력:</Text>
             <Tag>{pipeline.input.group_name}</Tag>
             <Tag color="geekblue">{pipeline.input.split}</Tag>

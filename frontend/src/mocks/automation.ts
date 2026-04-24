@@ -76,9 +76,10 @@ export const MOCK_PIPELINES: Pipeline[] = [
   // ── ① 정상 체인 ───────────────────────────────────────────────────────────
   {
     id: 'pl-headcrop-merge-0001',
-    name: 'hardhat_headcrop_original_merge',
+    name: 'helmet_merge_nightly',
     description: 'RAW head crop 이미지들을 정렬·merge 해 SOURCE 그룹으로 승격',
     task_type: 'CLASSIFICATION',
+    pipeline_template: { name: 'hardhat_headcrop_original_merge', version: '1.0' },
     input: { ...GROUP_HEADCROP_RAW, split: 'VAL' },
     output: { ...GROUP_HEADCROP_ORIGINAL_MERGED, split: 'VAL' },
     tasks: [
@@ -97,9 +98,10 @@ export const MOCK_PIPELINES: Pipeline[] = [
   },
   {
     id: 'pl-headcrop-visible-0002',
-    name: 'hardhat_headcrop_visible_add',
+    name: 'helmet_visible_update',
     description: 'original_merged 에 visibility head 를 주입해 visible_added 파생',
     task_type: 'CLASSIFICATION',
+    pipeline_template: { name: 'hardhat_headcrop_visible_add', version: '1.0' },
     input: { ...GROUP_HEADCROP_ORIGINAL_MERGED, split: 'VAL' },
     output: { ...GROUP_HEADCROP_VISIBLE_ADDED, split: 'VAL' },
     tasks: [
@@ -127,6 +129,7 @@ export const MOCK_PIPELINES: Pipeline[] = [
     name: 'cycle_demo_a_to_b',
     description: '(사이클 데모) A → B',
     task_type: 'DETECTION',
+    pipeline_template: { name: 'cycle_demo_a_to_b', version: '1.0' },
     input: { ...GROUP_A, split: 'TRAIN' },
     output: { ...GROUP_B, split: 'TRAIN' },
     tasks: [{ task_id: 't1', operator: 'det_remap_class_name', display_name: 'class remap' }],
@@ -145,6 +148,7 @@ export const MOCK_PIPELINES: Pipeline[] = [
     name: 'cycle_demo_b_to_a',
     description: '(사이클 데모) B → A',
     task_type: 'DETECTION',
+    pipeline_template: { name: 'cycle_demo_b_to_a', version: '1.0' },
     input: { ...GROUP_B, split: 'TRAIN' },
     output: { ...GROUP_A, split: 'TRAIN' },
     tasks: [{ task_id: 't1', operator: 'det_sample_n_images', display_name: 'sample N' }],
@@ -165,6 +169,7 @@ export const MOCK_PIPELINES: Pipeline[] = [
     name: 'person_detection_raw_to_coco',
     description: 'person detection RAW 를 COCO 로 포맷 변환',
     task_type: 'DETECTION',
+    pipeline_template: { name: 'person_detection_raw_to_coco', version: '1.0' },
     input: { ...GROUP_PERSON_RAW, split: 'TRAIN' },
     output: { ...GROUP_PERSON_COCO, split: 'TRAIN' },
     tasks: [
@@ -188,9 +193,10 @@ export const MOCK_PIPELINES: Pipeline[] = [
   // ── ④ 수동 재실행 no-delta skip 시연 ──────────────────────────────────────
   {
     id: 'pl-vehicle-augment-0006',
-    name: 'vehicle_detection_augment',
+    name: 'vehicle_augment_v2_nightly',
     description: 'SOURCE 에 rotate + mask augmentation 적용',
     task_type: 'DETECTION',
+    pipeline_template: { name: 'vehicle_detection_augment', version: '2.0' },
     input: { ...GROUP_VEHICLE_SOURCE, split: 'VAL' },
     output: { ...GROUP_VEHICLE_PROCESSED, split: 'VAL' },
     tasks: [
@@ -261,7 +267,7 @@ export const MOCK_EXECUTIONS: PipelineExecutionSummary[] = [
   {
     id: 'exec-p6-rerun-nodelta',
     pipeline_id: 'pl-vehicle-augment-0006',
-    pipeline_name: 'vehicle_detection_augment',
+    pipeline_name: 'vehicle_augment_v2_nightly',
     status: 'SKIPPED_NO_DELTA',
     trigger_kind: 'automation_manual_rerun',
     automation_trigger_source: 'manual_rerun',
@@ -280,7 +286,7 @@ export const MOCK_EXECUTIONS: PipelineExecutionSummary[] = [
   {
     id: 'exec-p2-batch-auto',
     pipeline_id: 'pl-headcrop-visible-0002',
-    pipeline_name: 'hardhat_headcrop_visible_add',
+    pipeline_name: 'helmet_visible_update',
     status: 'DONE',
     trigger_kind: 'automation_auto',
     automation_trigger_source: 'triggering',
@@ -297,7 +303,7 @@ export const MOCK_EXECUTIONS: PipelineExecutionSummary[] = [
   {
     id: 'exec-p1-batch-auto',
     pipeline_id: 'pl-headcrop-merge-0001',
-    pipeline_name: 'hardhat_headcrop_original_merge',
+    pipeline_name: 'helmet_merge_nightly',
     status: 'DONE',
     trigger_kind: 'automation_auto',
     automation_trigger_source: 'triggering',
@@ -316,7 +322,7 @@ export const MOCK_EXECUTIONS: PipelineExecutionSummary[] = [
   {
     id: 'exec-p6-polling-20260422',
     pipeline_id: 'pl-vehicle-augment-0006',
-    pipeline_name: 'vehicle_detection_augment',
+    pipeline_name: 'vehicle_augment_v2_nightly',
     status: 'DONE',
     trigger_kind: 'automation_auto',
     automation_trigger_source: 'polling',
@@ -390,7 +396,7 @@ export const MOCK_EXECUTIONS: PipelineExecutionSummary[] = [
   {
     id: 'exec-p1-initial-manual',
     pipeline_id: 'pl-headcrop-merge-0001',
-    pipeline_name: 'hardhat_headcrop_original_merge',
+    pipeline_name: 'helmet_merge_nightly',
     status: 'DONE',
     trigger_kind: 'manual_from_editor',
     automation_trigger_source: null,

@@ -82,13 +82,22 @@ export interface PipelineTaskSummary {
  */
 export interface Pipeline {
   id: string
+  /**
+   * Automation 엔트리의 이름. 실 구현(027)에서는 `PipelineAutomation.name`. 목록 · 상세 헤더 · DAG 노드
+   * 라벨에 노출. 템플릿 파이프라인의 이름과 같을 수도, 다를 수도 있다.
+   */
   name: string
   description: string | null
-  /**
-   * 파이프라인이 다루는 task 종류. 실 구현에서는 `input.group` 의 `DatasetGroup.task_types` 에서
-   * 도출되지만 운영 편의로 Pipeline 레벨 스냅샷으로 고정 (generation 시점에 결정). 027 설계에도 반영.
-   */
   task_type: TaskType
+  /**
+   * 이 Automation 이 실행하는 **템플릿 파이프라인** 의 식별자 요약 (name + version).
+   * 027 에서는 `Pipeline` 엔티티 FK 로 분리될 부분. 목업에서는 임베드 필드로 대체한다.
+   */
+  pipeline_template: {
+    name: string
+    /** "major.minor" — 예: "1.0". Dataset 버전 정책과 동일 형식 */
+    version: string
+  }
   input: PipelineDatasetSlot
   output: PipelineDatasetSlot
   tasks: PipelineTaskSummary[]

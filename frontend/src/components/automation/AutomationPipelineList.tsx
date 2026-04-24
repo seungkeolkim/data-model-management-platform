@@ -99,7 +99,7 @@ export default function AutomationPipelineList({
 
   const columns: ColumnsType<Pipeline> = [
     {
-      title: '파이프라인명',
+      title: 'Automation 명',
       dataIndex: 'name',
       key: 'name',
       sorter: (firstPipeline, secondPipeline) =>
@@ -116,6 +116,20 @@ export default function AutomationPipelineList({
             </div>
           )}
         </div>
+      ),
+    },
+    {
+      title: '대상 파이프라인',
+      key: 'pipeline_template',
+      sorter: (firstPipeline, secondPipeline) =>
+        firstPipeline.pipeline_template.name.localeCompare(secondPipeline.pipeline_template.name),
+      render: (_, pipeline) => (
+        <Space size={4} align="center" wrap>
+          <Text style={{ fontSize: 12 }}>{pipeline.pipeline_template.name}</Text>
+          <Tag color="purple" style={{ fontSize: 11 }}>
+            v{pipeline.pipeline_template.version}
+          </Tag>
+        </Space>
       ),
     },
     {
@@ -208,7 +222,7 @@ export default function AutomationPipelineList({
 
   return (
     <Card
-      title="파이프라인 목록"
+      title="Automation 목록"
       size="small"
       extra={
         <Space size={6}>
