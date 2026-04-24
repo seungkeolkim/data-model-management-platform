@@ -23,6 +23,7 @@ import type {
 } from '@/types/automation'
 import {
   StatusBadge,
+  TaskTypeTag,
   AUTOMATION_STATUS_LABEL,
   AUTOMATION_ERROR_REASON_LABEL,
 } from './StatusBadge'
@@ -105,9 +106,14 @@ export default function AutomationPipelineList({
         firstPipeline.name.localeCompare(secondPipeline.name),
       render: (_, pipeline) => (
         <div>
-          <Text strong>{pipeline.name}</Text>
+          <Space size={6} align="center">
+            <TaskTypeTag taskType={pipeline.task_type} />
+            <Text strong>{pipeline.name}</Text>
+          </Space>
           {pipeline.description && (
-            <div style={{ fontSize: 12, color: '#8c8c8c' }}>{pipeline.description}</div>
+            <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: 2 }}>
+              {pipeline.description}
+            </div>
           )}
         </div>
       ),

@@ -11,7 +11,7 @@
  * Pipeline 은 현재 백엔드에 엔티티로 존재하지 않는다.
  * 023 §9-2 에서 신규 테이블 도입(옵션 1) 이 확정됐으며, 목업은 이 모델을 프론트에서 선가정해 그린다.
  */
-import type { Split } from './dataset'
+import type { Split, TaskType } from './dataset'
 
 // =============================================================================
 // 열거형 / 리터럴
@@ -84,6 +84,11 @@ export interface Pipeline {
   id: string
   name: string
   description: string | null
+  /**
+   * 파이프라인이 다루는 task 종류. 실 구현에서는 `input.group` 의 `DatasetGroup.task_types` 에서
+   * 도출되지만 운영 편의로 Pipeline 레벨 스냅샷으로 고정 (generation 시점에 결정). 027 설계에도 반영.
+   */
+  task_type: TaskType
   input: PipelineDatasetSlot
   output: PipelineDatasetSlot
   tasks: PipelineTaskSummary[]

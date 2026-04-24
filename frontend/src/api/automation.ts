@@ -169,6 +169,32 @@ export async function updatePipelineAutomation(
 }
 
 // =============================================================================
+// 변이 — Pipeline description 편집
+// =============================================================================
+
+/**
+ * Description 업데이트 mock. 실제 백엔드에서는 `PATCH /pipelines/{id}` 로 매핑 예정.
+ * 세션 스토어에 반영해 페이지 이동 시에도 유지.
+ */
+export async function updatePipelineDescription(
+  pipelineId: string,
+  description: string,
+): Promise<Pipeline> {
+  await simulatedDelay()
+  const index = sessionPipelines.findIndex((pipeline) => pipeline.id === pipelineId)
+  if (index < 0) {
+    throw new Error(`Pipeline not found: ${pipelineId}`)
+  }
+  const next: Pipeline = {
+    ...sessionPipelines[index],
+    description: description.trim() === '' ? null : description,
+    updated_at: new Date().toISOString(),
+  }
+  sessionPipelines[index] = next
+  return clone(next)
+}
+
+// =============================================================================
 // 변이 — 수동 재실행 (목업)
 // =============================================================================
 

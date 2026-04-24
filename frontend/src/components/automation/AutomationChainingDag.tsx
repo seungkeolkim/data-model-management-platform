@@ -12,7 +12,7 @@ import '@xyflow/react/dist/style.css'
 import { Card, Alert, Empty, Space, Typography, Tag } from 'antd'
 import { getChainingGraph } from '@/api/automation'
 import type { Pipeline, ChainingGraph } from '@/types/automation'
-import { AUTOMATION_STATUS_COLOR, StatusBadge } from './StatusBadge'
+import { AUTOMATION_STATUS_COLOR, StatusBadge, TaskTypeTag } from './StatusBadge'
 
 const { Text } = Typography
 
@@ -208,16 +208,18 @@ function buildReactFlowGraph(
 function PipelineNodeCard({ pipeline }: { pipeline: Pipeline }) {
   return (
     <div style={{ padding: 8 }}>
-      <div
-        style={{
-          fontWeight: 600,
-          fontSize: 12,
-          marginBottom: 4,
-          wordBreak: 'break-all',
-        }}
-      >
-        {pipeline.name}
-      </div>
+      <Space size={4} align="center" style={{ marginBottom: 4 }}>
+        <TaskTypeTag taskType={pipeline.task_type} />
+        <span
+          style={{
+            fontWeight: 600,
+            fontSize: 12,
+            wordBreak: 'break-all',
+          }}
+        >
+          {pipeline.name}
+        </span>
+      </Space>
       <Space size={4} wrap>
         <StatusBadge status={pipeline.automation_status} />
         {pipeline.automation_mode && (

@@ -78,6 +78,7 @@ export const MOCK_PIPELINES: Pipeline[] = [
     id: 'pl-headcrop-merge-0001',
     name: 'hardhat_headcrop_original_merge',
     description: 'RAW head crop 이미지들을 정렬·merge 해 SOURCE 그룹으로 승격',
+    task_type: 'CLASSIFICATION',
     input: { ...GROUP_HEADCROP_RAW, split: 'VAL' },
     output: { ...GROUP_HEADCROP_ORIGINAL_MERGED, split: 'VAL' },
     tasks: [
@@ -98,6 +99,7 @@ export const MOCK_PIPELINES: Pipeline[] = [
     id: 'pl-headcrop-visible-0002',
     name: 'hardhat_headcrop_visible_add',
     description: 'original_merged 에 visibility head 를 주입해 visible_added 파생',
+    task_type: 'CLASSIFICATION',
     input: { ...GROUP_HEADCROP_ORIGINAL_MERGED, split: 'VAL' },
     output: { ...GROUP_HEADCROP_VISIBLE_ADDED, split: 'VAL' },
     tasks: [
@@ -124,6 +126,7 @@ export const MOCK_PIPELINES: Pipeline[] = [
     id: 'pl-cycle-a-to-b-0003',
     name: 'cycle_demo_a_to_b',
     description: '(사이클 데모) A → B',
+    task_type: 'DETECTION',
     input: { ...GROUP_A, split: 'TRAIN' },
     output: { ...GROUP_B, split: 'TRAIN' },
     tasks: [{ task_id: 't1', operator: 'det_remap_class_name', display_name: 'class remap' }],
@@ -141,6 +144,7 @@ export const MOCK_PIPELINES: Pipeline[] = [
     id: 'pl-cycle-b-to-a-0004',
     name: 'cycle_demo_b_to_a',
     description: '(사이클 데모) B → A',
+    task_type: 'DETECTION',
     input: { ...GROUP_B, split: 'TRAIN' },
     output: { ...GROUP_A, split: 'TRAIN' },
     tasks: [{ task_id: 't1', operator: 'det_sample_n_images', display_name: 'sample N' }],
@@ -160,6 +164,7 @@ export const MOCK_PIPELINES: Pipeline[] = [
     id: 'pl-person-convert-0005',
     name: 'person_detection_raw_to_coco',
     description: 'person detection RAW 를 COCO 로 포맷 변환',
+    task_type: 'DETECTION',
     input: { ...GROUP_PERSON_RAW, split: 'TRAIN' },
     output: { ...GROUP_PERSON_COCO, split: 'TRAIN' },
     tasks: [
@@ -185,6 +190,7 @@ export const MOCK_PIPELINES: Pipeline[] = [
     id: 'pl-vehicle-augment-0006',
     name: 'vehicle_detection_augment',
     description: 'SOURCE 에 rotate + mask augmentation 적용',
+    task_type: 'DETECTION',
     input: { ...GROUP_VEHICLE_SOURCE, split: 'VAL' },
     output: { ...GROUP_VEHICLE_PROCESSED, split: 'VAL' },
     tasks: [
