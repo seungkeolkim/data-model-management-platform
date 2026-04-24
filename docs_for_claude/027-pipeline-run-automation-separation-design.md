@@ -455,7 +455,7 @@ interface DataLoadNodeData {
 
 - 설계서 (현행): `objective_n_plan_7th.md` (v7.9)
 - 023 자동화 기술 검토 + §9 결정: `docs_for_claude/023-automation-mockup-tech-note.md`
-- 025 Dataset 3계층 분리 (완료): `docs_for_claude/025-dataset-three-tier-separation-handoff.md`
-- 024 head_schema SSOT: `docs_for_claude/024-head-schema-ssot-enforcement-handoff.md`
+- 025 Dataset 3계층 분리 (완료): `docs_history/handoffs/025-dataset-three-tier-separation-handoff.md`
+- 024 head_schema SSOT: `docs_history/handoffs/024-head-schema-ssot-enforcement-handoff.md`
 - 026 Automation 목업 (이 문서의 직접 계기): `docs_for_claude/026-automation-mockup-completion-handoff.md`
 - 노드 SDK 가이드: `docs/pipeline-node-sdk-guide.md`

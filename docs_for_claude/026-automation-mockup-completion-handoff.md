@@ -2,7 +2,7 @@
 
 > 최초 작성: 2026-04-23
 > 브랜치: `feature/pipeline-automation-mockup` (main 에서 025 머지 직후 재생성)
-> 직전 핸드오프 (main 머지 완료): `docs_for_claude/025-dataset-three-tier-separation-handoff.md`
+> 직전 핸드오프 (main 머지 완료): `docs_history/handoffs/025-dataset-three-tier-separation-handoff.md`
 > 선행 계획: `docs_for_claude/023-automation-mockup-tech-note.md` §6 / §9
 > 설계서 반영 예정: v7.10 (목업 기준선 편입 시)
 
@@ -319,5 +319,5 @@ DatasetRegisterModal / ManipulatorListPage).
 
 - 설계서 (현행): `objective_n_plan_7th.md` (v7.9, 2026-04-23)
 - 선행 결정 기록: `docs_for_claude/023-automation-mockup-tech-note.md` §1-1 / §6 / §9
-- 직전 핸드오프 (main 머지 완료): `docs_for_claude/025-dataset-three-tier-separation-handoff.md`
+- 직전 핸드오프 (main 머지 완료): `docs_history/handoffs/025-dataset-three-tier-separation-handoff.md`
 - CLAUDE.md / MEMORY.md — 네이밍 규칙 / 커밋 규약 / 아키텍처 제약

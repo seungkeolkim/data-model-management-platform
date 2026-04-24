@@ -4,8 +4,8 @@
 > 갱신: 2026-04-23 (§9 사용자 확정 결정 + 실착수 조건 변경 추가)
 > 브랜치: `feature/pipeline-automation-mockup` (이전 세션에서 삭제됨, automation 재개 시 재생성 필요)
 > 상위 설계서: `objective_n_plan_7th.md` v7.8 §5 item 16 / item 19~20
-> 직전 핸드오프: `docs_for_claude/024-head-schema-ssot-enforcement-handoff.md`
-> 선행 블로킹 작업: `docs_for_claude/025-dataset-three-tier-separation-handoff.md` (Dataset 3계층 분리 — 본 작업 재개의 전제)
+> 직전 핸드오프: `docs_history/handoffs/024-head-schema-ssot-enforcement-handoff.md`
+> 선행 블로킹 작업: `docs_history/handoffs/025-dataset-three-tier-separation-handoff.md` (Dataset 3계층 분리 — 본 작업 재개의 전제)
 
 ---
 
@@ -523,3 +523,18 @@ major/minor 를 어떻게 결정하는지 재확인 + automation 진입 시 `tri
 - `hardhat_headcrop_original_merged` — `4d2afb95-f7e6-4297-afff-6c435b9af9cf`
 
 3계층 분리 후 이 두 dataset 의 (group, split, version) 이 (group, split_id, version) 구조로 재배치된 상태에서 mock chaining DAG 의 실데이터 레퍼런스로 활용.
+
+### 9-11. 갱신 — 목업 구현 완료 + 027 로 후속 승계 (2026-04-24)
+
+`feature/pipeline-automation-mockup` 브랜치 재생성 후 목업 화면 3종 (Automation 관리 / 상세 / 실행
+이력) 모두 구현 완료. 상세는 `docs_history/handoffs/026-automation-mockup-completion-handoff.md`
+(이동 후 경로 — 본 원문 기록 시점 기준으로 포인터만 갱신).
+
+후속 "Pipeline / PipelineRun / PipelineAutomation 3 엔티티 분리 + run-time version 해석 (2안)" 설계는
+`docs_for_claude/027-pipeline-run-automation-separation-design.md` 로 이관됐다. 본 문서 §9-2 의
+옵션 1 결정은 027 §2 의 "Pipeline 엔티티 신규 + PipelineAutomation 별도 테이블 1:0..1" 로 확장됐고,
+§9-7 의 버전 정책 (경로별 major / minor) 도 027 §3 의 "사용자 명시 major.minor, hash 판정 없음" 으로
+재정의됐다. **027 이 본 문서의 실질적 승계 문서**이며, 본 023 원문은 목업 기획 기록으로 유지.
+
+재개 시 참조 순서: **027 §2 ~ §6 (실구현 설계)** → 023 §6 (목업 화면 스코프 원문, UI 레이아웃 재사용
+근거) → 026 §5-2a / §5-2b (목업 스모크 피드백 누적).

@@ -3,8 +3,8 @@
 > **작업지시서 v7.9** | Dataset 3계층 분리 — DatasetGroup → DatasetSplit → DatasetVersion
 > 기준일: 2026-04-23
 > 이전 설계서: `docs_history/objective_n_plan_6th.md`
-> 현행 핸드오프: `docs_for_claude/025-dataset-three-tier-separation-handoff.md`
-> 직전 핸드오프: `docs_for_claude/024-head-schema-ssot-enforcement-handoff.md` (main 머지 완료)
+> 현행 핸드오프: `docs_history/handoffs/025-dataset-three-tier-separation-handoff.md`
+> 직전 핸드오프: `docs_history/handoffs/024-head-schema-ssot-enforcement-handoff.md` (main 머지 완료)
 > 노드 SDK 규약: `docs/pipeline-node-sdk-guide.md` (2026-04-15 재작성본)
 
 6차 설계서의 §7-1 최우선 액션(노드 SDK화 + 가이드)이 완료되어 baseline에 편입됐다.
@@ -437,7 +437,7 @@ v7.4 까지 존재했던 `on_label_conflict` 옵션 (SHA dedup 후 동일 이미
 
 #### 2-11-9. 상류 이미지 변형 메타 보존 규약 (확정 · 2026-04-21 · v7.7)
 
-핸드오프: `docs_for_claude/022-classification-dag-chapter-closure-handoff.md` §11.
+핸드오프: `docs_history/handoffs/022-classification-dag-chapter-closure-handoff.md` §11.
 
 **배경.** 파이프라인 `0e6585cf-f9a5-4be1-aa8e-4f12353adddd` 에서 `source → cls_crop_image →
 cls_set_head_labels (×2) → cls_merge_datasets` 체인 실행 시 crop 대상 이미지 2600장이 Phase B
@@ -549,7 +549,7 @@ per-class unknown 이 필수가 되는 시점(Step 4 auto-labeling)에 `labels` 
 
 ### 2-13. Classification filename-identity 전환 (확정 · 2026-04-20 · v7.5)
 
-핸드오프: `docs_history/handoffs/020-classification-filename-identity-handoff.md` (이미지 변형 postfix rename 규약은 `docs_history/handoffs/021-cls-rotate-and-new-stubs-handoff.md` §1-3 에서 이어졌고, 브랜치 종결 요약은 현행 `docs_for_claude/022-classification-dag-chapter-closure-handoff.md` §2-1 / §2-5 에 정리됨).
+핸드오프: `docs_history/handoffs/020-classification-filename-identity-handoff.md` (이미지 변형 postfix rename 규약은 `docs_history/handoffs/021-cls-rotate-and-new-stubs-handoff.md` §1-3 에서 이어졌고, 브랜치 종결 요약은 현행 `docs_history/handoffs/022-classification-dag-chapter-closure-handoff.md` §2-1 / §2-5 에 정리됨).
 
 **배경.** v7.4 까지 classification 은 이미지 identity 를 SHA-1 content hash 로 관리했다. 이 설계는 "파일명이 다르지만 내용이 같은 경우를 자동 dedup 한다" 는 편의가 있었으나, 실운영에서 다음 문제를 낳았다.
 
