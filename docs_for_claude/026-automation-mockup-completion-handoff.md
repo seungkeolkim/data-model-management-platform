@@ -187,6 +187,40 @@ DatasetRegisterModal / ManipulatorListPage).
 자동 실행) 시연용이며, 행 왼쪽 화살표로 펼치면 토폴로지 순서 내부 2건이 표시된다. 023 §6-3 요구
 사항 "automation batch 시각화 — 같은 batch_id 는 트리/그룹으로 접힘" 을 그대로 반영.
 
+### 5-2b. 수동 스모크 피드백 반영 (2차 · 2026-04-23 세션 후반)
+
+1차 피드백 (§5-2a) 이후 이어진 사용자 2차 스모크에서 **3 가지 UI 개선 요구** 를 반영.
+
+**이슈 1 — task 종류 (DETECTION / CLASSIFICATION) 가시화.**
+- `Pipeline.task_type: TaskType` 타입 필드 신규. fixture 6건에 값 직접 박음 (P1/P2 = CLASSIFICATION,
+  P3~P6 = DETECTION)
+- `StatusBadge.tsx` 에 `TaskTypeTag` 공용 컴포넌트 신설. `DatasetListPage` 팔레트와 동일 (DETECTION =
+  geekblue, CLASSIFICATION = magenta, SEGMENTATION = cyan, ZERO_SHOT = gold). `variant="short"` 축약
+  (`DET` / `CLS` / ...) + `variant="long"` 전체 이름
+- 목록 (파이프라인명 인라인 앞), 상세 헤더, DAG 노드 카드 세 군데 모두 노출
+
+**이슈 3 — 상세 → 목록 복귀 동선.**
+- 상세 페이지 최상단에 **`← 목록으로`** Button (text type, `ArrowLeftOutlined`) 추가
+- Breadcrumb 은 유지 (세밀 경로 파악)
+
+**이슈 4 — description inline 편집.**
+- `api/automation.ts` 에 `updatePipelineDescription(id, description)` 추가 — 세션 스토어 mutate
+- 상세 페이지 헤더 description 영역을 `Typography.Paragraph` + `editable` 로 전환. 빈 값이면 placeholder
+  노출 ("설명을 입력해 주세요 — 다른 사용자가 이 파이프라인의 목적을 이해할 수 있게")
+- 저장 성공 시 `['automation']` 전체 invalidate → 목록의 description 도 즉시 갱신
+
+**영향 파일.**
+- `types/automation.ts`, `mocks/automation.ts` — task_type 필드 + fixture
+- `components/automation/StatusBadge.tsx` — TaskTypeTag 신설
+- `components/automation/AutomationPipelineList.tsx`, `AutomationChainingDag.tsx` — task 태그 렌더
+- `pages/AutomationPipelineDetailPage.tsx` — 복귀 Button + description Paragraph editable
+- `api/automation.ts` — updatePipelineDescription mutator
+
+**검증.** `tsc -b` pre-existing 11건 외 신규 에러 0건.
+
+**이슈 2 (DAG 구성 ↔ 의존 그래프 Segmented) 는 보류.** 027 의 "DataLoad 노드 spec 축소 + run-time version
+해석" 변경이 DAG 구성 그래프 자체 형태에 영향을 주므로, 027 이후에 같이 재설계 (사용자 결정, 2026-04-23).
+
 ### 5-2. 수동 스모크 (사용자 확인 필요)
 
 브라우저 `http://localhost:18080/automation` 에서 아래 항목 체크:
@@ -228,6 +262,41 @@ DatasetRegisterModal / ManipulatorListPage).
 - [ ] Polling 스캐너 (Celery beat) / Triggering 훅 (SQLAlchemy `after_flush`)
 - [ ] 수동 재실행 엔드포인트 — `POST /pipelines/{id}/automation/rerun` (mode 인자)
 - [ ] 실 API 라우터 + 목업 `api/automation.ts` 교체 (타입 / 페이지 / 컴포넌트는 무변경 목표)
+
+---
+
+## 6-a. 이 목업의 한계 — 027 챕터에서 재설계 예정
+
+이번 목업은 **"Pipeline == Automation 엔트리" 로 동일시한 단일 엔티티 모델** 위에서 그렸다 (023 §9-2
+옵션 1 을 그대로 반영). 1차 스모크 이후 사용자 피드백으로 다음 한계가 드러났다 (2026-04-23 논의):
+
+1. **개념 섞임.** "파이프라인은 템플릿, PipelineRun 은 templaet 의 materialized run, Automation 은
+   runner 등록" 이라는 3 축이 목록 UI 에서 한 줄로 표시되어 "파이프라인 목록" 처럼 읽힘. 사용자가
+   "automation 등록 관리 페이지" 임을 인지하기 어려움.
+2. **Pipeline 이 DatasetVersion 까지 고정.** 현 DataLoad 노드는 `(group, split, version)` 3단 선택이
+   라 version 이 올라갈 때마다 파이프라인을 새로 만들어야 함. "(group, split) 까지만 고정, version 은
+   run-time 해석" (2안) 이 더 자연스럽다.
+3. **버전 계통 부재.** 동일한 파이프라인의 v1 / v2 같은 세로 관계가 명시되지 않아 과거 run 복원 시
+   "어떤 버전으로 돌았는지" 가 표현되지 않음.
+
+**해결 방향 — 핸드오프 027 에서 별도 브랜치로 진행.** 상세는
+`docs_for_claude/027-pipeline-run-automation-separation-design.md`.
+
+핵심 결정 요약:
+
+- **3 엔티티 분리**: `Pipeline` (정적 템플릿) / `PipelineRun` (동적 이력, 기존 `PipelineExecution`
+  rename) / `PipelineAutomation` (Pipeline 과 1:0..1 runner 등록)
+- **2안 채택**: Pipeline 은 `(input_split, output_split)` 까지만 FK 로 고정. DatasetVersion 은 run 제출
+  시 resolver Modal 에서 선택 (기본 = 최신)
+- **버전 정책**: `Pipeline.version = "major.minor"` (예: `"1.0"`). 사용자 명시로만 증가 (hash 판정 없음).
+  동일 config 도 겹쳐 OK. 최초 `1.0`, 새 버전 = `major++`, minor 는 당분간 `0` 고정 (확장 여지)
+- **Automation 은 특정 version 의 Pipeline 에 붙음**. v1 → v2 승격 시 자동 추종 안 하고 사용자가 명시
+  reassign
+- **Pipeline Group / Family 는 후보로 기록만**, 이번 범위에서 차용 X (027 §7)
+
+**이 목업의 남은 가치.** 목업 자체는 UX / 상태 전이 / chaining DAG / 수동 재실행 2-버튼 UX 등을 사용자
+검증을 거친 확정 상태로 남긴다. 027 실구현 시 이 화면들의 **레이아웃 · 인터랙션 · 네이밍** 은 3 엔티티
+구조에 맞춰 재배선하되, 사용자 수용이 끝난 UX 패턴은 그대로 이식한다.
 
 ---
 
