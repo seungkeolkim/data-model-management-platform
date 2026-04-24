@@ -10,21 +10,15 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
-  Table, Button, Tag, Typography, Space, Card, Modal,
+  Table, Button, Tag, Typography, Space, Card,
   Progress,
 } from 'antd'
 import {
-  PlusOutlined,
   ReloadOutlined,
-  AimOutlined,
-  AppstoreOutlined,
-  SearchOutlined,
-  PictureOutlined,
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { pipelinesApi } from '@/api/pipeline'
 import type { PipelineExecutionResponse } from '@/types/pipeline'
-import type { TaskType } from '@/types/dataset'
 import { formatDate } from '@/utils/format'
 import ExecutionDetailDrawer from '@/components/pipeline/ExecutionDetailDrawer'
 import dayjs from 'dayjs'
@@ -38,49 +32,6 @@ const STATUS_TAG: Record<string, { color: string; label: string }> = {
   DONE: { color: 'success', label: '완료' },
   FAILED: { color: 'error', label: '실패' },
 }
-
-/** 태스크 타입별 표시 정보 */
-const TASK_TYPE_OPTIONS: {
-  key: TaskType
-  label: string
-  description: string
-  icon: React.ReactNode
-  color: string
-  ready: boolean
-}[] = [
-  {
-    key: 'DETECTION',
-    label: 'Object Detection',
-    description: 'COCO/YOLO 포맷 기반 객체 탐지 데이터 변형',
-    icon: <AimOutlined style={{ fontSize: 28 }} />,
-    color: '#1677ff',
-    ready: true,
-  },
-  {
-    key: 'SEGMENTATION',
-    label: 'Segmentation',
-    description: '세그멘테이션 마스크 기반 데이터 변형',
-    icon: <AppstoreOutlined style={{ fontSize: 28 }} />,
-    color: '#52c41a',
-    ready: false,
-  },
-  {
-    key: 'CLASSIFICATION',
-    label: 'Classification',
-    description: '이미지 분류 데이터 변형 (단일/다중 head 포함)',
-    icon: <PictureOutlined style={{ fontSize: 28 }} />,
-    color: '#13c2c2',
-    ready: true,
-  },
-  {
-    key: 'ZERO_SHOT',
-    label: 'Zero-Shot',
-    description: '제로샷 학습용 데이터 변형',
-    icon: <SearchOutlined style={{ fontSize: 28 }} />,
-    color: '#722ed1',
-    ready: false,
-  },
-]
 
 /**
  * 소요 시간을 읽기 좋은 문자열로 변환.
@@ -111,7 +62,6 @@ export default function PipelineHistoryPage() {
   const navigate = useNavigate()
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
-  const [isTypeSelectOpen, setIsTypeSelectOpen] = useState(false)
   const [selectedExecution, setSelectedExecution] = useState<PipelineExecutionResponse | null>(null)
 
   const { data, isLoading, refetch } = useQuery({
@@ -219,13 +169,8 @@ export default function PipelineHistoryPage() {
           <Button icon={<ReloadOutlined />} onClick={() => refetch()}>
             새로고침
           </Button>
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            onClick={() => setIsTypeSelectOpen(true)}
-          >
-            새 파이프라인
-          </Button>
+          {/* "새 파이프라인" 버튼은 v7.10 §9-7 피드백에 따라 "파이프라인 목록" 페이지로 이동.
+              실행 이력 페이지에서는 이력 조회 외 다른 동작은 하지 않는다. */}
         </Space>
       </div>
 
@@ -261,76 +206,8 @@ export default function PipelineHistoryPage() {
         onNavigateToDataset={(groupId, datasetId) => navigate(`/datasets/${groupId}/${datasetId}`)}
       />
 
-      {/* ── 태스크 타입 선택 모달 ── */}
-      <Modal
-        title="데이터 변형 유형 선택"
-        open={isTypeSelectOpen}
-        onCancel={() => setIsTypeSelectOpen(false)}
-        footer={null}
-        width={640}
-      >
-        <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
-          변형할 데이터의 유형을 선택하세요. 유형에 따라 사용 가능한 Manipulator가 달라집니다.
-        </Text>
-
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-          {TASK_TYPE_OPTIONS.map((opt) => (
-            <div
-              key={opt.key}
-              onClick={() => {
-                if (opt.ready) {
-                  setIsTypeSelectOpen(false)
-                  navigate(`/pipelines/editor?taskType=${opt.key}`)
-                } else {
-                  Modal.info({
-                    title: '준비 중',
-                    content: `${opt.label} 유형의 데이터 변형은 아직 준비 중입니다.`,
-                    okText: '확인',
-                  })
-                }
-              }}
-              style={{
-                border: `1px solid ${opt.ready ? opt.color : '#d9d9d9'}`,
-                borderRadius: 8,
-                padding: '16px 20px',
-                cursor: opt.ready ? 'pointer' : 'default',
-                opacity: opt.ready ? 1 : 0.45,
-                transition: 'all 0.2s',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 14,
-              }}
-              onMouseEnter={(e) => {
-                if (opt.ready) {
-                  e.currentTarget.style.background = `${opt.color}08`
-                  e.currentTarget.style.borderColor = opt.color
-                }
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = ''
-                e.currentTarget.style.borderColor = opt.ready ? opt.color : '#d9d9d9'
-              }}
-            >
-              <div style={{ color: opt.ready ? opt.color : '#bfbfbf' }}>
-                {opt.icon}
-              </div>
-              <div>
-                <div style={{ fontWeight: 600, fontSize: 14, color: opt.ready ? '#000' : '#8c8c8c' }}>
-                  {opt.label}
-                  {!opt.ready && (
-                    <Tag color="default" style={{ fontSize: 10, marginLeft: 6, padding: '0 4px' }}>
-                      준비 중
-                    </Tag>
-                  )}
-                </div>
-                <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: 2 }}>
-                  {opt.description}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </Modal>
+      {/* v7.10 §9-7 피드백: 태스크 타입 선택 Modal + "새 파이프라인" 버튼 은
+          CreatePipelineButton 컴포넌트로 추출되어 PipelineListPage 에서 사용된다. */}
     </div>
   )
 }

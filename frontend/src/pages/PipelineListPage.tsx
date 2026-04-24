@@ -28,6 +28,7 @@ import dayjs from 'dayjs'
 import { pipelineEntitiesApi } from '@/api/pipeline'
 import type { PipelineEntityResponse, PipelineListItem } from '@/types/pipeline'
 import { VersionResolverModal } from '@/components/pipeline/VersionResolverModal'
+import { CreatePipelineButton } from '@/components/pipeline/CreatePipelineButton'
 
 const { Title, Text } = Typography
 
@@ -221,6 +222,8 @@ export function PipelineListPage() {
             >
               새로고침
             </Button>
+            {/* v7.10 §9-7 피드백: "새 파이프라인" 진입은 실행 이력이 아닌 목록 페이지 쪽. */}
+            <CreatePipelineButton />
           </Space>
         </Space>
         <Alert
