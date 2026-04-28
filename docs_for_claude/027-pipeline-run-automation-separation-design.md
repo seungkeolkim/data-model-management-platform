@@ -715,3 +715,231 @@ Pipeline 을 묶는 것으로 처리. 이번 범위 밖.
       이미 `submit_run_from_pipeline` 안에 있어 기능상 필요성이 낮음. 별도 세션으로 미룸
     - Pipeline 상세 페이지 (`/pipelines/:id`) 는 아직 없음. 목록에서 실행/legacy 토글/description
       편집 가능한 정도로 충분. §9-9 에서 필요 시 추가
+
+> **§13 이후는 후속 브랜치 `feature/pipeline-family-and-version` 의 결정 + 구현 기록.**
+> 027 의 §12 까지가 본문 (Pipeline / PipelineRun / PipelineAutomation 3 엔티티 분리)
+> 이고, §13 은 그 위에 쌓인 후속 단계: Pipeline 자체를 (Family + concept + version) 으로
+> 다시 한 번 분리하면서 source format 도 v3 로 격상.
+
+---
+
+## 13. 후속 — Pipeline Family + Version 3계층 + source format v3 (2026-04-28)
+
+027 §12 까지로 Pipeline / PipelineRun / PipelineAutomation 3 엔티티 분리는 완료됐다.
+이 §13 은 사용자 피드백을 받아 **Pipeline 자체를 다시 한 번 3계층으로 분리** 하고,
+동시에 PipelineRun JSON 복사 → 에디터 import 흐름의 모호성을 해소하기 위해 **source
+토큰 포맷을 v3 로 격상** 한 작업의 결정 + 구현 기록이다.
+
+### 13-1. 동기 — 두 가지 사용자 피드백
+
+1. **"Pipeline 클릭이 안 돼서 뭘 하는 건지 알기 힘들다"** — 027 까지의 Pipeline 목록은
+   행을 클릭해도 상세 정보가 보이지 않아, 사용자가 PipelineRun 상세의 "JSON 복사" 로
+   템플릿을 우회 복제하고 있었음.
+2. **JSON 복사로 복원할 때 split not found 에러** — PipelineRun.transform_config 는
+   resolved 스냅샷이라 `source:<dataset_version_id>` 를 담고 있는데, Pipeline.config 측
+   에디터는 같은 토큰을 split_id 로 해석. 같은 모양인데 의미가 달라 에디터가 split 으로
+   조회 → DB 에 없어 실패.
+
+### 13-2. 핵심 결정 — 사용자와 함께 합의 (2026-04-28)
+
+| 항목 | 결정 |
+|---|---|
+| Pipeline 의 versioning | Pipeline 자체에 `version` 컬럼 두지 않고 **PipelineVersion 별도 테이블** 분리. 같은 version 은 같은 Pipeline 안에서만 누적, 다른 Pipeline 으로 이동 불가 |
+| Family 의 의미 | **즐겨찾기 폴더** — 자유 이동 가능한 느슨한 묶음. DatasetGroup 처럼 강제력 있는 묶음 아님. Pipeline.family_id 는 NULL 허용 |
+| name UNIQUE 범위 | family 와 무관하게 **전역 UNIQUE** (Pipeline 이 family 간 자유 이동하므로 name 으로 식별) |
+| source 포맷 | `source:<UUID>` → `source:<type>:<UUID>` 로 격상. type ∈ {`dataset_split`, `dataset_version`} |
+| Pipeline 상세 진입 | 행 클릭 = 우측 drawer (versions 세로 목록 + 인라인 expand). "상세" 버튼 = 풀 페이지 (`/pipeline-versions/:id`) |
+| schema_version | 2 → 3 으로 bump (v1 처럼 v2 호환성도 버림 — 마이그레이션만 작성) |
+| automation 의 부착점 | PipelineVersion 단위 유지 (§3-3 "automation 은 특정 version 가리킨다" 그대로). Family 가 추가되어도 변경 없음 |
+
+### 13-3. 데이터 모델 — Dataset 3계층과의 비교
+
+```
+DatasetGroup (정적 개념)
+  └─ DatasetSplit (정적 슬롯 — TRAIN/VAL/TEST 병렬 축, 강제 구조)
+      └─ DatasetVersion (시간축 인스턴스)
+
+PipelineFamily (느슨한 폴더 — 자유 이동, 강제력 없음)
+  └─ Pipeline (정적 개념 — name 전역 UNIQUE, output_split 고정)
+      └─ PipelineVersion (시간축 인스턴스 — config immutable)
+```
+
+차원이 다르다 — Dataset 의 Split 은 진짜 병렬 축이지만, Pipeline 에는 그런 슬롯
+차원이 없다. Family 가 그 자리를 채우진 않는다 (Family 는 시간/공간이 아닌 "폴더링"
+한 차원). 결과적으로 Pipeline 측은 (개념 + 시간축) 2 차원이고, 그 위에 사용자
+편의용 Family 레이어 한 장.
+
+```python
+class PipelineFamily(Base):
+    __tablename__ = "pipeline_families"
+    id: UUID                # PK
+    name: str               # UNIQUE
+    description: str | None
+    created_at / updated_at
+
+class Pipeline(Base):
+    __tablename__ = "pipelines"
+    id: UUID
+    family_id: UUID | None  # FK pipeline_families.id, NULL OK (ON DELETE SET NULL)
+    name: str               # UNIQUE 전역
+    description: str | None
+    output_split_id: UUID   # FK dataset_splits.id (개념 레벨 고정)
+    task_type: str          # 개념 레벨 고정
+    is_active: bool         # 개념 단위 soft delete
+    created_at / updated_at
+
+class PipelineVersion(Base):
+    __tablename__ = "pipeline_versions"
+    id: UUID
+    pipeline_id: UUID       # FK pipelines.id (NOT NULL, ON DELETE CASCADE)
+    version: str            # "1.0", "2.0" — UNIQUE(pipeline_id, version)
+    config: dict            # JSONB. immutable
+    is_active: bool         # version 단위 soft delete (개별 끄기)
+    created_at / updated_at
+
+class PipelineRun(Base):
+    pipeline_version_id: UUID  # ← 기존 pipeline_id 가 이 자리로 격하
+    automation_id: UUID | None
+    ...
+
+class PipelineAutomation(Base):
+    pipeline_version_id: UUID  # ← 기존 pipeline_id 가 이 자리로 격하
+    is_active / deleted_at
+    # partial unique index: pipeline_version_id WHERE is_active = TRUE
+```
+
+### 13-4. Source format v3 — `source:<type>:<id>`
+
+```
+v2:  source:<UUID>                       (의미가 위치 의존적 — 모호)
+v3:  source:dataset_split:<split_id>     (Pipeline.config 측 — spec)
+     source:dataset_version:<version_id> (PipelineRun.transform_config 측 — resolved)
+     task_<node_id>                       (task 간 참조 — 변경 없음)
+```
+
+`_substitute_resolved_versions` 가 spec → resolved 변환 시 type 도
+`dataset_split` → `dataset_version` 으로 함께 flip. dag_executor 는 항상
+`dataset_version` 만 본다 (split 토큰을 받으면 RuntimeError).
+
+**JSON 복사 → 에디터 import 흐름**:
+- Pipeline.config (또는 PipelineVersion.config) 의 JSON 을 그대로 import → 정상.
+- PipelineRun.transform_config 의 JSON 을 import 하면 `dataset_version:` 토큰이
+  들어있음. FE `unresolveVersionRefsToSplitRefs(config, versionToSplitMap)` 헬퍼가
+  부모 split 으로 환원 (사용자 결정 — 원본 버전 표시 X, split 만 채움). 호출자
+  (JSON 불러오기 UI) 가 versionId → splitId 매핑을 백엔드에서 받아 전달.
+
+**schema_version 3** — 마이그레이션 시 기존 `Pipeline.config` (현 `pipeline_versions.config`)
+의 source 토큰을 `dataset_split:` 접두로, `pipeline_runs.transform_config` 의 토큰을
+`dataset_version:` 접두로 일괄 rewrite. 백엔드 / FE 의 `parse_source_ref` 헬퍼가
+잘못된 v2 잔재를 만나면 ValueError.
+
+### 13-5. 마이그레이션 — Alembic 032 (데이터 보존)
+
+핵심 트릭: **`pipeline_versions.id` 를 기존 `pipelines.id` 그대로 승계**. 그러면
+`pipeline_runs.pipeline_id` / `pipeline_automations.pipeline_id` 의 값은 변경하지
+않고 컬럼 이름만 `pipeline_version_id` 로 rename 해도 의미가 자동 전환된다.
+신규 `pipelines` (concept) 행은 새 UUID 발급.
+
+**전체 단계** (단순화):
+1. `pipeline_families` 신규 + `pipeline_versions` 신규 (FK 임시 nullable)
+2. 자식 FK (pipeline_runs / pipeline_automations → pipelines) drop
+3. `pipelines` 의 version / config 컬럼 drop, family_id NULL FK 추가, name UNIQUE 교체
+4. 기존 pipelines 데이터 → `name` 별 grouping → `pipelines` 에 concept 행 새로 INSERT
+   (id 새로 발급, name / description / task_type / output_split_id 보존)
+5. 기존 데이터 → `pipeline_versions` 에 INSERT (id 보존, pipeline_id = 위에서 만든
+   concept id, config 는 v3 source 포맷으로 rewrite + schema_version=3)
+6. `pipeline_runs.pipeline_id` → `pipeline_version_id` rename + 자식 FK 재연결
+   (FK 대상이 `pipeline_versions` 로 전환). `transform_config` 도 v3 rewrite.
+7. `pipeline_automations.pipeline_id` → `pipeline_version_id` rename. partial unique
+   index 도 새 컬럼 기준으로 재생성
+
+**downgrade**: 역순. version 행 + concept 행 합쳐서 v1 평면 형태 복원, source 토큰
+v3 prefix 제거.
+
+upgrade → downgrade → upgrade 왕복 검증 통과 (실데이터 pipelines 2 / runs 9 무손실).
+
+### 13-6. API 라우트 정리 (renamed for clarity)
+
+기존 `/api/v1/pipelines/entities/*` 와 `/api/v1/pipelines` (run list 가 같은 prefix
+에서 충돌) 가 의미 흐려져, **사용자 결정으로 전부 명시적 sub-path 로 정리**:
+
+```
+/api/v1/pipelines                     GET  — Pipeline (concept) 목록
+/api/v1/pipelines/{id}                GET  — concept 상세 (versions 요약 포함)
+/api/v1/pipelines/{id}                PATCH — concept 편집 (family / name / is_active)
+/api/v1/pipelines/{id}/runs           GET  — concept 의 모든 version 누적 run
+/api/v1/pipelines/versions/{id}       GET  — PipelineVersion 상세 (config 포함)
+/api/v1/pipelines/versions/{id}       PATCH — version 편집 (is_active 토글)
+/api/v1/pipelines/versions/{id}/runs  GET  / POST — version 별 run 이력 / 제출
+/api/v1/pipelines/families            GET / POST — Family CRUD
+/api/v1/pipelines/families/{id}       GET / PATCH / DELETE
+/api/v1/pipelines/runs                GET  — 전체 run 이력 (이전 prefix `/pipelines` 에서 이동)
+/api/v1/pipelines/runs/{run_id}       GET  — run 단건 상태
+/api/v1/pipelines/automations         GET  — active automation 전체
+/api/v1/pipelines/versions/{id}/automation GET / PUT — version 별 automation
+/api/v1/pipelines/automations/{id}    DELETE — soft delete
+/api/v1/pipelines/automations/{id}/reassign POST — `?new_pipeline_version_id=`
+/api/v1/pipelines/automations/{id}/rerun    POST — if_delta / force_latest
+/api/v1/pipelines/{validate, preview-schema, execute} POST — FE 호환 진입점 유지
+```
+
+FE 측 alias `pipelineEntitiesApi` 는 deprecated 표시만 두고 한시적 유지
+(다른 페이지에서 점진 교체).
+
+### 13-7. UX 흐름 — 행 클릭 drawer + 상세 풀 페이지
+
+**`/pipelines` 목록 페이지**:
+- 각 행 = 1 Pipeline (concept). `latest_version` 을 v1.0 처럼 인라인 표시,
+  `version_count > 1` 이면 "+N개 버전" tag. `family_name` 도 행에 노출.
+- 행 단순 클릭 → **우측 Drawer** 펼침. 상단에 concept 메타 (Description / Family /
+  Task / Output / Active), 하단에 versions 세로 목록.
+- 각 version 행 클릭 시 **인라인 expand** (작은 메타 — 노드 수 / schema_version).
+- 각 version 행 옆에 **"실행"** + **"상세"** 버튼. "상세" 누르면 풀 페이지로.
+- 행 자체의 **"상세 보기"** 버튼은 latest active version 의 풀 페이지로 직진 (편의).
+
+**`/pipeline-versions/:versionId` 풀 페이지** (F-8):
+- 상단 헤더: 개념명 + family tag + **version 드롭다운** (같은 concept 의 모든 version)
+  + 실행 / JSON 복사 / JSON 보기 버튼.
+- 본체: 좌측 readonly **ReactFlow DAG** (nodesDraggable / Connectable / deleteKey 모두
+  off — 에디터 컴포넌트 분리 대신 새 페이지에서 ReactFlow 직접 사용), 우측 사이드
+  메타 패널.
+- 하단: 이 version 의 PipelineRun 이력 inline 테이블.
+
+### 13-8. 진행 상황 / 검증 (2026-04-28)
+
+- **브랜치** — `feature/pipeline-family-and-version` (`feature/pipeline-run-automation-separation`
+  위에서 분기, 1 commit `25023ce` — 26 파일, +2981/-760).
+- **F-1 ~ F-8 완료**:
+    - F-1 Alembic 032 + roundtrip 검증
+    - F-2 ORM 분리 (PipelineFamily / Pipeline / PipelineVersion)
+    - F-3 lib/pipeline source format v3 (parse_source_ref / split·version 분리 메서드 / dag_executor)
+    - F-4 pipeline_service / pipeline_automation_service 재작성
+    - F-5 router 라우트 명시적 분리
+    - F-6 FE pipeline-sdk + types + api 갱신, sourceFormat.ts 헬퍼,
+      unresolveVersionRefsToSplitRefs 추가
+    - F-7 PipelineListPage 행 클릭 drawer + version 세로 목록 + 인라인 expand
+    - F-8 PipelineVersionDetailPage 신규 (readonly DAG / 사이드 메타 / run 이력 / JSON 복사·보기)
+- **검증 통과**:
+    - backend pytest 446/446 (테스트 파일 v3 포맷 일괄 갱신, get_source_dataset_ids →
+      get_source_split_ids rename)
+    - FE TypeScript 신규 0 (pre-existing 11 외)
+    - Alembic upgrade/downgrade roundtrip + 데이터 보존
+    - smoke API: `/pipelines` (concept list), `/pipelines/{id}`, `/pipelines/versions/{id}`,
+      `/pipelines/runs` 모두 v3 응답 정상
+
+### 13-9. 남은 작업 / 다음 후보
+
+- **사용자 UI 스모크 피드백 반영** — 사용자가 "마음에 들게 동작하지만 수정할 게 좀
+  있다" 보고. 피드백 받아 fine-tuning.
+- **§9-8 Automation 메뉴 실 API 재연결** — 026 mock fixture → `pipelineAutomationsApi`.
+  여기는 자료구조가 version 단위로 한 단 격하됐으니 026 의 mock 타입과 어댑터 작업이
+  생각보다 큼.
+- **§12-1 저장/실행 분리 UX** — 명시적 `POST /pipelines/concepts` (또는
+  `/pipelines/versions`) 엔드포인트 신설 + 에디터 "실행" → "저장" 라벨 변경.
+  현재는 `_get_or_create_concept_and_version` 임시 shim 이 호환 유지.
+- **§12-2 #1 파이프라인명 입력 UI** (에디터에 name 필드 추가)
+- **JSON import UI 통합** — `unresolveVersionRefsToSplitRefs` 헬퍼만 추가됨. 실제
+  JSON 불러오기 모달이 PipelineRun JSON 인지 감지 → 백엔드 lookup → 변환된 config 로
+  configToGraph 호출 흐름은 별도 구현 필요.
+- **핸드오프 028 + 설계서 v7.11 승격 + main 머지** — 본 §13 까지 정리되면 028 신설
+  검토.
