@@ -1184,25 +1184,34 @@ class PipelineService:
         self, config: PipelineConfig,
     ) -> list[str] | None:
         """
-        파이프라인 config에서 소스 데이터셋들의 그룹을 조회하고,
-        각 그룹의 task_types 교집합을 반환한다.
+        파이프라인 config 의 소스들이 속한 그룹들의 task_types 교집합 반환.
+        소스가 없거나 교집합이 비어 있으면 None.
 
-        소스가 없거나 교집합이 �어 있으면 None을 반환한다.
+        v7.10 schema_version 분기:
+          v2 — config 의 source ref = split_id 직접. split → group 1단 JOIN
+          v1 — source ref = dataset_version_id. version → split → group 2단 JOIN
         """
-        # 모든 태스크 + passthrough 에서 소스 데이터셋 ID 수집
-        source_dataset_ids: set[str] = set(config.get_all_source_dataset_ids())
-
-        if not source_dataset_ids:
-            return None
-
-        # 소스 데이터셋들의 그룹 task_types 조회 (v7.9: split 경유 JOIN)
-        result = await self.db.execute(
-            select(DatasetGroup.task_types)
-            .join(DatasetSplit, DatasetSplit.group_id == DatasetGroup.id)
-            .join(DatasetVersion, DatasetVersion.split_id == DatasetSplit.id)
-            .where(DatasetVersion.id.in_(source_dataset_ids))
-            .distinct()
-        )
+        if config.is_schema_v2:
+            split_ids: set[str] = set(config.get_all_source_split_ids())
+            if not split_ids:
+                return None
+            result = await self.db.execute(
+                select(DatasetGroup.task_types)
+                .join(DatasetSplit, DatasetSplit.group_id == DatasetGroup.id)
+                .where(DatasetSplit.id.in_(split_ids))
+                .distinct()
+            )
+        else:
+            source_dataset_ids: set[str] = set(config.get_all_source_dataset_ids())
+            if not source_dataset_ids:
+                return None
+            result = await self.db.execute(
+                select(DatasetGroup.task_types)
+                .join(DatasetSplit, DatasetSplit.group_id == DatasetGroup.id)
+                .join(DatasetVersion, DatasetVersion.split_id == DatasetSplit.id)
+                .where(DatasetVersion.id.in_(source_dataset_ids))
+                .distinct()
+            )
         all_task_types_rows = result.scalars().all()
 
         # 교집합 계산
@@ -1610,6 +1619,30 @@ class PipelineService:
                 "Pipeline 의 output_split / group 이 해석되지 않았습니다. "
                 "Pipeline 상세를 확인하세요."
             )
+
+        # v7.10 §9-9 fix: 사용자가 output 그룹을 외부에서 soft-delete 한 상태에서 재실행
+        # 한 경우, 그룹을 자동 복구한다. Pipeline 의 output_split FK 가 이 그룹을
+        # 가리키므로 의미상 "Pipeline 이 살아있으면 output 그룹도 살아있어야" 한다.
+        # 그렇지 않으면 새 dataset_version 만 deleted 그룹에 추가되어 목록에 안 나타나고
+        # task_types 도 NULL 인 채로 남는다.
+        if output_group.deleted_at is not None:
+            logger.info(
+                "soft-deleted output 그룹 자동 복구 (재실행 트리거)",
+                group_id=output_group.id, group_name=output_group.name,
+            )
+            output_group.deleted_at = None
+
+        # task_types 백필 — 신규 그룹이 처음 만들어질 때 source 교집합으로 채워졌어야
+        # 했는데 누락된 케이스 (예: 과거 v1/v2 분기 버그). 매 실행 시 source 교집합을
+        # 재계산해 빈 경우만 채운다.
+        if not output_group.task_types:
+            inferred_task_types = await self._intersect_source_task_types(config)
+            if inferred_task_types:
+                output_group.task_types = inferred_task_types
+                logger.info(
+                    "output 그룹 task_types 자동 백필",
+                    group_id=output_group.id, task_types=inferred_task_types,
+                )
 
         # 실행 시점 runtime 검증: resolved_input_versions 에 모든 source split 이 있는지.
         # §4-2 schema_version 분기:

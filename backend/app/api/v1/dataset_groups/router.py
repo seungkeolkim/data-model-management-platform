@@ -68,7 +68,9 @@ async def register_dataset(
         group_name=group.name,
         dataset_id=dataset.id,
         version=dataset.version,
-        split=dataset.split,
+        # v7.10: dataset.split 은 split_slot.split association_proxy 라 async 세션에서
+        # lazy load 시 MissingGreenlet. 요청에 들어있는 값이 같은 값이므로 req.split 사용.
+        split=req.split,
     )
     return await svc.get_group(group.id)
 
