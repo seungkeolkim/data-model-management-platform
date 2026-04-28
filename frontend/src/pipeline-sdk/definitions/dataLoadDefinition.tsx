@@ -196,6 +196,14 @@ function DataLoadPropertiesComponent({ data }: { nodeId: string; data: DataLoadN
       .map(([index, name]) => ({ index, name }))
   }, [latestDatasetInSplit])
 
+  // Classification 그룹의 head_schema 는 group SSOT 에서 직접 읽는다 (v7.8 §2-8).
+  // 노드 클릭 시 head 별 class 목록이 보여야 한다는 사용자 요구 (§9-9 피드백 #5).
+  const classificationHeads = useMemo(() => {
+    const heads = groupData?.head_schema?.heads
+    if (!heads || heads.length === 0) return []
+    return heads
+  }, [groupData])
+
   return (
     <>
       <Tag color="green">Data Load</Tag>
@@ -243,6 +251,45 @@ function DataLoadPropertiesComponent({ data }: { nodeId: string; data: DataLoadN
                   showHeader
                   style={{ fontSize: 11 }}
                 />
+              </div>
+            </>
+          )}
+          {classificationHeads.length > 0 && (
+            <>
+              <Divider style={{ margin: '8px 0' }} />
+              <Text strong style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>
+                Head Schema (Classification)
+              </Text>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 320, overflowY: 'auto' }}>
+                {classificationHeads.map((head) => (
+                  <div
+                    key={head.name}
+                    style={{ border: '1px solid #f0f0f0', borderRadius: 6, padding: 8 }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                      <Text strong style={{ fontSize: 12 }}>{head.name}</Text>
+                      <Tag
+                        color={head.multi_label ? 'magenta' : 'blue'}
+                        style={{ margin: 0, fontSize: 10 }}
+                      >
+                        {head.multi_label ? 'multi' : 'single'}
+                      </Tag>
+                      <Text type="secondary" style={{ fontSize: 11 }}>
+                        ({head.classes.length} classes)
+                      </Text>
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                      {head.classes.map((cls, idx) => (
+                        <Tag
+                          key={`${head.name}-${idx}`}
+                          style={{ margin: 0, fontSize: 10 }}
+                        >
+                          {idx}: {cls}
+                        </Tag>
+                      ))}
+                    </div>
+                  </div>
+                ))}
               </div>
             </>
           )}

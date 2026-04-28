@@ -62,6 +62,16 @@ export function graphToPipelineConfig(
   if (Object.keys(tasks).length === 0 && !rootWithPassthrough.passthrough_source_split_id) {
     throw new Error('DataLoad 노드와 Save 노드를 직접 연결하거나 처리 노드를 추가해 주세요.')
   }
+  // task 의 inputs 가 비어있으면 그래프에서 입력 엣지가 누락된 것 — 사용자에게 명확히 안내.
+  // 이 케이스를 backend 가 받으면 Pydantic min_length=1 검증으로 422 가 떨어져 의미가 흐려짐.
+  for (const [taskKey, taskValue] of Object.entries(tasks)) {
+    if (!taskValue.inputs || taskValue.inputs.length === 0) {
+      throw new Error(
+        `노드 '${taskKey}' 에 입력 연결이 없습니다. ` +
+        `DataLoad 노드 또는 다른 처리 노드와 연결해 주세요.`,
+      )
+    }
+  }
 
   return {
     name: rootParts.name,

@@ -79,9 +79,28 @@ def _build_execution_response(execution: PipelineRun) -> PipelineRunResponse:
     )
 
 
+def _pydantic_errors_to_issues(
+    exc: "ValidationError",
+) -> list[PipelineValidationIssueResponse]:
+    """Pydantic ValidationError 를 PipelineValidationIssueResponse 목록으로 변환.
+
+    PipelineConfig 파싱 단계에서 422 가 떨어지면 FE 가 detail 을 파싱하지 않고
+    "API 호출 실패" 만 표시되는 문제를 우회 — 200 OK + issues 응답으로 통일.
+    """
+    return [
+        PipelineValidationIssueResponse(
+            severity="error",
+            code=str(err.get("type", "VALIDATION_ERROR")).upper(),
+            message=err.get("msg", "검증 실패"),
+            field=".".join(str(x) for x in err.get("loc", []) if x not in ("body",)),
+        )
+        for err in exc.errors()
+    ]
+
+
 @router.post("/validate", response_model=PipelineValidationResponse)
 async def validate_pipeline(
-    config: PipelineConfig,
+    config_dict: dict,
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -92,7 +111,22 @@ async def validate_pipeline(
 
     is_valid가 False이면 error 수준의 문제가 있어 실행할 수 없다.
     issues 배열에 개별 사유가 담긴다.
+
+    Pydantic 파싱 단계에서 형식 오류 (예: tasks[*].inputs 가 비어있음) 가 있으면
+    422 대신 issues 로 변환해 200 OK 로 응답한다.
     """
+    from pydantic import ValidationError
+    try:
+        config = PipelineConfig(**config_dict)
+    except ValidationError as exc:
+        issues = _pydantic_errors_to_issues(exc)
+        return PipelineValidationResponse(
+            is_valid=False,
+            error_count=len(issues),
+            warning_count=0,
+            issues=issues,
+        )
+
     service = PipelineService(db)
     validation_result = await service.validate_pipeline(config)
 
@@ -135,7 +169,7 @@ async def preview_schema(
 
 @router.post("/execute", response_model=PipelineSubmitResponse, status_code=202)
 async def execute_pipeline(
-    config: PipelineConfig,
+    config_dict: dict,
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -144,7 +178,16 @@ async def execute_pipeline(
     요청 본문으로 PipelineConfig JSON을 받아
     Celery 워커에 비동기 실행을 위임한다.
     즉시 execution_id를 반환하며, 실행 상태는 GET /{id}/status로 조회한다.
+
+    Pydantic 파싱 단계의 형식 오류는 400 + 첫 issue 메시지로 응답한다 (FE 친화).
     """
+    from pydantic import ValidationError
+    try:
+        config = PipelineConfig(**config_dict)
+    except ValidationError as exc:
+        issues = _pydantic_errors_to_issues(exc)
+        first_msg = issues[0].message if issues else "config 형식이 잘못되었습니다."
+        raise HTTPException(status_code=400, detail=first_msg) from exc
     service = PipelineService(db)
     return await service.submit_pipeline(config)
 
