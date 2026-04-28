@@ -12,10 +12,11 @@ import type { PipelineNode } from '@/types/pipeline'
 
 /**
  * 현재 SDK 가 생성하는 PipelineConfig 의 schema_version.
- * v7.10 (핸드오프 027 §4-2) — 2 로 승격: source 참조가 dataset_version_id 에서
- * split_id 로 격상됨. FE / 사용자가 작성하는 spec 단계 — Pipeline.config 에 그대로 저장.
+ * v7.11 — 3 으로 승격: source 토큰에 type 차원 명시 (`source:dataset_split:<id>`).
+ * 이 변경으로 PipelineRun.transform_config 의 `source:dataset_version:<id>` 와
+ * Pipeline 측 토큰이 명확히 구분된다.
  */
-export const CURRENT_SCHEMA_VERSION = 2
+export const CURRENT_SCHEMA_VERSION = 3
 
 export function graphToPipelineConfig(
   nodes: PipelineNode[],

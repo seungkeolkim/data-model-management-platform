@@ -28,7 +28,7 @@ def _make_config(
         tasks = {
             "convert": {
                 "operator": "det_format_convert_to_coco",
-                "inputs": ["source:00000000-0000-0000-0000-000000000001"],
+                "inputs": ["source:dataset_split:00000000-0000-0000-0000-000000000001"],
                 "params": {},
             }
         }
@@ -183,7 +183,7 @@ class TestValidateOperatorsRegistered:
         config = _make_config(tasks={
             "convert": {
                 "operator": "det_format_convert_to_coco",
-                "inputs": ["source:00000000-0000-0000-0000-000000000001"],
+                "inputs": ["source:dataset_split:00000000-0000-0000-0000-000000000001"],
                 "params": {},
             }
         })
@@ -196,7 +196,7 @@ class TestValidateOperatorsRegistered:
         config = _make_config(tasks={
             "bad_task": {
                 "operator": "nonexistent_operator",
-                "inputs": ["source:00000000-0000-0000-0000-000000000001"],
+                "inputs": ["source:dataset_split:00000000-0000-0000-0000-000000000001"],
                 "params": {},
             }
         })
@@ -210,7 +210,7 @@ class TestValidateOperatorsRegistered:
         config = _make_config(tasks={
             "bad_task": {
                 "operator": "nonexistent_operator",
-                "inputs": ["source:00000000-0000-0000-0000-000000000001"],
+                "inputs": ["source:dataset_split:00000000-0000-0000-0000-000000000001"],
                 "params": {},
             }
         })
@@ -226,7 +226,7 @@ class TestValidateOperatorsRegistered:
         config = _make_config(tasks={
             "bad_task": {
                 "operator": "nonexistent_operator",
-                "inputs": ["source:00000000-0000-0000-0000-000000000001"],
+                "inputs": ["source:dataset_split:00000000-0000-0000-0000-000000000001"],
                 "params": {},
             }
         })
@@ -250,12 +250,12 @@ class TestValidateMergeMinimumInputs:
         config = _make_config(tasks={
             "convert_a": {
                 "operator": "det_format_convert_to_coco",
-                "inputs": ["source:00000000-0000-0000-0000-000000000001"],
+                "inputs": ["source:dataset_split:00000000-0000-0000-0000-000000000001"],
                 "params": {},
             },
             "convert_b": {
                 "operator": "det_format_convert_to_coco",
-                "inputs": ["source:00000000-0000-0000-0000-000000000002"],
+                "inputs": ["source:dataset_split:00000000-0000-0000-0000-000000000002"],
                 "params": {},
             },
             "merge": {
@@ -273,7 +273,7 @@ class TestValidateMergeMinimumInputs:
         config = _make_config(tasks={
             "convert_a": {
                 "operator": "det_format_convert_to_coco",
-                "inputs": ["source:00000000-0000-0000-0000-000000000001"],
+                "inputs": ["source:dataset_split:00000000-0000-0000-0000-000000000001"],
                 "params": {},
             },
             "merge": {
@@ -301,7 +301,7 @@ class TestValidateSingleInputOperators:
         config = _make_config(tasks={
             "convert": {
                 "operator": "det_format_convert_to_coco",
-                "inputs": ["source:00000000-0000-0000-0000-000000000001"],
+                "inputs": ["source:dataset_split:00000000-0000-0000-0000-000000000001"],
                 "params": {},
             }
         })
@@ -317,12 +317,12 @@ class TestValidateSingleInputOperators:
         config = _make_config(tasks={
             "convert_a": {
                 "operator": "det_format_convert_to_coco",
-                "inputs": ["source:00000000-0000-0000-0000-000000000001"],
+                "inputs": ["source:dataset_split:00000000-0000-0000-0000-000000000001"],
                 "params": {},
             },
             "convert_b": {
                 "operator": "det_format_convert_to_coco",
-                "inputs": ["source:00000000-0000-0000-0000-000000000002"],
+                "inputs": ["source:dataset_split:00000000-0000-0000-0000-000000000002"],
                 "params": {},
             },
             # det_format_convert_to_yolo는 단일 입력 전용인데 2개 입력
@@ -346,12 +346,12 @@ class TestValidateSingleInputOperators:
         config = _make_config(tasks={
             "convert_a": {
                 "operator": "det_format_convert_to_coco",
-                "inputs": ["source:00000000-0000-0000-0000-000000000001"],
+                "inputs": ["source:dataset_split:00000000-0000-0000-0000-000000000001"],
                 "params": {},
             },
             "convert_b": {
                 "operator": "det_format_convert_to_coco",
-                "inputs": ["source:00000000-0000-0000-0000-000000000002"],
+                "inputs": ["source:dataset_split:00000000-0000-0000-0000-000000000002"],
                 "params": {},
             },
             "merge": {
@@ -385,7 +385,7 @@ class TestComplexValidationScenarios:
             tasks={
                 "bad_task": {
                     "operator": "nonexistent_operator",
-                    "inputs": ["source:00000000-0000-0000-0000-000000000001"],
+                    "inputs": ["source:dataset_split:00000000-0000-0000-0000-000000000001"],
                     "params": {},
                 }
             },
@@ -407,12 +407,12 @@ class TestComplexValidationScenarios:
             tasks={
                 "convert_a": {
                     "operator": "det_format_convert_to_coco",
-                    "inputs": ["source:00000000-0000-0000-0000-000000000001"],
+                    "inputs": ["source:dataset_split:00000000-0000-0000-0000-000000000001"],
                     "params": {},
                 },
                 "convert_b": {
                     "operator": "det_format_convert_to_coco",
-                    "inputs": ["source:00000000-0000-0000-0000-000000000002"],
+                    "inputs": ["source:dataset_split:00000000-0000-0000-0000-000000000002"],
                     "params": {},
                 },
                 "merge": {
@@ -448,7 +448,7 @@ class TestValidateClsAddHeadDuplicates:
             tasks={
                 "add_is_person_first": {
                     "operator": "cls_add_head",
-                    "inputs": ["source:00000000-0000-0000-0000-000000000001"],
+                    "inputs": ["source:dataset_split:00000000-0000-0000-0000-000000000001"],
                     "params": {
                         "head_name": "is_person",
                         "multi_label": False,
@@ -495,7 +495,7 @@ class TestValidateClsAddHeadDuplicates:
             tasks={
                 "add_is_person": {
                     "operator": "cls_add_head",
-                    "inputs": ["source:00000000-0000-0000-0000-000000000001"],
+                    "inputs": ["source:dataset_split:00000000-0000-0000-0000-000000000001"],
                     "params": {
                         "head_name": "is_person",
                         "multi_label": False,
@@ -531,7 +531,7 @@ class TestValidateClsAddHeadDuplicates:
             tasks={
                 "add_is_person_branch_a": {
                     "operator": "cls_add_head",
-                    "inputs": ["source:00000000-0000-0000-0000-000000000001"],
+                    "inputs": ["source:dataset_split:00000000-0000-0000-0000-000000000001"],
                     "params": {
                         "head_name": "is_person",
                         "multi_label": False,
@@ -540,7 +540,7 @@ class TestValidateClsAddHeadDuplicates:
                 },
                 "add_is_person_branch_b": {
                     "operator": "cls_add_head",
-                    "inputs": ["source:00000000-0000-0000-0000-000000000002"],
+                    "inputs": ["source:dataset_split:00000000-0000-0000-0000-000000000002"],
                     "params": {
                         "head_name": "is_person",
                         "multi_label": False,
@@ -570,7 +570,7 @@ class TestValidateClsAddHeadDuplicates:
             tasks={
                 "add_blank_first": {
                     "operator": "cls_add_head",
-                    "inputs": ["source:00000000-0000-0000-0000-000000000001"],
+                    "inputs": ["source:dataset_split:00000000-0000-0000-0000-000000000001"],
                     "params": {
                         "head_name": "",
                         "multi_label": False,

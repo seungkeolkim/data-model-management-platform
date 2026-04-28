@@ -8,6 +8,7 @@ import DatasetViewerPage from './pages/DatasetViewerPage'
 import PipelineEditorPage from './pages/PipelineEditorPage'
 import PipelineHistoryPage from './pages/PipelineHistoryPage'
 import { PipelineListPage } from './pages/PipelineListPage'
+import PipelineVersionDetailPage from './pages/PipelineVersionDetailPage'
 import AutomationPage from './pages/AutomationPage'
 import AutomationHistoryPage from './pages/AutomationHistoryPage'
 import AutomationPipelineDetailPage from './pages/AutomationPipelineDetailPage'
@@ -46,6 +47,10 @@ export default function App() {
                 (기존 경로 /pipelines 를 쓰던 곳은 /pipelines/runs 로 자동 이동 Alert 필요 — TODO §9-9) */}
             <Route path="pipelines" element={<PipelineListPage />} />
             <Route path="pipelines/runs" element={<PipelineHistoryPage />} />
+            <Route
+              path="pipeline-versions/:versionId"
+              element={<PipelineVersionDetailPage />}
+            />
 
             {/* Automation (목업) — 023 §6 기반 파이프라인 자동화 관리 */}
             <Route path="automation" element={<AutomationPage />} />

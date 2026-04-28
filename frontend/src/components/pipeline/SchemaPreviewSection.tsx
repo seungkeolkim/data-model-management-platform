@@ -40,7 +40,7 @@ function resolveTargetRef(
     if (!splitId) {
       return { ref: null, reason: '소스 데이터셋을 먼저 선택하세요.' }
     }
-    return { ref: `source:${splitId}` }
+    return { ref: `source:dataset_split:${splitId}` }
   }
   if (nodeData.type === 'operator' || nodeData.type === 'merge') {
     return { ref: `task_${selectedNodeId}` }

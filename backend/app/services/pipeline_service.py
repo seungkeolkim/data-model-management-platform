@@ -20,10 +20,18 @@ from app.models.all_models import (
     DatasetVersion,
     Pipeline,
     PipelineAutomation,
+    PipelineFamily,
     PipelineRun,
+    PipelineVersion,
 )
 from app.schemas.pipeline import PipelineSubmitResponse
-from lib.pipeline.config import PartialPipelineConfig, PipelineConfig
+from lib.pipeline.config import (
+    SOURCE_TYPE_SPLIT,
+    SOURCE_TYPE_VERSION,
+    PartialPipelineConfig,
+    PipelineConfig,
+    parse_source_ref,
+)
 from lib.pipeline.pipeline_validator import (
     PipelineValidationResult,
     validate_pipeline_config_static,
@@ -91,7 +99,7 @@ class PipelineService:
 
         # 모든 source split 수집 (태스크별로 추적하여 field 정보 제공)
         for task_name, task_config in config.tasks.items():
-            for split_id in task_config.get_source_dataset_ids():
+            for split_id in task_config.get_source_split_ids():
                 await self._validate_source_split_ref(split_id, task_name, result)
 
         # Passthrough 모드(tasks 비어있음)에서도 소스 검증
@@ -227,7 +235,7 @@ class PipelineService:
             input_head_schemas: list[Any] = []
             for ref in task_config.inputs:
                 if ref.startswith("source:"):
-                    source_dataset_id = ref.split(":", 1)[1]
+                    source_dataset_id = parse_source_ref(ref)[1]
                     source_meta = source_meta_by_dataset_id.get(source_dataset_id)
                     input_head_schemas.append(
                         getattr(source_meta, "head_schema", None)
@@ -319,7 +327,7 @@ class PipelineService:
             upstream_ref = task_config.inputs[0]
 
             if upstream_ref.startswith("source:"):
-                source_dataset_id = upstream_ref.split(":", 1)[1]
+                source_dataset_id = parse_source_ref(upstream_ref)[1]
                 upstream_meta = source_meta_by_dataset_id.get(source_dataset_id)
                 if upstream_meta is None:
                     # 앞선 _validate_source_dataset 에서 이미 에러로 잡힘.
@@ -402,7 +410,7 @@ class PipelineService:
             upstream_ref = task_config.inputs[0]
 
             if upstream_ref.startswith("source:"):
-                source_dataset_id = upstream_ref.split(":", 1)[1]
+                source_dataset_id = parse_source_ref(upstream_ref)[1]
                 upstream_meta = source_meta_by_dataset_id.get(source_dataset_id)
                 if upstream_meta is None:
                     # 앞선 _validate_source_dataset 에서 이미 에러로 잡힘.
@@ -636,14 +644,11 @@ class PipelineService:
         await self.db.flush()
         logger.info("출력 Dataset 생성", dataset_id=dataset.id, storage_uri=storage_uri)
 
-        # ── Pipeline (정적 템플릿) 조회 또는 생성 (v7.10, 027 §2-1 + §12-1) ──
-        # TODO §9-3: "저장/실행 분리" UX 구현 시 이 경로는 "실행" 엔드포인트 전용이 되고,
-        # Pipeline 생성은 별도 "저장" 엔드포인트로 분리된다. 현재는 호환을 위해 submit 에서
-        # Pipeline 을 get-or-create 한다. name 자동 생성 규칙은 §12-2 (`{group}_{split}`)
-        # 이지만 현 단계에서는 config.name (= group 이름) 에 `_{split}` 를 붙여 UNIQUE
-        # (name, version) 을 만족시키는 최소 규칙으로.
+        # ── Pipeline (concept) + PipelineVersion 자동 get-or-create (v7.11) ──
+        # TODO §12-1 "저장/실행 분리" UX 도입 시 이 경로는 "실행" 전용이 되고
+        # 개념/버전 생성은 별도 "저장" 엔드포인트로 분리된다.
         pipeline_task_type = (source_task_types[0] if source_task_types else "DETECTION")
-        pipeline = await self._get_or_create_pipeline_for_submit(
+        pipeline_version = await self._get_or_create_concept_and_version(
             config=config,
             output_split_id=split_slot.id,
             task_type=pipeline_task_type,
@@ -665,10 +670,10 @@ class PipelineService:
             config_dict_raw, split_to_dataset,
         )
 
-        # ── PipelineRun 생성 (v7.10 — 기존 PipelineExecution rename + 확장) ──
+        # ── PipelineRun 생성 (v7.11 — pipeline_version_id 단위) ──
         execution = PipelineRun(
             id=str(uuid.uuid4()),
-            pipeline_id=pipeline.id,
+            pipeline_version_id=pipeline_version.id,
             output_dataset_id=dataset.id,
             transform_config=resolved_config_dict,
             resolved_input_versions=resolved_input_versions,
@@ -835,7 +840,7 @@ class PipelineService:
         # source_meta_by_dataset_id 에 포함되지 않을 수 있다) 에도 프리뷰가
         # 정상 동작하도록 하기 위함.
         if target_ref.startswith("source:"):
-            source_split_id = target_ref.split(":", 1)[1]
+            source_split_id = parse_source_ref(target_ref)[1]
             source_meta = source_meta_by_dataset_id.get(source_split_id)
             group_task_types = source_task_types_by_dataset_id.get(source_split_id)
             if source_meta is None:
@@ -1031,53 +1036,109 @@ class PipelineService:
 
         return sorted(intersection)
 
-    async def _get_or_create_pipeline_for_submit(
+    async def _get_or_create_concept_and_version(
         self,
         config: PipelineConfig,
         output_split_id: str,
         task_type: str,
         split: str,
-    ) -> "Pipeline":
+    ) -> "PipelineVersion":
         """
-        submit_pipeline 호환용 Pipeline get-or-create (v7.10, 027 §12-1 임시).
+        submit_pipeline 호환용 — Pipeline (concept) 와 PipelineVersion 을 한 번에
+        get-or-create 한다 (v7.11 임시).
 
-        §12-1 "저장/실행 분리" UX 가 §9-3 에서 정식 반영되기 전까지, 기존 "에디터에서 실행"
-        경로가 그대로 동작하도록 Pipeline 엔티티를 자동 get-or-create 한다. §12-2 네이밍
-        규칙에 맞춰 `{config.name}_{split.lower()}` 로 자동 생성. 동일 이름 Pipeline 이 이미
-        있으면 재사용 (version='1.0' 고정). config.name / split 이 바뀌면 새 Pipeline 이
-        만들어짐 — 사용자 명시적 의도는 없지만 호환을 위한 임시 정책.
+        규칙:
+          - 개념명: `{config.name}_{split.lower()}`. 전역 UNIQUE.
+          - Pipeline 이 없으면 생성 (family_id=NULL, output_split / task_type 고정).
+          - 있으면 최신 version 의 config 와 새 config 를 JSON 평탄 비교 — 같으면 재사용,
+            다르면 major++ 신 version 생성. v1 호환 동작 유지.
 
-        TODO §9-3: "저장" 엔드포인트 분리 시 이 함수는 제거하고 사용자 명시 create 로 대체.
+        §12-1 "저장/실행 분리" UX 도입 시 이 함수 제거 예정.
         """
-        from app.models.all_models import Pipeline
+        import json
 
         base_name = f"{config.name}_{split.lower()}"
-        result = await self.db.execute(
-            select(Pipeline).where(
-                Pipeline.name == base_name, Pipeline.version == "1.0",
-            )
-        )
-        existing = result.scalars().first()
-        if existing is not None:
-            return existing
+        existing_concept = (await self.db.execute(
+            select(Pipeline)
+            .options(selectinload(Pipeline.versions))
+            .where(Pipeline.name == base_name)
+        )).scalars().first()
 
-        pipeline = Pipeline(
+        new_config_dict = config.model_dump()
+        new_config_json = json.dumps(new_config_dict, sort_keys=True, default=str)
+
+        if existing_concept is None:
+            concept = Pipeline(
+                id=str(uuid.uuid4()),
+                family_id=None,
+                name=base_name,
+                description=config.description,
+                output_split_id=output_split_id,
+                task_type=task_type,
+                is_active=True,
+            )
+            self.db.add(concept)
+            await self.db.flush()
+            new_version = PipelineVersion(
+                id=str(uuid.uuid4()),
+                pipeline_id=concept.id,
+                version="1.0",
+                config=new_config_dict,
+                is_active=True,
+            )
+            self.db.add(new_version)
+            await self.db.flush()
+            logger.info(
+                "Pipeline + Version 자동 생성 (submit 호환)",
+                pipeline_id=concept.id, version_id=new_version.id, name=base_name,
+            )
+            return new_version
+
+        # 동일 name 이 존재. 최신 version 비교.
+        latest_version: PipelineVersion | None = None
+        if existing_concept.versions:
+            latest_version = sorted(
+                existing_concept.versions,
+                key=lambda v: v.created_at, reverse=True,
+            )[0]
+
+        if latest_version is not None:
+            cached_json = json.dumps(
+                latest_version.config, sort_keys=True, default=str,
+            )
+            if cached_json == new_config_json:
+                return latest_version
+
+        # config 변경 → 새 version (major++)
+        next_version_str = self._next_pipeline_version_str(existing_concept.versions)
+        new_version = PipelineVersion(
             id=str(uuid.uuid4()),
-            name=base_name,
-            version="1.0",
-            description=config.description,
-            output_split_id=output_split_id,
-            config=config.model_dump(),
-            task_type=task_type,
+            pipeline_id=existing_concept.id,
+            version=next_version_str,
+            config=new_config_dict,
             is_active=True,
         )
-        self.db.add(pipeline)
+        self.db.add(new_version)
         await self.db.flush()
         logger.info(
-            "Pipeline 자동 생성 (submit_pipeline 호환)",
-            pipeline_id=pipeline.id, name=base_name, task_type=task_type,
+            "Pipeline 신규 Version 자동 생성 (config 변경, submit 호환)",
+            pipeline_id=existing_concept.id, version_id=new_version.id,
+            new_version=next_version_str,
         )
-        return pipeline
+        return new_version
+
+    @staticmethod
+    def _next_pipeline_version_str(versions: list[PipelineVersion]) -> str:
+        """기존 PipelineVersion 들에서 다음 major.0 문자열 산출."""
+        max_major = 0
+        for v in versions:
+            try:
+                major = int(v.version.split(".")[0])
+                if major > max_major:
+                    max_major = major
+            except (ValueError, IndexError):
+                continue
+        return f"{max_major + 1}.0"
 
     async def _extract_resolved_input_versions(
         self, config: PipelineConfig,
@@ -1114,12 +1175,11 @@ class PipelineService:
         split_to_dataset_version_id: dict[str, str],
     ) -> dict[str, Any]:
         """
-        config 의 `source:<split_id>` 참조를 실제 선택된 `source:<dataset_version_id>` 로
-        치환한 resolved dict 반환. passthrough 도 동일 방식.
+        config 의 `source:dataset_split:<split_id>` 토큰을 v3 resolved 포맷 인
+        `source:dataset_version:<version_id>` 로 치환한 dict 반환.
 
         이 치환된 dict 가:
-          - PipelineRun.transform_config 스냅샷으로 저장되고 (027 §2-2 "실행 시점 최종
-            config 스냅샷 · resolved version 포함"),
+          - PipelineRun.transform_config 스냅샷으로 저장되고
           - Celery run_pipeline 태스크에 전달되어 executor 가 dataset_version_id 단위로
             데이터를 로드한다.
 
@@ -1128,20 +1188,30 @@ class PipelineService:
         import copy
         resolved = copy.deepcopy(config_dict)
 
+        # schema_version 은 v3 그대로 (포맷이 source 의 type 차원만 spec→resolved 로 바뀜).
+        resolved.setdefault("schema_version", 3)
+
         # tasks[*].inputs 치환
         for task_config in (resolved.get("tasks") or {}).values():
             inputs = task_config.get("inputs") or []
             new_inputs: list[str] = []
             for inp in inputs:
-                if inp.startswith("source:"):
-                    split_id = inp[len("source:"):]
-                    dataset_version_id = split_to_dataset_version_id.get(split_id)
+                parsed = parse_source_ref(inp) if isinstance(inp, str) else None
+                if parsed is None:
+                    new_inputs.append(inp)
+                    continue
+                type_, id_ = parsed
+                if type_ == SOURCE_TYPE_SPLIT:
+                    dataset_version_id = split_to_dataset_version_id.get(id_)
                     if dataset_version_id:
-                        new_inputs.append(f"source:{dataset_version_id}")
+                        new_inputs.append(
+                            f"source:{SOURCE_TYPE_VERSION}:{dataset_version_id}"
+                        )
                     else:
                         # resolved 누락 — 원본 유지해 executor 에서 명시적 에러 유도
                         new_inputs.append(inp)
                 else:
+                    # 이미 dataset_version 토큰 (이중 치환 방지) — 그대로 유지
                     new_inputs.append(inp)
             task_config["inputs"] = new_inputs
 
@@ -1208,7 +1278,7 @@ class PipelineService:
             return "1.0"
 
     # ═════════════════════════════════════════════════════════════════════════
-    # Pipeline 엔티티 CRUD (v7.10, 027 §2-1 / §12)
+    # Pipeline (concept) CRUD — v7.11
     # ═════════════════════════════════════════════════════════════════════════
 
     async def list_pipelines(
@@ -1217,14 +1287,18 @@ class PipelineService:
         include_inactive: bool = False,
         name_filter: str | None = None,
         task_type_filter: list[str] | None = None,
+        family_id: str | None = None,
+        family_unfiled: bool = False,
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[list[Pipeline], int]:
         """
-        Pipeline 목록 + 총 개수. 기본은 `is_active=TRUE` 만 (soft-deleted 숨김).
+        Pipeline (concept) 목록. 각 행은 versions / family / output_split 선로드.
 
-        정렬 기준: name ASC, version DESC (같은 name 안에서 최신 version 이 위로).
-        §3-4 "과거 run 복원 시 (name, version) 한 눈에 보임" 원칙 반영.
+        family_id / family_unfiled 필터:
+            - family_id 지정 → 해당 family 의 Pipeline 만
+            - family_unfiled=True → family_id IS NULL 인 미분류만
+            - 둘 다 미지정 → 전체
         """
         filters = []
         if not include_inactive:
@@ -1233,6 +1307,10 @@ class PipelineService:
             filters.append(Pipeline.name.ilike(f"%{name_filter}%"))
         if task_type_filter:
             filters.append(Pipeline.task_type.in_(task_type_filter))
+        if family_id is not None:
+            filters.append(Pipeline.family_id == family_id)
+        elif family_unfiled:
+            filters.append(Pipeline.family_id.is_(None))
 
         base = select(Pipeline)
         for flt in filters:
@@ -1246,10 +1324,11 @@ class PipelineService:
         items_query = (
             base
             .options(
+                selectinload(Pipeline.family),
                 selectinload(Pipeline.output_split).selectinload(DatasetSplit.group),
-                selectinload(Pipeline.automation),
+                selectinload(Pipeline.versions).selectinload(PipelineVersion.automation),
             )
-            .order_by(Pipeline.name.asc(), Pipeline.version.desc())
+            .order_by(Pipeline.updated_at.desc())
             .limit(limit)
             .offset(offset)
         )
@@ -1257,12 +1336,13 @@ class PipelineService:
         return list(result.scalars().all()), total
 
     async def get_pipeline(self, pipeline_id: str) -> Pipeline | None:
-        """Pipeline 단건 조회 — output_split / automation 선로드."""
+        """Pipeline (concept) 단건 조회 — family / versions / output_split 선로드."""
         result = await self.db.execute(
             select(Pipeline)
             .options(
+                selectinload(Pipeline.family),
                 selectinload(Pipeline.output_split).selectinload(DatasetSplit.group),
-                selectinload(Pipeline.automation),
+                selectinload(Pipeline.versions).selectinload(PipelineVersion.automation),
             )
             .where(Pipeline.id == pipeline_id)
         )
@@ -1274,13 +1354,19 @@ class PipelineService:
         *,
         name: str | None = None,
         description: str | None = None,
+        family_id: str | None = None,
+        unset_family: bool = False,
         is_active: bool | None = None,
     ) -> Pipeline | None:
         """
-        Pipeline 편집 (§6-1 config immutable — config 는 받지 않음).
+        Pipeline (concept) 편집. config / version 은 PipelineVersion 영역.
 
-        `is_active` 를 False 로 전환 시 연결된 PipelineAutomation 이 있으면 error
-        상태 + error_reason='PIPELINE_DELETED' 로 전환 (§6-4 (a)/(b) 중 기본 처리).
+        family_id 변경:
+            - 새 family_id 지정 → 그 family 로 이동
+            - unset_family=True → family_id NULL (미분류로)
+            - 둘 다 미지정 → 변경 없음
+
+        is_active=False 전환 시 모든 version 의 active automation 도 error 처리.
         """
         pipeline = await self.get_pipeline(pipeline_id)
         if pipeline is None:
@@ -1289,6 +1375,10 @@ class PipelineService:
             pipeline.name = name
         if description is not None:
             pipeline.description = description
+        if unset_family:
+            pipeline.family_id = None
+        elif family_id is not None:
+            pipeline.family_id = family_id
         if is_active is not None and is_active != pipeline.is_active:
             pipeline.is_active = is_active
             if not is_active:
@@ -1297,11 +1387,15 @@ class PipelineService:
         return pipeline
 
     async def _mark_automation_as_pipeline_deleted(self, pipeline_id: str) -> None:
-        """Pipeline soft delete 시 active automation 의 상태를 error 로 전환 (§6-4)."""
+        """Pipeline soft delete 시, 모든 version 의 active automation 상태를 error 로 전환."""
         result = await self.db.execute(
             select(PipelineAutomation)
+            .join(
+                PipelineVersion,
+                PipelineAutomation.pipeline_version_id == PipelineVersion.id,
+            )
             .where(
-                PipelineAutomation.pipeline_id == pipeline_id,
+                PipelineVersion.pipeline_id == pipeline_id,
                 PipelineAutomation.is_active == True,  # noqa: E712
             )
         )
@@ -1314,21 +1408,23 @@ class PipelineService:
         self, pipeline_ids: list[str],
     ) -> dict[str, tuple[int, Any]]:
         """
-        pipeline_id 별 run_count + last_run_at 집계.
-
-        목록 UI 에서 Pipeline 각 행에 실행 횟수 / 최근 실행 시각 노출용. 빈 dict 반환
-        시 모든 Pipeline 은 0 / None 으로 간주.
+        pipeline_id (concept) 별 run_count + last_run_at 집계.
+        모든 version 의 run 을 합산.
         """
         if not pipeline_ids:
             return {}
         result = await self.db.execute(
             select(
-                PipelineRun.pipeline_id,
+                PipelineVersion.pipeline_id.label("pipeline_id"),
                 func.count(PipelineRun.id).label("run_count"),
                 func.max(PipelineRun.created_at).label("last_run_at"),
             )
-            .where(PipelineRun.pipeline_id.in_(pipeline_ids))
-            .group_by(PipelineRun.pipeline_id)
+            .join(
+                PipelineRun,
+                PipelineRun.pipeline_version_id == PipelineVersion.id,
+            )
+            .where(PipelineVersion.pipeline_id.in_(pipeline_ids))
+            .group_by(PipelineVersion.pipeline_id)
         )
         return {
             row.pipeline_id: (int(row.run_count), row.last_run_at)
@@ -1342,8 +1438,44 @@ class PipelineService:
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[list[PipelineRun], int]:
-        """특정 Pipeline 에 속하는 PipelineRun 목록. 최신순."""
-        base = select(PipelineRun).where(PipelineRun.pipeline_id == pipeline_id)
+        """특정 Pipeline (concept) 의 모든 version 에 걸친 PipelineRun 목록. 최신순."""
+        base = (
+            select(PipelineRun)
+            .join(
+                PipelineVersion,
+                PipelineRun.pipeline_version_id == PipelineVersion.id,
+            )
+            .where(PipelineVersion.pipeline_id == pipeline_id)
+        )
+        total_result = await self.db.execute(
+            select(func.count()).select_from(base.subquery())
+        )
+        total = int(total_result.scalar() or 0)
+        result = await self.db.execute(
+            base
+            .options(
+                selectinload(PipelineRun.output_dataset)
+                .selectinload(DatasetVersion.split_slot)
+                .selectinload(DatasetSplit.group),
+                selectinload(PipelineRun.pipeline_version),
+            )
+            .order_by(PipelineRun.created_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        return list(result.scalars().all()), total
+
+    async def list_runs_by_pipeline_version(
+        self,
+        pipeline_version_id: str,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[PipelineRun], int]:
+        """특정 PipelineVersion 에 속한 PipelineRun 목록. 최신순."""
+        base = select(PipelineRun).where(
+            PipelineRun.pipeline_version_id == pipeline_version_id
+        )
         total_result = await self.db.execute(
             select(func.count()).select_from(base.subquery())
         )
@@ -1362,34 +1494,152 @@ class PipelineService:
         return list(result.scalars().all()), total
 
     # ═════════════════════════════════════════════════════════════════════════
+    # PipelineVersion CRUD (v7.11)
+    # ═════════════════════════════════════════════════════════════════════════
+
+    async def get_pipeline_version(
+        self, pipeline_version_id: str,
+    ) -> PipelineVersion | None:
+        """PipelineVersion 단건 — pipeline.family / output_split / automation 선로드."""
+        result = await self.db.execute(
+            select(PipelineVersion)
+            .options(
+                selectinload(PipelineVersion.pipeline)
+                .selectinload(Pipeline.family),
+                selectinload(PipelineVersion.pipeline)
+                .selectinload(Pipeline.output_split)
+                .selectinload(DatasetSplit.group),
+                selectinload(PipelineVersion.automation),
+            )
+            .where(PipelineVersion.id == pipeline_version_id)
+        )
+        return result.scalars().first()
+
+    async def get_latest_active_version(
+        self, pipeline_id: str,
+    ) -> PipelineVersion | None:
+        """Pipeline (concept) 의 최신 active version. 상세 페이지 기본 진입점."""
+        result = await self.db.execute(
+            select(PipelineVersion)
+            .where(
+                PipelineVersion.pipeline_id == pipeline_id,
+                PipelineVersion.is_active == True,  # noqa: E712
+            )
+            .order_by(PipelineVersion.created_at.desc())
+            .limit(1)
+        )
+        return result.scalars().first()
+
+    async def update_pipeline_version(
+        self,
+        pipeline_version_id: str,
+        *,
+        is_active: bool | None = None,
+    ) -> PipelineVersion | None:
+        """PipelineVersion 편집 — config 는 immutable. is_active 만 토글 가능."""
+        version = await self.get_pipeline_version(pipeline_version_id)
+        if version is None:
+            return None
+        if is_active is not None and is_active != version.is_active:
+            version.is_active = is_active
+            if not is_active:
+                # 이 version 에 매달린 active automation 도 error 처리
+                if version.automation is not None:
+                    version.automation.status = "error"
+                    version.automation.error_reason = "PIPELINE_DELETED"
+        await self.db.flush()
+        return version
+
+    # ═════════════════════════════════════════════════════════════════════════
+    # PipelineFamily CRUD (v7.11)
+    # ═════════════════════════════════════════════════════════════════════════
+
+    async def list_families(self) -> list[PipelineFamily]:
+        """모든 Family. 정렬: name ASC."""
+        result = await self.db.execute(
+            select(PipelineFamily).order_by(PipelineFamily.name.asc())
+        )
+        return list(result.scalars().all())
+
+    async def get_family(self, family_id: str) -> PipelineFamily | None:
+        result = await self.db.execute(
+            select(PipelineFamily)
+            .options(selectinload(PipelineFamily.pipelines))
+            .where(PipelineFamily.id == family_id)
+        )
+        return result.scalars().first()
+
+    async def create_family(
+        self, *, name: str, description: str | None = None,
+    ) -> PipelineFamily:
+        family = PipelineFamily(
+            id=str(uuid.uuid4()),
+            name=name,
+            description=description,
+        )
+        self.db.add(family)
+        await self.db.flush()
+        return family
+
+    async def update_family(
+        self,
+        family_id: str,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+    ) -> PipelineFamily | None:
+        family = await self.get_family(family_id)
+        if family is None:
+            return None
+        if name is not None:
+            family.name = name
+        if description is not None:
+            family.description = description
+        await self.db.flush()
+        return family
+
+    async def delete_family(self, family_id: str) -> bool:
+        """Family hard delete. 자식 Pipeline 들의 family_id 는 ON DELETE SET NULL."""
+        family = await self.get_family(family_id)
+        if family is None:
+            return False
+        await self.db.delete(family)
+        await self.db.flush()
+        return True
+
+    # ═════════════════════════════════════════════════════════════════════════
     # PipelineRun 제출 (Pipeline 기반 — 027 §4-3 Version Resolver)
     # ═════════════════════════════════════════════════════════════════════════
 
-    async def submit_run_from_pipeline(
+    async def submit_run_from_pipeline_version(
         self,
-        pipeline_id: str,
+        pipeline_version_id: str,
         resolved_input_versions: dict[str, str],
     ) -> PipelineSubmitResponse:
         """
-        `POST /pipelines/{id}/runs` 구현. Version Resolver Modal 이 확정한
-        `{split_id: version}` 을 받아 PipelineRun 1건을 생성하고 Celery dispatch.
+        `POST /pipeline-versions/{id}/runs` 구현 (v7.11). Version Resolver Modal 이
+        확정한 `{split_id: version}` 을 받아 PipelineRun 1건을 생성하고 Celery dispatch.
 
-        soft-deleted Pipeline (is_active=FALSE) 은 차단.
+        soft-deleted PipelineVersion 또는 모 Pipeline 은 차단.
 
         본 메서드는 §12-5 기준 "실행 시점" 에 해당하므로 validate_runtime 성격의
-        최소 체크만 수행 (저장 시점에 이미 structural 검증을 통과했다고 가정).
+        최소 체크만 수행.
         """
-        pipeline = await self.get_pipeline(pipeline_id)
-        if pipeline is None:
-            raise ValueError(f"Pipeline not found: {pipeline_id}")
-        if not pipeline.is_active:
+        pipeline_version = await self.get_pipeline_version(pipeline_version_id)
+        if pipeline_version is None:
+            raise ValueError(f"PipelineVersion not found: {pipeline_version_id}")
+        if not pipeline_version.is_active:
             raise ValueError(
-                "Pipeline 이 soft-deleted 상태라 새 run 을 제출할 수 없습니다. "
-                "새 버전을 만들거나 is_active=True 로 복원하세요."
+                "PipelineVersion 이 비활성 상태라 새 run 을 제출할 수 없습니다."
+            )
+        pipeline = pipeline_version.pipeline
+        if pipeline is None or not pipeline.is_active:
+            raise ValueError(
+                "모 Pipeline 이 비활성 상태라 새 run 을 제출할 수 없습니다."
             )
 
         # config 에서 PipelineConfig Pydantic 복원 (실행 파이프라인의 진짜 스펙)
-        config = PipelineConfig(**pipeline.config)
+        config = PipelineConfig(**pipeline_version.config)
 
         # output 스키마 결정 — Pipeline.output_split 기준으로 그룹 / split 재사용
         output_split_slot = pipeline.output_split
@@ -1437,11 +1687,13 @@ class PipelineService:
             resolved_input_versions
         )
 
-        # output 버전 자동 증가 (§9-5 manual 실행 = major++ 유지, §9-4 에서 automation/manual 분기 예정)
+        # output 버전 자동 증가 (manual 실행 = major++)
         version = await self._next_version(output_split_slot.id)
         logger.info(
             "Pipeline run 제출 시작",
             pipeline_id=pipeline.id, pipeline_name=pipeline.name,
+            pipeline_version_id=pipeline_version.id,
+            pipeline_version=pipeline_version.version,
             output_group=output_group.name, split=output_split_slot.split,
             new_version=version,
         )
@@ -1471,17 +1723,16 @@ class PipelineService:
         self.db.add(dataset)
         await self.db.flush()
 
-        # PipelineRun 생성 — Pipeline.config 는 split_id 단위 spec 이므로 실행 시점에
-        # source:<split_id> → source:<dataset_version_id> 로 치환한 resolved dict 를
-        # transform_config 에 저장 (027 §2-2 "실행 시점 최종 config 스냅샷 · resolved
-        # version 포함"). Celery executor 는 이 resolved dict 의 dataset_version_id 단위로
-        # 데이터를 로드한다.
+        # PipelineRun 생성 — PipelineVersion.config 는 split_id 단위 spec 이므로 실행 시점에
+        # source:dataset_split:<split_id> → source:dataset_version:<version_id> 로 치환한
+        # resolved dict 를 transform_config 에 저장. Celery executor 는 이 resolved dict 의
+        # dataset_version_id 단위로 데이터를 로드한다.
         resolved_config_dict = self._substitute_resolved_versions(
-            pipeline.config, runtime_dataset_ids,
+            pipeline_version.config, runtime_dataset_ids,
         )
         run = PipelineRun(
             id=str(uuid.uuid4()),
-            pipeline_id=pipeline.id,
+            pipeline_version_id=pipeline_version.id,
             automation_id=None,
             output_dataset_id=dataset.id,
             transform_config=resolved_config_dict,
@@ -1500,8 +1751,8 @@ class PipelineService:
 
         logger.info(
             "Pipeline run 디스패치 완료",
-            pipeline_id=pipeline.id, run_id=run.id,
-            celery_task_id=run.celery_task_id,
+            pipeline_id=pipeline.id, pipeline_version_id=pipeline_version.id,
+            run_id=run.id, celery_task_id=run.celery_task_id,
             input_versions=resolved_input_versions,
             runtime_dataset_ids=runtime_dataset_ids,
         )

@@ -1,12 +1,14 @@
 /**
- * PipelineListPage — Pipeline (정적 템플릿) 목록.
+ * PipelineListPage — Pipeline (concept) 목록 + 행 클릭 drawer.
  *
- * v7.10 핸드오프 027 §9-7. URL: `/pipelines` (§9-7 재배선 시 기존 실행 이력 페이지는
- * `/pipelines/runs` 로 이동).
+ * v7.11 (feature/pipeline-family-and-version):
+ *   - 행 클릭 시 우측 drawer 펼침 — 개념 메타 + 모든 versions (세로 목록)
+ *   - 각 version 행: 클릭 시 미니 상세 토글, "상세" 버튼 → 풀 페이지
+ *   - 행의 "상세 보기" 버튼 → 최신 active version 풀 페이지로 이동
+ *   - "실행" 버튼 → Version Resolver Modal (최신 active version 의 config 사용)
  *
- * 각 행 우측에 "실행" 버튼 — 클릭 시 Version Resolver Modal (027 §4-3) 로 input
- * version 확정 후 `POST /pipelines/entities/{id}/runs` dispatch.
- * is_active=FALSE (soft-deleted) Pipeline 은 실행 버튼 비활성 + soft-deleted 배지.
+ * URL: `/pipelines` (concept 목록), `/pipelines/runs` (별도 PipelineHistoryPage),
+ *       `/pipeline-versions/:id` (PipelineVersion 상세 페이지 — F-8).
  */
 import { useMemo, useState } from 'react'
 import {
@@ -20,13 +22,31 @@ import {
   message,
   Alert,
   Tooltip,
+  Drawer,
+  Descriptions,
+  Empty,
 } from 'antd'
-import { PlayCircleOutlined, EditOutlined, ReloadOutlined } from '@ant-design/icons'
+import {
+  PlayCircleOutlined,
+  EditOutlined,
+  ReloadOutlined,
+  EyeOutlined,
+  RightOutlined,
+} from '@ant-design/icons'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
-import { pipelineEntitiesApi } from '@/api/pipeline'
-import type { PipelineEntityResponse, PipelineListItem } from '@/types/pipeline'
+import { useNavigate } from 'react-router-dom'
+import {
+  pipelineConceptsApi,
+  pipelineVersionsApi,
+} from '@/api/pipeline'
+import type {
+  PipelineEntityResponse,
+  PipelineListItem,
+  PipelineVersionResponse,
+  PipelineVersionSummary,
+} from '@/types/pipeline'
 import { VersionResolverModal } from '@/components/pipeline/VersionResolverModal'
 import { CreatePipelineButton } from '@/components/pipeline/CreatePipelineButton'
 
@@ -34,15 +54,22 @@ const { Title, Text } = Typography
 
 export function PipelineListPage() {
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
   const [includeInactive, setIncludeInactive] = useState(false)
   const [nameFilter, setNameFilter] = useState('')
-  const [resolverPipeline, setResolverPipeline] = useState<PipelineEntityResponse | null>(null)
+
+  // 행 클릭 시 펼치는 drawer 상태
+  const [drawerPipelineId, setDrawerPipelineId] = useState<string | null>(null)
+  const [expandedVersionId, setExpandedVersionId] = useState<string | null>(null)
+
+  // 실행 모달 상태 — version 단위
+  const [resolverVersion, setResolverVersion] = useState<PipelineVersionResponse | null>(null)
   const [resolverOpen, setResolverOpen] = useState(false)
 
   const listQuery = useQuery({
-    queryKey: ['pipeline-entities', { includeInactive, nameFilter }],
+    queryKey: ['pipeline-concepts', { includeInactive, nameFilter }],
     queryFn: () =>
-      pipelineEntitiesApi
+      pipelineConceptsApi
         .list({
           include_inactive: includeInactive,
           name_filter: nameFilter || undefined,
@@ -51,11 +78,31 @@ export function PipelineListPage() {
         .then((r) => r.data),
   })
 
+  // drawer 열린 concept 의 상세 (versions 포함)
+  const drawerQuery = useQuery({
+    queryKey: ['pipeline-concept-detail', drawerPipelineId],
+    queryFn: () =>
+      drawerPipelineId
+        ? pipelineConceptsApi.get(drawerPipelineId).then((r) => r.data)
+        : null,
+    enabled: !!drawerPipelineId,
+  })
+
+  // 펼친 version 의 상세 (config / 메타)
+  const versionDetailQuery = useQuery({
+    queryKey: ['pipeline-version-detail', expandedVersionId],
+    queryFn: () =>
+      expandedVersionId
+        ? pipelineVersionsApi.get(expandedVersionId).then((r) => r.data)
+        : null,
+    enabled: !!expandedVersionId,
+  })
+
   const totalFallback = useMemo(() => listQuery.data?.total ?? 0, [listQuery.data])
 
   const togglePipelineActive = useMutation({
     mutationFn: async (vars: { id: string; nextValue: boolean }) => {
-      const r = await pipelineEntitiesApi.update(vars.id, { is_active: vars.nextValue })
+      const r = await pipelineConceptsApi.update(vars.id, { is_active: vars.nextValue })
       return r.data
     },
     onSuccess: (_data, vars) => {
@@ -64,7 +111,7 @@ export function PipelineListPage() {
           ? '활성화했습니다. 이제 run 을 제출할 수 있습니다.'
           : '비활성으로 전환했습니다. 자동화가 있으면 error 상태가 됩니다.',
       )
-      queryClient.invalidateQueries({ queryKey: ['pipeline-entities'] })
+      queryClient.invalidateQueries({ queryKey: ['pipeline-concepts'] })
     },
     onError: (err: unknown) => {
       const msg =
@@ -75,16 +122,46 @@ export function PipelineListPage() {
     },
   })
 
-  const openResolverForPipeline = async (row: PipelineListItem) => {
-    // 목록 응답에는 config 가 빠져 있으므로 상세 요청 후 Modal 에 전달
+  const openResolverForLatestVersion = async (row: PipelineListItem) => {
+    // 목록 행에는 latest_version 문자열만 있고 id 가 없음.
+    // concept 상세를 가져와 latest active version id 를 추출 후 version 상세 fetch.
     try {
-      const detail = await pipelineEntitiesApi.get(row.id)
-      setResolverPipeline(detail.data)
+      const concept = (await pipelineConceptsApi.get(row.id)).data
+      const latest = concept.latest_version
+      if (!latest) {
+        message.warning('실행 가능한 active version 이 없습니다.')
+        return
+      }
+      const detail = await pipelineVersionsApi.get(latest.id)
+      setResolverVersion(detail.data)
       setResolverOpen(true)
     } catch (err) {
-      const msg = (err as Error)?.message ?? '상세 조회 실패'
-      message.error(`Pipeline 상세 조회 실패: ${msg}`)
+      const msg = (err as Error)?.message ?? '버전 조회 실패'
+      message.error(`PipelineVersion 조회 실패: ${msg}`)
     }
+  }
+
+  const openResolverForVersion = async (versionId: string) => {
+    try {
+      const detail = await pipelineVersionsApi.get(versionId)
+      setResolverVersion(detail.data)
+      setResolverOpen(true)
+    } catch (err) {
+      const msg = (err as Error)?.message ?? '버전 조회 실패'
+      message.error(`PipelineVersion 조회 실패: ${msg}`)
+    }
+  }
+
+  const goToVersionDetail = (versionId: string) => {
+    navigate(`/pipeline-versions/${versionId}`)
+  }
+
+  const goToLatestActiveDetail = (concept: PipelineEntityResponse) => {
+    if (!concept.latest_version) {
+      message.warning('active version 이 없습니다.')
+      return
+    }
+    goToVersionDetail(concept.latest_version.id)
   }
 
   const columns: ColumnsType<PipelineListItem> = [
@@ -96,16 +173,32 @@ export function PipelineListPage() {
         <Space direction="vertical" size={0}>
           <Space size={4}>
             <Text strong>{name}</Text>
-            <Tag style={{ margin: 0, fontSize: 10 }}>v{row.version}</Tag>
+            {row.latest_version && (
+              <Tag style={{ margin: 0, fontSize: 10 }}>v{row.latest_version}</Tag>
+            )}
+            {row.version_count > 1 && (
+              <Tag color="cyan" style={{ margin: 0, fontSize: 10 }}>
+                +{row.version_count - 1}개 버전
+              </Tag>
+            )}
             {!row.is_active && (
               <Tooltip title="is_active=FALSE (soft-deleted). 새 run 제출 차단.">
                 <Tag color="default" style={{ margin: 0, fontSize: 10 }}>비활성</Tag>
               </Tooltip>
             )}
-            {row.has_automation && <Tag color="purple" style={{ margin: 0, fontSize: 10 }}>auto</Tag>}
+            {row.has_automation && (
+              <Tag color="purple" style={{ margin: 0, fontSize: 10 }}>auto</Tag>
+            )}
+            {row.family_name && (
+              <Tag color="gold" style={{ margin: 0, fontSize: 10 }}>
+                {row.family_name}
+              </Tag>
+            )}
           </Space>
           {row.description && (
-            <Text type="secondary" style={{ fontSize: 11 }}>{row.description}</Text>
+            <Text type="secondary" style={{ fontSize: 11 }}>
+              {row.description}
+            </Text>
           )}
         </Space>
       ),
@@ -163,18 +256,35 @@ export function PipelineListPage() {
     {
       title: 'Actions',
       key: 'actions',
-      width: 230,
+      width: 280,
       render: (_v, row) => (
-        <Space size={6}>
-          <Tooltip title={row.is_active ? '실행 전 input version 을 선택합니다' : '비활성 Pipeline 은 실행 불가'}>
+        <Space size={6} onClick={(e) => e.stopPropagation()}>
+          <Tooltip title={row.is_active ? '실행 전 input version 선택' : '비활성 Pipeline 은 실행 불가'}>
             <Button
               type="primary"
               size="small"
               icon={<PlayCircleOutlined />}
               disabled={!row.is_active}
-              onClick={() => openResolverForPipeline(row)}
+              onClick={() => openResolverForLatestVersion(row)}
             >
               실행
+            </Button>
+          </Tooltip>
+          <Tooltip title="최신 active version 으로 풀 상세 진입">
+            <Button
+              size="small"
+              icon={<EyeOutlined />}
+              disabled={!row.latest_version}
+              onClick={async () => {
+                try {
+                  const concept = (await pipelineConceptsApi.get(row.id)).data
+                  goToLatestActiveDetail(concept)
+                } catch (err) {
+                  message.error(`Pipeline 조회 실패: ${(err as Error)?.message ?? ''}`)
+                }
+              }}
+            >
+              상세 보기
             </Button>
           </Tooltip>
           <Tooltip title={row.is_active ? '비활성으로 전환 — 새 run 제출 차단' : '활성으로 복원'}>
@@ -218,11 +328,10 @@ export function PipelineListPage() {
             </Space>
             <Button
               icon={<ReloadOutlined />}
-              onClick={() => queryClient.invalidateQueries({ queryKey: ['pipeline-entities'] })}
+              onClick={() => queryClient.invalidateQueries({ queryKey: ['pipeline-concepts'] })}
             >
               새로고침
             </Button>
-            {/* v7.10 §9-7 피드백: "새 파이프라인" 진입은 실행 이력이 아닌 목록 페이지 쪽. */}
             <CreatePipelineButton />
           </Space>
         </Space>
@@ -230,8 +339,8 @@ export function PipelineListPage() {
           type="info"
           showIcon
           closable
-          message="Pipeline = 정적 템플릿. 실행 시 버전을 선택하세요."
-          description="에디터에서는 (group, split) 까지만 저장됩니다. 버전은 각 실행 시 Version Resolver 모달에서 선택합니다."
+          message="행을 클릭하면 버전 목록이 펼쳐집니다."
+          description="Pipeline = 개념 정체성. 같은 Pipeline 안에 여러 version 이 누적되며, 실행 시점에 input version 을 선택합니다."
           style={{ marginBottom: 0 }}
         />
         <Table<PipelineListItem>
@@ -242,17 +351,184 @@ export function PipelineListPage() {
           pagination={false}
           size="middle"
           rowClassName={(row) => (row.is_active ? '' : 'inactive-row')}
+          onRow={(row) => ({
+            onClick: () => {
+              setDrawerPipelineId(row.id)
+              setExpandedVersionId(null)
+            },
+            style: { cursor: 'pointer' },
+          })}
         />
       </Space>
 
+      {/* 행 클릭 drawer — concept 메타 + versions 세로 목록 */}
+      <Drawer
+        title={drawerQuery.data?.name ?? '파이프라인'}
+        open={!!drawerPipelineId}
+        onClose={() => {
+          setDrawerPipelineId(null)
+          setExpandedVersionId(null)
+        }}
+        width={520}
+        extra={
+          drawerQuery.data && (
+            <Button
+              type="primary"
+              icon={<EyeOutlined />}
+              disabled={!drawerQuery.data.latest_version}
+              onClick={() => goToLatestActiveDetail(drawerQuery.data!)}
+            >
+              상세 보기
+            </Button>
+          )
+        }
+      >
+        {drawerQuery.isLoading && <Text>로딩 중…</Text>}
+        {drawerQuery.data && (
+          <Space direction="vertical" size={16} style={{ width: '100%' }}>
+            <Descriptions column={1} size="small" bordered>
+              <Descriptions.Item label="개념명">{drawerQuery.data.name}</Descriptions.Item>
+              <Descriptions.Item label="설명">
+                {drawerQuery.data.description ?? <Text type="secondary">—</Text>}
+              </Descriptions.Item>
+              <Descriptions.Item label="Family">
+                {drawerQuery.data.family_name ?? <Text type="secondary">미분류</Text>}
+              </Descriptions.Item>
+              <Descriptions.Item label="Task">
+                {drawerQuery.data.task_type}
+              </Descriptions.Item>
+              <Descriptions.Item label="Output">
+                {drawerQuery.data.output_group_name} / {drawerQuery.data.output_split}
+              </Descriptions.Item>
+              <Descriptions.Item label="활성">
+                {drawerQuery.data.is_active ? <Tag color="green">active</Tag> : <Tag>비활성</Tag>}
+              </Descriptions.Item>
+            </Descriptions>
+
+            <div>
+              <Title level={5} style={{ margin: '0 0 8px 0' }}>
+                버전 ({drawerQuery.data.versions.length}개)
+              </Title>
+              {drawerQuery.data.versions.length === 0 && (
+                <Empty description="version 이 아직 없습니다." />
+              )}
+              <Space direction="vertical" size={6} style={{ width: '100%' }}>
+                {drawerQuery.data.versions.map((v) => (
+                  <VersionRow
+                    key={v.id}
+                    summary={v}
+                    expanded={expandedVersionId === v.id}
+                    onToggle={() =>
+                      setExpandedVersionId(expandedVersionId === v.id ? null : v.id)
+                    }
+                    detail={
+                      expandedVersionId === v.id ? versionDetailQuery.data ?? null : null
+                    }
+                    detailLoading={
+                      expandedVersionId === v.id && versionDetailQuery.isLoading
+                    }
+                    onDetailClick={() => goToVersionDetail(v.id)}
+                    onRunClick={() => openResolverForVersion(v.id)}
+                  />
+                ))}
+              </Space>
+            </div>
+          </Space>
+        )}
+      </Drawer>
+
       <VersionResolverModal
         open={resolverOpen}
-        pipeline={resolverPipeline}
+        pipelineVersion={resolverVersion}
         onClose={() => setResolverOpen(false)}
         onSubmitted={(runId) => {
-          message.success(`파이프라인 실행이 제출되었습니다. (run_id=${runId.slice(0, 8)}...)`)
+          message.success(`파이프라인 실행 제출 완료 (run_id=${runId.slice(0, 8)}...)`)
         }}
       />
+    </div>
+  )
+}
+
+
+interface VersionRowProps {
+  summary: PipelineVersionSummary
+  expanded: boolean
+  detail: PipelineVersionResponse | null
+  detailLoading: boolean
+  onToggle: () => void
+  onDetailClick: () => void
+  onRunClick: () => void
+}
+
+function VersionRow({
+  summary,
+  expanded,
+  detail,
+  detailLoading,
+  onToggle,
+  onDetailClick,
+  onRunClick,
+}: VersionRowProps) {
+  const taskCount = detail?.config?.tasks
+    ? Object.keys(detail.config.tasks as Record<string, unknown>).length
+    : null
+  return (
+    <div
+      style={{
+        border: '1px solid #f0f0f0',
+        borderRadius: 6,
+        padding: '8px 10px',
+        background: expanded ? '#fafafa' : '#fff',
+      }}
+    >
+      <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+        <Space
+          size={6}
+          style={{ cursor: 'pointer', flex: 1 }}
+          onClick={onToggle}
+        >
+          <RightOutlined
+            rotate={expanded ? 90 : 0}
+            style={{ fontSize: 11, color: '#888' }}
+          />
+          <Tag style={{ margin: 0 }}>v{summary.version}</Tag>
+          {!summary.is_active && <Tag color="default">비활성</Tag>}
+          {summary.has_automation && <Tag color="purple">auto</Tag>}
+          <Text type="secondary" style={{ fontSize: 11 }}>
+            {dayjs(summary.created_at).format('YY-MM-DD HH:mm')}
+          </Text>
+        </Space>
+        <Space size={6} onClick={(e) => e.stopPropagation()}>
+          <Button
+            type="primary"
+            size="small"
+            icon={<PlayCircleOutlined />}
+            disabled={!summary.is_active}
+            onClick={onRunClick}
+          >
+            실행
+          </Button>
+          <Button size="small" icon={<EyeOutlined />} onClick={onDetailClick}>
+            상세
+          </Button>
+        </Space>
+      </Space>
+      {expanded && (
+        <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed #eee' }}>
+          {detailLoading && <Text type="secondary">로딩…</Text>}
+          {detail && (
+            <Space direction="vertical" size={4} style={{ width: '100%' }}>
+              <Text type="secondary" style={{ fontSize: 11 }}>
+                노드 수: {taskCount ?? '—'} | schema_version:{' '}
+                {String((detail.config as Record<string, unknown>)?.schema_version ?? '—')}
+              </Text>
+              <Text type="secondary" style={{ fontSize: 11 }}>
+                config 본문은 "상세" 버튼으로 풀 페이지에서 확인하세요.
+              </Text>
+            </Space>
+          )}
+        </div>
+      )}
     </div>
   )
 }

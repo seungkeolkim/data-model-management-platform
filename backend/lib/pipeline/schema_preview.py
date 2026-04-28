@@ -21,7 +21,7 @@ import logging
 from typing import Any
 
 from lib.manipulators import MANIPULATOR_REGISTRY
-from lib.pipeline.config import PartialPipelineConfig
+from lib.pipeline.config import PartialPipelineConfig, parse_source_ref
 from lib.pipeline.pipeline_data_models import DatasetMeta, HeadSchema
 
 logger = logging.getLogger(__name__)
@@ -106,13 +106,21 @@ def preview_head_schema_at_task(
         input_metas: list[DatasetMeta] = []
         for ref in task_config.inputs:
             if ref.startswith("source:"):
-                dataset_id = ref.split(":", 1)[1]
-                source_meta = source_meta_by_dataset_id.get(dataset_id)
+                # spec 단계 — `source:dataset_split:<id>` 의 id 만 사용.
+                # source_meta_by_dataset_id 는 호출자(서비스 레이어)가 split_id 키로 전달.
+                parsed = parse_source_ref(ref)
+                if parsed is None:
+                    raise SchemaPreviewError(
+                        code="SOURCE_INVALID_FORMAT",
+                        message=f"source 토큰이 유효하지 않습니다: {ref!r}",
+                    )
+                source_id = parsed[1]
+                source_meta = source_meta_by_dataset_id.get(source_id)
                 if source_meta is None:
                     raise SchemaPreviewError(
                         code="SOURCE_NOT_LOADED",
                         message=(
-                            f"source dataset_id='{dataset_id}' 의 head_schema 를 "
+                            f"source id='{source_id}' (type={parsed[0]}) 의 head_schema 를 "
                             f"로드하지 못했습니다 (task='{task_name}')."
                         ),
                     )

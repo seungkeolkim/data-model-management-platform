@@ -74,15 +74,22 @@ function formatDuration(startedAt: string | null, finishedAt: string | null): st
   return `${hours}시간 ${remainMinutes}분`
 }
 
-/** config.tasks에서 소스 데이터셋 ID 목록 추출 */
+/**
+ * config.tasks 에서 소스 데이터셋 ID 목록 추출.
+ * v3 포맷의 type prefix 를 strip 하고 id 만 반환 (split / version 구분 없이).
+ * PipelineRun.transform_config 는 dataset_version, Pipeline.config 는 dataset_split 이지만
+ * 이 컴포넌트는 양쪽 모두에서 호출될 수 있으므로 type 무시.
+ */
 function extractSourceDatasetIds(config: Record<string, unknown> | null): string[] {
   if (!config || !config.tasks) return []
   const tasks = config.tasks as Record<string, { inputs?: string[] }>
   const sourceIds = new Set<string>()
   for (const task of Object.values(tasks)) {
     for (const input of task.inputs ?? []) {
-      if (input.startsWith('source:')) {
-        sourceIds.add(input.replace('source:', ''))
+      if (typeof input === 'string' && input.startsWith('source:')) {
+        const parts = input.split(':')
+        // v3: source:<type>:<id> (3 parts) — id 는 마지막 토큰
+        if (parts.length === 3) sourceIds.add(parts[2])
       }
     }
   }

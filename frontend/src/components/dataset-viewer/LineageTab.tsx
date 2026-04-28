@@ -239,8 +239,9 @@ function buildFlowGraph(
 
       for (const input of taskConf.inputs ?? []) {
         if (input.startsWith('source:')) {
-          // source:<dataset_id> → 이 태스크
-          const sourceId = input.split(':')[1]
+          // v3: source:<type>:<id>. id 만 사용 (lineage 는 type 무관).
+          const parts = input.split(':')
+          const sourceId = parts.length === 3 ? parts[2] : parts[1]
           if (sourceDatasetIds.has(sourceId)) {
             flowEdges.push({
               id: `e_src_${sourceId}_${taskNodeId}`,

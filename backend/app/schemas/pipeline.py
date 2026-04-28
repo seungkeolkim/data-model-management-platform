@@ -112,32 +112,67 @@ class PipelineListResponse(BaseModel):
 
 
 # =============================================================================
-# Pipeline 엔티티 스키마 (v7.10, 핸드오프 027 §2-1)
+# PipelineFamily / Pipeline (concept) / PipelineVersion 스키마 (v7.11)
 # =============================================================================
 
-class PipelineResponse(BaseModel):
-    """Pipeline 엔티티 응답 (정적 템플릿)."""
+class PipelineFamilyResponse(BaseModel):
+    """PipelineFamily 응답 — 즐겨찾기 폴더."""
     id: str
     name: str
+    description: str | None
+    pipeline_count: int = Field(
+        default=0,
+        description="이 family 에 묶인 active Pipeline 수",
+    )
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class PipelineFamilyCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    description: str | None = None
+
+
+class PipelineFamilyUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = None
+
+
+class PipelineVersionSummary(BaseModel):
+    """PipelineVersion 요약 — concept 응답 안에서 versions 목록 행."""
+    id: str
     version: str
+    is_active: bool
+    has_automation: bool = False
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class PipelineResponse(BaseModel):
+    """Pipeline (concept) 응답 — versions 목록 포함."""
+    id: str
+    family_id: str | None
+    family_name: str | None = None
+    name: str
     description: str | None
     output_split_id: str
     output_group_id: str | None = Field(
         default=None,
-        description="output_split 의 상위 group id (association_proxy 경유, 조회 편의)",
+        description="output_split 의 상위 group id",
     )
     output_group_name: str | None = None
     output_split: str | None = Field(
         default=None,
         description="TRAIN | VAL | TEST | NONE — DatasetSplit.split 문자열",
     )
-    config: dict[str, Any]
     task_type: str
     is_active: bool
-    has_automation: bool = Field(
-        default=False,
-        description="is_active=TRUE 인 자동화 등록 여부 (partial unique index, §12-3)",
-    )
+    versions: list[PipelineVersionSummary] = Field(default_factory=list)
+    latest_version: PipelineVersionSummary | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -145,10 +180,11 @@ class PipelineResponse(BaseModel):
 
 
 class PipelineListItemResponse(BaseModel):
-    """Pipeline 목록 행 응답 — config 는 제외해 페이로드 축소."""
+    """Pipeline 목록 행 응답 — versions 카운트만, 본문 X."""
     id: str
+    family_id: str | None
+    family_name: str | None = None
     name: str
-    version: str
     description: str | None
     output_split_id: str
     output_group_id: str | None = None
@@ -156,11 +192,13 @@ class PipelineListItemResponse(BaseModel):
     output_split: str | None = None
     task_type: str
     is_active: bool
-    has_automation: bool = False
-    run_count: int = Field(default=0, description="이 Pipeline 을 참조한 PipelineRun 누적 수")
-    last_run_at: datetime | None = Field(
-        default=None, description="가장 최근 PipelineRun.created_at",
+    version_count: int = Field(default=0, description="누적 PipelineVersion 수")
+    latest_version: str | None = Field(
+        default=None, description="최신 active version 문자열 (없으면 null)",
     )
+    has_automation: bool = False
+    run_count: int = Field(default=0, description="이 concept 모든 version 의 누적 run 수")
+    last_run_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -168,7 +206,6 @@ class PipelineListItemResponse(BaseModel):
 
 
 class PipelineListPageResponse(BaseModel):
-    """Pipeline 목록 페이지 응답."""
     items: list[PipelineListItemResponse]
     total: int
     limit: int
@@ -177,16 +214,49 @@ class PipelineListPageResponse(BaseModel):
 
 class PipelineUpdateRequest(BaseModel):
     """
-    Pipeline 편집 요청 — §12-4 자유 편집, §6-1 config immutable.
-
-    description / name / is_active 만 받는다. config 필드는 받지 않는다 (immutable).
-    변경하고 싶으면 새 version 또는 새 name 으로 별도 Pipeline 을 만든다.
+    Pipeline (concept) 편집 — name / description / family_id / is_active.
+    config 는 immutable, version 단위 책임.
     """
     name: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = None
-    is_active: bool | None = Field(
-        default=None, description="soft delete 토글. FALSE 로 전환하면 자동화 / 새 run 제출 차단",
+    family_id: str | None = Field(
+        default=None,
+        description="이 Pipeline 을 옮길 family. 명시 시 family 변경",
     )
+    unset_family: bool = Field(
+        default=False,
+        description="True 이면 family_id 를 NULL 로 (미분류). family_id 와 동시 지정 X",
+    )
+    is_active: bool | None = Field(
+        default=None, description="soft delete 토글. FALSE 로 전환하면 모든 version automation / run 차단",
+    )
+
+
+class PipelineVersionResponse(BaseModel):
+    """PipelineVersion 상세 — config + 모 Pipeline 메타."""
+    id: str
+    pipeline_id: str
+    pipeline_name: str
+    family_id: str | None
+    family_name: str | None = None
+    version: str
+    config: dict[str, Any]
+    task_type: str
+    output_split_id: str
+    output_group_id: str | None = None
+    output_group_name: str | None = None
+    output_split: str | None = None
+    is_active: bool
+    has_automation: bool = False
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class PipelineVersionUpdateRequest(BaseModel):
+    """PipelineVersion 편집 — is_active 토글만 (config immutable)."""
+    is_active: bool | None = None
 
 
 # =============================================================================
@@ -212,7 +282,13 @@ class PipelineRunSubmitRequest(BaseModel):
 
 class PipelineAutomationResponse(BaseModel):
     id: str
-    pipeline_id: str
+    pipeline_version_id: str
+    pipeline_id: str | None = Field(
+        default=None,
+        description="모 Pipeline (concept) id — 조회 편의 (selectinload 시 채움)",
+    )
+    pipeline_name: str | None = None
+    pipeline_version: str | None = None
     status: str
     mode: str | None
     poll_interval: str | None

@@ -13,7 +13,12 @@ import type { Node, Edge } from '@xyflow/react'
 
 export interface TaskConfig {
   operator: string
-  inputs: string[]          // "source:<dataset_id>" 또는 "<task_name>"
+  /** v3 포맷:
+   *   - "source:dataset_split:<split_id>"   (Pipeline.config / 사용자 spec)
+   *   - "source:dataset_version:<id>"       (PipelineRun.transform_config / resolved)
+   *   - "task_<node_id>"                    (task 간 참조)
+   */
+  inputs: string[]
   params: Record<string, unknown>
 }
 
@@ -33,8 +38,10 @@ export interface PipelineConfig {
    * version 은 실행 시점 Version Resolver Modal 에서 확정된다.
    */
   passthrough_source_split_id?: string | null
-  /** DAG 스키마 버전. 현재 SDK 는 항상 2 를 생성. */
+  /** DAG 스키마 버전. 현재 SDK 는 항상 3 을 생성. */
   schema_version?: number
+  /** PipelineRun.transform_config 측에서 채워지는 resolved 버전. FE spec 단계에선 항상 null. */
+  passthrough_source_dataset_id?: string | null
 }
 
 /**
@@ -115,30 +122,42 @@ export interface PipelineListResponse {
 }
 
 // =============================================================================
-// Pipeline 엔티티 (v7.10, 핸드오프 027 §2-1 / §12)
+// PipelineFamily / Pipeline (concept) / PipelineVersion (v7.11)
 // =============================================================================
 
-export interface PipelineEntityResponse {
+export interface PipelineFamilyResponse {
   id: string
   name: string
-  version: string
   description: string | null
-  output_split_id: string
-  output_group_id: string | null
-  output_group_name: string | null
-  output_split: string | null
-  config: Record<string, unknown>
-  task_type: string
+  pipeline_count: number
+  created_at: string
+  updated_at: string
+}
+
+export interface PipelineFamilyCreateRequest {
+  name: string
+  description?: string | null
+}
+
+export interface PipelineFamilyUpdateRequest {
+  name?: string | null
+  description?: string | null
+}
+
+export interface PipelineVersionSummary {
+  id: string
+  version: string
   is_active: boolean
   has_automation: boolean
   created_at: string
   updated_at: string
 }
 
-export interface PipelineListItem {
+export interface PipelineEntityResponse {
   id: string
+  family_id: string | null
+  family_name: string | null
   name: string
-  version: string
   description: string | null
   output_split_id: string
   output_group_id: string | null
@@ -146,6 +165,26 @@ export interface PipelineListItem {
   output_split: string | null
   task_type: string
   is_active: boolean
+  versions: PipelineVersionSummary[]
+  latest_version: PipelineVersionSummary | null
+  created_at: string
+  updated_at: string
+}
+
+export interface PipelineListItem {
+  id: string
+  family_id: string | null
+  family_name: string | null
+  name: string
+  description: string | null
+  output_split_id: string
+  output_group_id: string | null
+  output_group_name: string | null
+  output_split: string | null
+  task_type: string
+  is_active: boolean
+  version_count: number
+  latest_version: string | null
   has_automation: boolean
   run_count: number
   last_run_at: string | null
@@ -163,21 +202,49 @@ export interface PipelineListPageResponse {
 export interface PipelineUpdateRequest {
   name?: string | null
   description?: string | null
+  family_id?: string | null
+  unset_family?: boolean
   is_active?: boolean | null
 }
 
-/** POST /pipelines/entities/{id}/runs 요청 바디 */
+export interface PipelineVersionResponse {
+  id: string
+  pipeline_id: string
+  pipeline_name: string
+  family_id: string | null
+  family_name: string | null
+  version: string
+  config: Record<string, unknown>
+  task_type: string
+  output_split_id: string
+  output_group_id: string | null
+  output_group_name: string | null
+  output_split: string | null
+  is_active: boolean
+  has_automation: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface PipelineVersionUpdateRequest {
+  is_active?: boolean | null
+}
+
+/** POST /pipelines/versions/{id}/runs 요청 바디 */
 export interface PipelineRunSubmitRequest {
   resolved_input_versions: Record<string, string>  // {split_id: version}
 }
 
 // =============================================================================
-// PipelineAutomation (v7.10, 027 §2-3 / §12-3 soft delete)
+// PipelineAutomation (v7.11 — version 단위)
 // =============================================================================
 
 export interface PipelineAutomationRealResponse {
   id: string
-  pipeline_id: string
+  pipeline_version_id: string
+  pipeline_id: string | null
+  pipeline_name: string | null
+  pipeline_version: string | null
   status: 'stopped' | 'active' | 'error'
   mode: 'polling' | 'triggering' | null
   poll_interval: '10m' | '1h' | '6h' | '24h' | null

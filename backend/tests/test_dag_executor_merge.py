@@ -308,7 +308,7 @@ class TestDagExecutorMergeBypass:
             tasks={
                 "merge": {
                     "operator": "det_merge_datasets",
-                    "inputs": ["source:ds-a", "source:ds-b"],
+                    "inputs": ["source:dataset_version:ds-a", "source:dataset_version:ds-b"],
                     "params": {},
                 },
             },
@@ -323,7 +323,7 @@ class TestDagExecutorMergeBypass:
             input_metas = []
             for ref in task_config.inputs:
                 if ref.startswith("source:"):
-                    dataset_id = ref.split(":", 1)[1]
+                    dataset_id = ref.split(":", 2)[2]
                     input_metas.append(executor._load_source_meta(dataset_id))
                 else:
                     input_metas.append(task_results[ref])
@@ -378,7 +378,7 @@ class TestDagExecutorMergeBypass:
             tasks={
                 "merge": {
                     "operator": "det_merge_datasets",
-                    "inputs": ["source:ds-a", "source:ds-b"],
+                    "inputs": ["source:dataset_version:ds-a", "source:dataset_version:ds-b"],
                     "params": {},
                 },
             },
@@ -392,7 +392,7 @@ class TestDagExecutorMergeBypass:
             input_metas = []
             for ref in task_config.inputs:
                 if ref.startswith("source:"):
-                    dataset_id = ref.split(":", 1)[1]
+                    dataset_id = ref.split(":", 2)[2]
                     input_metas.append(executor._load_source_meta(dataset_id))
                 else:
                     input_metas.append(task_results[ref])

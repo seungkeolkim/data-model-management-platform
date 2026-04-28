@@ -11,31 +11,33 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Modal, Select, Typography, Space, Alert, Spin, Tag, Divider } from 'antd'
 import { useQueries, useMutation, useQueryClient } from '@tanstack/react-query'
-import { datasetsForPipelineApi, pipelineEntitiesApi } from '@/api/pipeline'
-import type { PipelineEntityResponse } from '@/types/pipeline'
+import { datasetsForPipelineApi, pipelineVersionsApi } from '@/api/pipeline'
+import type { PipelineVersionResponse } from '@/types/pipeline'
 import type { DatasetGroup, DatasetSummary } from '@/types/dataset'
+import { parseSourceRef } from '@/pipeline-sdk/sourceFormat'
 
 const { Text } = Typography
 
 interface VersionResolverModalProps {
   open: boolean
-  pipeline: PipelineEntityResponse | null
+  /** 실행할 PipelineVersion (config 보유). */
+  pipelineVersion: PipelineVersionResponse | null
   onClose: () => void
   onSubmitted?: (runId: string) => void
 }
 
 /**
  * config 에서 필요한 모든 source split_id 를 추출.
- * `config.tasks[*].inputs` 의 `source:<split_id>` + `config.passthrough_source_split_id`.
+ * v3 spec 포맷: `source:dataset_split:<split_id>` + `passthrough_source_split_id`.
  */
 function collectSourceSplitIdsFromConfig(config: Record<string, unknown>): string[] {
   const ids = new Set<string>()
   const tasks = config.tasks as Record<string, { inputs?: string[] }> | undefined
   for (const task of Object.values(tasks ?? {})) {
     for (const input of task.inputs ?? []) {
-      if (input.startsWith('source:')) {
-        ids.add(input.slice('source:'.length))
-      }
+      const parsed = parseSourceRef(input)
+      // 사용자 spec 단계에서 호출되므로 dataset_split 만 수집.
+      if (parsed && parsed.type === 'dataset_split') ids.add(parsed.id)
     }
   }
   const passthrough = config.passthrough_source_split_id as string | null | undefined
@@ -78,7 +80,7 @@ function lookupSplitInfo(
 
 export function VersionResolverModal({
   open,
-  pipeline,
+  pipelineVersion,
   onClose,
   onSubmitted,
 }: VersionResolverModalProps) {
@@ -88,18 +90,17 @@ export function VersionResolverModal({
 
   // 필요한 split_id 목록을 config 에서 추출
   const requiredSplitIds = useMemo(() => {
-    if (!pipeline) return []
-    return collectSourceSplitIdsFromConfig(pipeline.config)
-  }, [pipeline])
+    if (!pipelineVersion) return []
+    return collectSourceSplitIdsFromConfig(pipelineVersion.config)
+  }, [pipelineVersion])
 
-  // DatasetGroup 전체 로드 (split_id 역조회용). §9-7 페이지 재배선 시 전용 lookup
-  // 엔드포인트로 교체 검토.
+  // DatasetGroup 전체 로드 (split_id 역조회용).
   const [groupsQuery] = useQueries({
     queries: [
       {
         queryKey: ['dataset-groups-all-for-resolver'],
         queryFn: () => datasetsForPipelineApi.listGroups().then((r) => r.data),
-        enabled: open && !!pipeline,
+        enabled: open && !!pipelineVersion,
         staleTime: 10_000,
       },
     ],
@@ -130,14 +131,15 @@ export function VersionResolverModal({
 
   const submitMutation = useMutation({
     mutationFn: async () => {
-      if (!pipeline) throw new Error('pipeline 없음')
-      const response = await pipelineEntitiesApi.submitRun(pipeline.id, {
+      if (!pipelineVersion) throw new Error('pipelineVersion 없음')
+      const response = await pipelineVersionsApi.submitRun(pipelineVersion.id, {
         resolved_input_versions: resolvedVersions,
       })
       return response.data
     },
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['pipeline-entities'] })
+      queryClient.invalidateQueries({ queryKey: ['pipeline-concepts'] })
+      queryClient.invalidateQueries({ queryKey: ['pipeline-versions'] })
       queryClient.invalidateQueries({ queryKey: ['pipeline-runs'] })
       onSubmitted?.(data.execution_id)
       onClose()
@@ -151,7 +153,7 @@ export function VersionResolverModal({
     },
   })
 
-  if (!pipeline) return null
+  if (!pipelineVersion) return null
 
   const isLoading = groupsQuery.isLoading
   const allVersionsSelected =
@@ -165,7 +167,7 @@ export function VersionResolverModal({
         <Space>
           <span>파이프라인 실행</span>
           <Tag color="blue" style={{ margin: 0 }}>
-            {pipeline.name} v{pipeline.version}
+            {pipelineVersion.pipeline_name} v{pipelineVersion.version}
           </Tag>
         </Space>
       }

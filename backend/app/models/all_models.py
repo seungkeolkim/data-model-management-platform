@@ -296,50 +296,73 @@ class Manipulator(Base):
     )
 
 
-class Pipeline(Base):
+class PipelineFamily(Base):
     """
-    파이프라인 정적 템플릿 (v7.10 신규 — 핸드오프 027 §2-1).
+    Pipeline 의 즐겨찾기 폴더 (v7.11 신규 — feature/pipeline-family-and-version).
 
-    `config` JSONB 는 생성 후 **절대 수정 금지** (§6-1 immutable). 변경이 필요하면
-    새 버전 (major++) 또는 새 name 으로 별도 행을 생성한다. 동일성 자동 판정 (해시)은
-    하지 않는다 — 027 §3-2 사용자 확정.
-
-    `input_split_id` top-level FK 는 **두지 않는다** (§12-9 C 확정). multi-input 이
-    흔하므로 `config.tasks[*].inputs` 의 `source:<split_id>` 가 유일 진리. output 은
-    단일이라 `output_split_id` FK 만 둔다.
+    Pipeline 들이 자유롭게 들고 날 수 있는 느슨한 묶음. DatasetGroup 처럼
+    구조적 강제력은 없고, 사용자가 "이 family 에 묶어보고 싶다" 는 의도만
+    담는다. Pipeline.family_id 는 NULL 허용 — 미분류 상태도 정상.
     """
-    __tablename__ = "pipelines"
-    __table_args__ = (
-        UniqueConstraint("name", "version", name="uq_pipeline_name_version"),
-    )
+    __tablename__ = "pipeline_families"
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
     name: Mapped[str] = mapped_column(
-        String(255), nullable=False,
-        comment="사용자 명시 또는 {output_group}_{output_split} 자동 생성 (§12-2)",
+        String(255), nullable=False, unique=True,
+        comment="family 이름 — 전역 UNIQUE",
     )
-    version: Mapped[str] = mapped_column(
-        String(20), nullable=False, default="1.0",
-        comment="{major}.{minor} — 사용자 명시로만 major++ (hash 판정 없음, §3-2)",
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=False), nullable=False, default=_now, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=False), nullable=False, default=_now,
+        onupdate=_now, server_default=func.now()
+    )
+
+    pipelines: Mapped[list[Pipeline]] = relationship(
+        "Pipeline", back_populates="family",
+    )
+
+
+class Pipeline(Base):
+    """
+    Pipeline 의 개념 정체성 (v7.11 — feature/pipeline-family-and-version).
+
+    "이 파이프라인이 무엇을 하는가" 의 단일 정체성. config / version 은
+    하위 PipelineVersion 행으로 분리됨. output_split_id / task_type 은
+    개념 레벨 고정 — 변경 시엔 다른 Pipeline 으로 만들어야 함.
+
+    `name` 은 전역 UNIQUE (사용자 결정). family 간 자유 이동을 허용하기 때문에
+    family 와 무관한 식별자가 됨.
+    """
+    __tablename__ = "pipelines"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    family_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("pipeline_families.id", ondelete="SET NULL"),
+        nullable=True,
+        comment="즐겨찾기 폴더. NULL 이면 미분류",
+    )
+    name: Mapped[str] = mapped_column(
+        String(255), nullable=False, unique=True,
+        comment="개념 이름. 전역 UNIQUE",
     )
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     output_split_id: Mapped[str] = mapped_column(
         UUID(as_uuid=False),
         ForeignKey("dataset_splits.id", ondelete="RESTRICT"),
         nullable=False,
-        comment="output 은 항상 단일 DatasetSplit. §12-9",
-    )
-    config: Mapped[dict] = mapped_column(
-        JSONB, nullable=False,
-        comment="PipelineConfig JSONB 스냅샷 (schema_version 1 또는 2). §6-1 immutable",
+        comment="output 은 항상 단일 DatasetSplit, 개념 레벨 고정",
     )
     task_type: Mapped[str] = mapped_column(
         String(30), nullable=False,
-        comment="DETECTION | CLASSIFICATION | ... — 생성 시점 스냅샷",
+        comment="DETECTION | CLASSIFICATION | ... — 개념 레벨 고정",
     )
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default="true",
-        comment="soft delete. is_active=FALSE 면 새 run 제출 / automation 등록 차단.",
+        comment="개념 단위 soft delete. False 면 모든 version 의 새 run / automation 차단",
     )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=False), nullable=False, default=_now, server_default=func.now()
@@ -349,16 +372,70 @@ class Pipeline(Base):
         onupdate=_now, server_default=func.now()
     )
 
-    # Relationships
-    output_split: Mapped[DatasetSplit] = relationship("DatasetSplit")
-    runs: Mapped[list[PipelineRun]] = relationship(
-        "PipelineRun", back_populates="pipeline",
+    family: Mapped[PipelineFamily | None] = relationship(
+        "PipelineFamily", back_populates="pipelines",
     )
-    # Pipeline : Automation = 1:0..1 (partial unique index 로 soft-deleted 제외)
+    output_split: Mapped[DatasetSplit] = relationship("DatasetSplit")
+    versions: Mapped[list[PipelineVersion]] = relationship(
+        "PipelineVersion", back_populates="pipeline",
+        cascade="all, delete-orphan",
+        order_by="PipelineVersion.created_at.desc()",
+    )
+
+
+class PipelineVersion(Base):
+    """
+    Pipeline 의 한 버전 인스턴스 (v7.11 신규).
+
+    `config` 는 생성 후 immutable (§6-1 유지). 같은 Pipeline 안에서 version 이
+    누적된다. 다른 Pipeline 으로 이동 불가 — pipeline_id FK NOT NULL + RESTRICT.
+    """
+    __tablename__ = "pipeline_versions"
+    __table_args__ = (
+        UniqueConstraint(
+            "pipeline_id", "version",
+            name="uq_pipeline_versions_pipeline_version",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    pipeline_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("pipelines.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    version: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="1.0",
+        comment="{major}.{minor} — 사용자 명시로만 major++ (hash 판정 없음)",
+    )
+    config: Mapped[dict] = mapped_column(
+        JSONB, nullable=False,
+        comment=(
+            "PipelineConfig JSONB 스냅샷 (schema_version=3, source 토큰 v3 포맷). "
+            "생성 후 immutable"
+        ),
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true",
+        comment="version 단위 soft delete (Pipeline 의 is_active 와 독립)",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=False), nullable=False, default=_now, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=False), nullable=False, default=_now,
+        onupdate=_now, server_default=func.now()
+    )
+
+    pipeline: Mapped[Pipeline] = relationship("Pipeline", back_populates="versions")
+    runs: Mapped[list[PipelineRun]] = relationship(
+        "PipelineRun", back_populates="pipeline_version",
+    )
+    # PipelineVersion : Automation = 1:0..1 (partial unique index)
     automation: Mapped[PipelineAutomation | None] = relationship(
-        "PipelineAutomation", back_populates="pipeline",
+        "PipelineAutomation", back_populates="pipeline_version",
         primaryjoin=(
-            "and_(Pipeline.id == PipelineAutomation.pipeline_id, "
+            "and_(PipelineVersion.id == PipelineAutomation.pipeline_version_id, "
             "PipelineAutomation.is_active == True)"
         ),
         uselist=False, viewonly=True,
@@ -367,18 +444,17 @@ class Pipeline(Base):
 
 class PipelineAutomation(Base):
     """
-    Pipeline 과 1:0..1 관계의 runner 등록 (v7.10 신규 — 핸드오프 027 §2-3).
+    PipelineVersion 과 1:0..1 관계의 runner 등록 (v7.11 — version 레벨로 격상).
 
-    soft delete 패턴 (§12-3): `is_active` / `deleted_at`. FK 제약은 그대로 유지되므로
-    과거 `PipelineRun.automation_id` 참조는 row 가 살아있는 한 영원히 유효.
-    partial unique index 로 "active automation 은 pipeline 당 1개" 강제.
+    "Automation 은 family 가 아니라 특정 version 을 가리킨다" 결정 (§3-3) 유지.
+    pipeline_version_id 단위로 partial unique 제약. soft delete 패턴 동일.
     """
     __tablename__ = "pipeline_automations"
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
-    pipeline_id: Mapped[str] = mapped_column(
+    pipeline_version_id: Mapped[str] = mapped_column(
         UUID(as_uuid=False),
-        ForeignKey("pipelines.id", ondelete="RESTRICT"),
+        ForeignKey("pipeline_versions.id", ondelete="RESTRICT"),
         nullable=False,
     )
     status: Mapped[str] = mapped_column(
@@ -418,7 +494,9 @@ class PipelineAutomation(Base):
     )
 
     # Relationships
-    pipeline: Mapped[Pipeline] = relationship("Pipeline", back_populates="automation")
+    pipeline_version: Mapped[PipelineVersion] = relationship(
+        "PipelineVersion", back_populates="automation",
+    )
 
 
 class PipelineRun(Base):
@@ -432,11 +510,11 @@ class PipelineRun(Base):
     __tablename__ = "pipeline_runs"
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
-    pipeline_id: Mapped[str] = mapped_column(
+    pipeline_version_id: Mapped[str] = mapped_column(
         UUID(as_uuid=False),
-        ForeignKey("pipelines.id", ondelete="RESTRICT"),
+        ForeignKey("pipeline_versions.id", ondelete="RESTRICT"),
         nullable=False,
-        comment="소속 Pipeline (NOT NULL).",
+        comment="소속 PipelineVersion (NOT NULL). v7.11 — Pipeline → PipelineVersion 으로 격하",
     )
     automation_id: Mapped[str | None] = mapped_column(
         UUID(as_uuid=False),
@@ -498,7 +576,9 @@ class PipelineRun(Base):
     )
 
     # Relationships
-    pipeline: Mapped[Pipeline] = relationship("Pipeline", back_populates="runs")
+    pipeline_version: Mapped[PipelineVersion] = relationship(
+        "PipelineVersion", back_populates="runs",
+    )
     automation: Mapped[PipelineAutomation | None] = relationship("PipelineAutomation")
     output_dataset: Mapped[DatasetVersion] = relationship("DatasetVersion", back_populates="pipeline_runs")
 

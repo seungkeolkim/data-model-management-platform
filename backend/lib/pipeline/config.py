@@ -4,7 +4,7 @@
 Pydantic BaseModel로 정의하되, DB/FastAPI에 의존하지 않는 순수 설정.
 app/schemas/pipeline.py에서 re-export하여 API 레이어에서도 사용한다.
 
-YAML 구조 (schema_version=2, v7.10 — 2안 run-time version 해석):
+YAML 구조 (schema_version=3, v7.11 — source 토큰에 type 명시):
     pipeline:
       name: "출력 그룹명"
       description: "설명"
@@ -15,14 +15,20 @@ YAML 구조 (schema_version=2, v7.10 — 2안 run-time version 해석):
       tasks:
         task_name:
           operator: det_format_convert_to_coco
-          inputs: ["source:<split_id>"]
+          inputs: ["source:dataset_split:<split_id>"]    # 사용자 spec
+          # 또는 PipelineRun.transform_config 단계 (resolved):
+          # inputs: ["source:dataset_version:<version_id>"]
           params: { ... }
       passthrough_source_split_id: "<split_id>"
-      schema_version: 2
+      schema_version: 3
 
-Pipeline 엔티티 config 로 저장되며, 실제 실행 시 Version Resolver Modal 이
-`{split_id: version}` 을 확정해 `PipelineRun.resolved_input_versions` 에 저장. 즉
-"어느 split 을 쓰는가" 는 Pipeline 이, "어느 version 을 썼는가" 는 Run 이 보유.
+source 토큰의 type 차원:
+    - dataset_split   — Pipeline.config / PipelineVersion.config 측 (사용자 spec)
+    - dataset_version — PipelineRun.transform_config 측 (resolved 스냅샷)
+
+submit 단계 `_substitute_resolved_versions` 가 spec → resolved 변환 시 type 도
+`dataset_split` → `dataset_version` 으로 함께 flip 한다. dag_executor 는 항상
+`dataset_version` 만 본다.
 """
 from __future__ import annotations
 
@@ -34,7 +40,36 @@ from pydantic import BaseModel, Field, model_validator
 
 
 # 현재 SDK 가 생성하고 backend 가 받는 PipelineConfig schema 버전.
-CURRENT_SCHEMA_VERSION: int = 2
+CURRENT_SCHEMA_VERSION: int = 3
+
+# v3 source 토큰 type 상수.
+SOURCE_TYPE_SPLIT: str = "dataset_split"
+SOURCE_TYPE_VERSION: str = "dataset_version"
+_VALID_SOURCE_TYPES = (SOURCE_TYPE_SPLIT, SOURCE_TYPE_VERSION)
+
+
+def parse_source_ref(ref: str) -> tuple[str, str] | None:
+    """
+    v3 source 토큰을 파싱해 `(type, id)` 튜플로 반환. source 가 아니면 None.
+
+    유효한 type: `dataset_split` | `dataset_version`
+    """
+    if not isinstance(ref, str) or not ref.startswith("source:"):
+        return None
+    parts = ref.split(":", 2)
+    if len(parts) != 3:
+        raise ValueError(
+            f"source 토큰이 v3 포맷이 아닙니다 — `source:<type>:<id>` 가 필요: {ref!r}"
+        )
+    _, type_name, id_value = parts
+    if type_name not in _VALID_SOURCE_TYPES:
+        raise ValueError(
+            f"source 토큰 type 이 잘못됨: {type_name!r}. "
+            f"유효: {_VALID_SOURCE_TYPES}"
+        )
+    if not id_value:
+        raise ValueError(f"source 토큰 id 가 비어있음: {ref!r}")
+    return type_name, id_value
 
 
 class TaskConfig(BaseModel):
@@ -45,19 +80,29 @@ class TaskConfig(BaseModel):
         min_length=1,
         description=(
             "입력 참조 목록. "
-            "'source:<dataset_id>' = DB 데이터셋, "
+            "'source:dataset_split:<split_id>' (spec) 또는 "
+            "'source:dataset_version:<version_id>' (resolved) = DB 데이터셋, "
             "태스크명 = 이전 태스크 출력"
         ),
     )
     params: dict[str, Any] = Field(default_factory=dict)
 
-    def get_source_dataset_ids(self) -> list[str]:
-        """inputs 중 'source:' 접두사를 가진 dataset_id 목록 반환."""
-        return [
-            ref.split(":", 1)[1]
-            for ref in self.inputs
-            if ref.startswith("source:")
-        ]
+    def get_source_refs(self) -> list[tuple[str, str]]:
+        """inputs 중 source 토큰을 (type, id) 목록으로 반환. 다른 ref 는 무시."""
+        result: list[tuple[str, str]] = []
+        for ref in self.inputs:
+            parsed = parse_source_ref(ref)
+            if parsed is not None:
+                result.append(parsed)
+        return result
+
+    def get_source_split_ids(self) -> list[str]:
+        """spec 단계 — `source:dataset_split:<id>` 토큰의 id 들."""
+        return [id_ for type_, id_ in self.get_source_refs() if type_ == SOURCE_TYPE_SPLIT]
+
+    def get_source_version_ids(self) -> list[str]:
+        """resolved 단계 — `source:dataset_version:<id>` 토큰의 id 들 (executor 측)."""
+        return [id_ for type_, id_ in self.get_source_refs() if type_ == SOURCE_TYPE_VERSION]
 
     def get_dependency_task_names(self) -> list[str]:
         """inputs 중 다른 태스크를 참조하는 이름 목록 반환."""
@@ -110,11 +155,11 @@ class PipelineConfig(BaseModel):
         default=None,
         description="(resolved) passthrough 의 DatasetVersion.id — backend submit 단계에서 채움",
     )
-    # DAG schema 버전. FE SDK 가 config 생성 시 기입. 현재는 항상 2.
+    # DAG schema 버전. FE SDK 가 config 생성 시 기입. 현재는 항상 3.
     # 미래 변경 대비 완충 필드.
     schema_version: int | None = Field(
         default=None,
-        description="DAG schema 버전 (현재 2 만 허용)",
+        description="DAG schema 버전 (현재 3 만 허용)",
     )
 
     @model_validator(mode="after")
@@ -203,10 +248,10 @@ class PipelineConfig(BaseModel):
 
     def get_all_source_split_ids(self) -> list[str]:
         """
-        파이프라인 전체에서 참조하는 모든 source DatasetSplit.id 를 중복 제거 반환.
+        spec 단계 — `source:dataset_split:<id>` 토큰의 모든 id 를 중복 제거 반환.
         passthrough 모드는 passthrough_source_split_id 도 포함.
 
-        FE / 사용자가 작성한 spec 의 split-level 참조를 가져올 때 사용.
+        FE / 사용자가 작성한 spec 단계의 split-level 참조 수집용.
         """
         seen: set[str] = set()
         result: list[str] = []
@@ -214,7 +259,7 @@ class PipelineConfig(BaseModel):
             seen.add(self.passthrough_source_split_id)
             result.append(self.passthrough_source_split_id)
         for task_config in self.tasks.values():
-            for split_id in task_config.get_source_dataset_ids():
+            for split_id in task_config.get_source_split_ids():
                 if split_id not in seen:
                     seen.add(split_id)
                     result.append(split_id)
@@ -222,14 +267,9 @@ class PipelineConfig(BaseModel):
 
     def get_all_source_dataset_ids(self) -> list[str]:
         """
-        executor 가 보는 resolved DatasetVersion.id 들 — submit 단계에서 split_id 가
-        dataset_version_id 로 치환된 후의 transform_config 에서 호출된다.
-
-        config.tasks[*].inputs 의 `source:<X>` 와 `passthrough_source_dataset_id` 의 X 값을
-        반환. 호출 시점이 spec 단계인지 resolved 단계인지에 따라 X 의 의미가 달라지므로
-        호출부에서 의도를 명확히 할 것:
-          - spec 단계: source ref 가 split_id → get_all_source_split_ids 사용
-          - resolved 단계: source ref 가 dataset_version_id → 이 메서드 사용 (executor)
+        resolved 단계 — `source:dataset_version:<id>` 토큰의 모든 id 를 중복 제거 반환.
+        executor 측 호출 (submit 단계에서 split → version 치환된 transform_config).
+        passthrough 의 경우 passthrough_source_dataset_id 도 포함.
         """
         seen: set[str] = set()
         result: list[str] = []
@@ -237,10 +277,10 @@ class PipelineConfig(BaseModel):
             seen.add(self.passthrough_source_dataset_id)
             result.append(self.passthrough_source_dataset_id)
         for task_config in self.tasks.values():
-            for source_id in task_config.get_source_dataset_ids():
-                if source_id not in seen:
-                    seen.add(source_id)
-                    result.append(source_id)
+            for version_id in task_config.get_source_version_ids():
+                if version_id not in seen:
+                    seen.add(version_id)
+                    result.append(version_id)
         return result
 
     @property
@@ -353,14 +393,14 @@ class PartialPipelineConfig(BaseModel):
         return order
 
     def get_all_source_split_ids(self) -> list[str]:
-        """파이프라인 전체에서 참조하는 모든 source DatasetSplit.id 를 중복 제거 반환."""
+        """spec 단계 — `source:dataset_split:<id>` 토큰의 모든 id 를 중복 제거 반환."""
         seen: set[str] = set()
         result: list[str] = []
         if self.passthrough_source_split_id:
             seen.add(self.passthrough_source_split_id)
             result.append(self.passthrough_source_split_id)
         for task_config in self.tasks.values():
-            for split_id in task_config.get_source_dataset_ids():
+            for split_id in task_config.get_source_split_ids():
                 if split_id not in seen:
                     seen.add(split_id)
                     result.append(split_id)
@@ -392,8 +432,9 @@ def load_pipeline_config_from_yaml(yaml_path: str | Path) -> PipelineConfig:
           tasks:
             convert:
               operator: det_format_convert_to_coco
-              inputs: ["source:abc-123"]
+              inputs: ["source:dataset_split:abc-123"]
               params: {}
+          schema_version: 3
 
     Args:
         yaml_path: YAML 파일 경로

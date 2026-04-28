@@ -44,7 +44,7 @@ class TestPipelineConfigBasic:
             tasks={
                 "convert": TaskConfig(
                     operator="det_format_convert_to_coco",
-                    inputs=["source:abc-123"],
+                    inputs=["source:dataset_split:abc-123"],
                     params={},
                 ),
             },
@@ -62,7 +62,7 @@ class TestPipelineConfigBasic:
             tasks={
                 "step_1": TaskConfig(
                     operator="det_format_convert_to_coco",
-                    inputs=["source:aaa"],
+                    inputs=["source:dataset_split:aaa"],
                 ),
                 "step_2": TaskConfig(
                     operator="det_remap_class_name",
@@ -79,7 +79,7 @@ class TestPipelineConfigBasic:
             name="default_output",
             output={"annotation_format": "COCO"},
             tasks={
-                "t1": TaskConfig(operator="op", inputs=["source:x"]),
+                "t1": TaskConfig(operator="op", inputs=["source:dataset_split:x"]),
             },
         )
         assert config.output.dataset_type == "SOURCE"
@@ -92,7 +92,7 @@ class TestPipelineConfigBasic:
             PipelineConfig(
                 name="no_format",
                 tasks={
-                    "t1": TaskConfig(operator="op", inputs=["source:x"]),
+                    "t1": TaskConfig(operator="op", inputs=["source:dataset_split:x"]),
                 },
             )
 
@@ -126,7 +126,7 @@ class TestDagValidation:
                 name="bad_ref",
                 output=_DEFAULT_OUTPUT,
                 tasks={
-                    "t1": TaskConfig(operator="op", inputs=["source:x"]),
+                    "t1": TaskConfig(operator="op", inputs=["source:dataset_split:x"]),
                     "t2": TaskConfig(operator="op", inputs=["nonexistent"]),
                 },
             )
@@ -149,7 +149,7 @@ class TestDagValidation:
                 name="cycle",
                 output=_DEFAULT_OUTPUT,
                 tasks={
-                    "a": TaskConfig(operator="op", inputs=["source:x", "c"]),
+                    "a": TaskConfig(operator="op", inputs=["source:dataset_split:x", "c"]),
                     "b": TaskConfig(operator="op", inputs=["a"]),
                     "c": TaskConfig(operator="op", inputs=["b"]),
                 },
@@ -161,7 +161,7 @@ class TestDagValidation:
             name="diamond",
             output=_DEFAULT_OUTPUT,
             tasks={
-                "a": TaskConfig(operator="op", inputs=["source:x"]),
+                "a": TaskConfig(operator="op", inputs=["source:dataset_split:x"]),
                 "b": TaskConfig(operator="op", inputs=["a"]),
                 "c": TaskConfig(operator="op", inputs=["a"]),
                 "d": TaskConfig(operator="op", inputs=["b", "c"]),
@@ -175,7 +175,7 @@ class TestDagValidation:
             name="source_only",
             output=_DEFAULT_OUTPUT,
             tasks={
-                "t1": TaskConfig(operator="op", inputs=["source:dataset-1", "source:dataset-2"]),
+                "t1": TaskConfig(operator="op", inputs=["source:dataset_split:dataset-1", "source:dataset_split:dataset-2"]),
             },
         )
         assert len(config.tasks) == 1
@@ -193,7 +193,7 @@ class TestTopologicalOrder:
             name="single",
             output=_DEFAULT_OUTPUT,
             tasks={
-                "only": TaskConfig(operator="op", inputs=["source:x"]),
+                "only": TaskConfig(operator="op", inputs=["source:dataset_split:x"]),
             },
         )
         assert config.topological_order() == ["only"]
@@ -205,7 +205,7 @@ class TestTopologicalOrder:
             output=_DEFAULT_OUTPUT,
             tasks={
                 "c": TaskConfig(operator="op", inputs=["b"]),
-                "a": TaskConfig(operator="op", inputs=["source:x"]),
+                "a": TaskConfig(operator="op", inputs=["source:dataset_split:x"]),
                 "b": TaskConfig(operator="op", inputs=["a"]),
             },
         )
@@ -218,7 +218,7 @@ class TestTopologicalOrder:
             name="diamond",
             output=_DEFAULT_OUTPUT,
             tasks={
-                "a": TaskConfig(operator="op", inputs=["source:x"]),
+                "a": TaskConfig(operator="op", inputs=["source:dataset_split:x"]),
                 "b": TaskConfig(operator="op", inputs=["a"]),
                 "c": TaskConfig(operator="op", inputs=["a"]),
                 "d": TaskConfig(operator="op", inputs=["b", "c"]),
@@ -236,8 +236,8 @@ class TestTopologicalOrder:
             name="two_sources",
             output=_DEFAULT_OUTPUT,
             tasks={
-                "src_a": TaskConfig(operator="op", inputs=["source:a"]),
-                "src_b": TaskConfig(operator="op", inputs=["source:b"]),
+                "src_a": TaskConfig(operator="op", inputs=["source:dataset_split:a"]),
+                "src_b": TaskConfig(operator="op", inputs=["source:dataset_split:b"]),
                 "merge": TaskConfig(operator="op", inputs=["src_a", "src_b"]),
             },
         )
@@ -259,7 +259,7 @@ class TestTerminalTask:
             name="single",
             output=_DEFAULT_OUTPUT,
             tasks={
-                "only": TaskConfig(operator="op", inputs=["source:x"]),
+                "only": TaskConfig(operator="op", inputs=["source:dataset_split:x"]),
             },
         )
         assert config.get_terminal_task_name() == "only"
@@ -269,7 +269,7 @@ class TestTerminalTask:
             name="chain",
             output=_DEFAULT_OUTPUT,
             tasks={
-                "a": TaskConfig(operator="op", inputs=["source:x"]),
+                "a": TaskConfig(operator="op", inputs=["source:dataset_split:x"]),
                 "b": TaskConfig(operator="op", inputs=["a"]),
                 "c": TaskConfig(operator="op", inputs=["b"]),
             },
@@ -283,8 +283,8 @@ class TestTerminalTask:
                 name="multi_terminal",
                 output=_DEFAULT_OUTPUT,
                 tasks={
-                    "a": TaskConfig(operator="op", inputs=["source:x"]),
-                    "b": TaskConfig(operator="op", inputs=["source:y"]),
+                    "a": TaskConfig(operator="op", inputs=["source:dataset_split:x"]),
+                    "b": TaskConfig(operator="op", inputs=["source:dataset_split:y"]),
                 },
             )
             config.get_terminal_task_name()
@@ -295,17 +295,17 @@ class TestTerminalTask:
 # =============================================================================
 
 class TestSourceDatasetIds:
-    """get_all_source_dataset_ids() 검증."""
+    """get_all_source_split_ids() 검증."""
 
     def test_single_source(self):
         config = PipelineConfig(
             name="single_src",
             output=_DEFAULT_OUTPUT,
             tasks={
-                "t1": TaskConfig(operator="op", inputs=["source:abc-123"]),
+                "t1": TaskConfig(operator="op", inputs=["source:dataset_split:abc-123"]),
             },
         )
-        assert config.get_all_source_dataset_ids() == ["abc-123"]
+        assert config.get_all_source_split_ids() == ["abc-123"]
 
     def test_multiple_sources_deduped(self):
         """동일 source가 여러 태스크에서 참조되면 중복 제거."""
@@ -313,12 +313,12 @@ class TestSourceDatasetIds:
             name="dedup",
             output=_DEFAULT_OUTPUT,
             tasks={
-                "t1": TaskConfig(operator="op", inputs=["source:aaa"]),
-                "t2": TaskConfig(operator="op", inputs=["source:aaa", "source:bbb"]),
+                "t1": TaskConfig(operator="op", inputs=["source:dataset_split:aaa"]),
+                "t2": TaskConfig(operator="op", inputs=["source:dataset_split:aaa", "source:dataset_split:bbb"]),
                 "t3": TaskConfig(operator="op", inputs=["t1", "t2"]),
             },
         )
-        ids = config.get_all_source_dataset_ids()
+        ids = config.get_all_source_split_ids()
         assert ids == ["aaa", "bbb"]
 
     def test_no_sources(self):
@@ -329,10 +329,10 @@ class TestSourceDatasetIds:
             name="only_source",
             output=_DEFAULT_OUTPUT,
             tasks={
-                "t1": TaskConfig(operator="op", inputs=["source:x"]),
+                "t1": TaskConfig(operator="op", inputs=["source:dataset_split:x"]),
             },
         )
-        assert len(config.get_all_source_dataset_ids()) == 1
+        assert len(config.get_all_source_split_ids()) == 1
 
 
 # =============================================================================
@@ -340,30 +340,30 @@ class TestSourceDatasetIds:
 # =============================================================================
 
 class TestTaskConfigHelpers:
-    """TaskConfig의 get_source_dataset_ids, get_dependency_task_names."""
+    """TaskConfig의 get_source_split_ids, get_dependency_task_names."""
 
-    def test_get_source_dataset_ids(self):
+    def test_get_source_split_ids(self):
         task = TaskConfig(
             operator="op",
-            inputs=["source:aaa", "source:bbb", "prev_task"],
+            inputs=["source:dataset_split:aaa", "source:dataset_split:bbb", "prev_task"],
         )
-        assert task.get_source_dataset_ids() == ["aaa", "bbb"]
+        assert task.get_source_split_ids() == ["aaa", "bbb"]
 
     def test_get_dependency_task_names(self):
         task = TaskConfig(
             operator="op",
-            inputs=["source:aaa", "prev_task_1", "prev_task_2"],
+            inputs=["source:dataset_split:aaa", "prev_task_1", "prev_task_2"],
         )
         assert task.get_dependency_task_names() == ["prev_task_1", "prev_task_2"]
 
     def test_source_only(self):
-        task = TaskConfig(operator="op", inputs=["source:x"])
-        assert task.get_source_dataset_ids() == ["x"]
+        task = TaskConfig(operator="op", inputs=["source:dataset_split:x"])
+        assert task.get_source_split_ids() == ["x"]
         assert task.get_dependency_task_names() == []
 
     def test_task_only(self):
         task = TaskConfig(operator="op", inputs=["other_task"])
-        assert task.get_source_dataset_ids() == []
+        assert task.get_source_split_ids() == []
         assert task.get_dependency_task_names() == ["other_task"]
 
 
@@ -387,7 +387,7 @@ class TestYamlParsing:
               tasks:
                 convert:
                   operator: det_format_convert_to_coco
-                  inputs: ["source:abc-123"]
+                  inputs: ["source:dataset_split:abc-123"]
                   params:
                     category_names:
                       - person
@@ -419,11 +419,11 @@ class TestYamlParsing:
               tasks:
                 prep_a:
                   operator: det_format_convert_to_coco
-                  inputs: ["source:dataset-a"]
+                  inputs: ["source:dataset_split:dataset-a"]
                   params: {}
                 prep_b:
                   operator: det_format_convert_to_coco
-                  inputs: ["source:dataset-b"]
+                  inputs: ["source:dataset_split:dataset-b"]
                   params: {}
                 merge_all:
                   operator: det_merge_datasets
@@ -437,7 +437,7 @@ class TestYamlParsing:
 
         assert len(config.tasks) == 3
         assert config.get_terminal_task_name() == "merge_all"
-        assert set(config.get_all_source_dataset_ids()) == {"dataset-a", "dataset-b"}
+        assert set(config.get_all_source_split_ids()) == {"dataset-a", "dataset-b"}
 
         order = config.topological_order()
         assert order[-1] == "merge_all"
@@ -464,7 +464,7 @@ class TestYamlParsing:
               tasks:
                 convert_to_coco:
                   operator: det_format_convert_to_coco
-                  inputs: ["source:550e8400-e29b-41d4-a716-446655440000"]
+                  inputs: ["source:dataset_split:550e8400-e29b-41d4-a716-446655440000"]
                   params:
                     category_names:
                       - pedestrian
@@ -501,6 +501,6 @@ class TestYamlParsing:
 
         order = config.topological_order()
         assert order == ["convert_to_coco", "remap_classes", "final_filter"]
-        assert config.get_all_source_dataset_ids() == [
+        assert config.get_all_source_split_ids() == [
             "550e8400-e29b-41d4-a716-446655440000"
         ]

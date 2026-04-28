@@ -1,21 +1,36 @@
 """
-파이프라인 실행 API 라우터.
+파이프라인 API 라우터 (v7.11 — feature/pipeline-family-and-version).
 
-POST /execute       — 파이프라인 제출 (Celery 비동기 실행)
-GET /{id}/status    — 실행 상태 조회
-GET /               — 실행 이력 목록
+라우트 그룹:
+  - PipelineRun (실행 이력 / 제출 / 상태)              — `/api/v1/pipelines/runs/*`
+  - Pipeline (concept) CRUD                             — `/api/v1/pipelines/{id}`
+  - PipelineVersion (config + version 인스턴스)         — `/api/v1/pipelines/versions/{id}`
+  - PipelineFamily (즐겨찾기 폴더)                       — `/api/v1/pipelines/families/*`
+  - PipelineAutomation (version 단위 runner)            — `/api/v1/pipelines/automations/*`
+  - validate / preview-schema / execute (편의)           — `/api/v1/pipelines/{validate,...}`
+
+`/api/v1/pipelines` 가 이 라우터의 prefix. 위 sub-path 는 그 하위.
 """
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.storage import get_storage_client
-from app.models.all_models import Pipeline, PipelineAutomation, PipelineRun
+from app.models.all_models import (
+    Pipeline,
+    PipelineAutomation,
+    PipelineFamily,
+    PipelineRun,
+    PipelineVersion,
+)
 from app.schemas.pipeline import (
     PipelineAutomationRerunRequest,
     PipelineAutomationResponse,
     PipelineAutomationUpsertRequest,
     PipelineConfig,
+    PipelineFamilyCreateRequest,
+    PipelineFamilyResponse,
+    PipelineFamilyUpdateRequest,
     PipelineListItemResponse,
     PipelineListPageResponse,
     PipelineListResponse,
@@ -26,6 +41,9 @@ from app.schemas.pipeline import (
     PipelineUpdateRequest,
     PipelineValidationIssueResponse,
     PipelineValidationResponse,
+    PipelineVersionResponse,
+    PipelineVersionSummary,
+    PipelineVersionUpdateRequest,
     SchemaPreviewRequest,
     SchemaPreviewResponse,
 )
@@ -35,15 +53,14 @@ from app.services.pipeline_service import PipelineService
 router = APIRouter()
 
 
-def _build_execution_response(execution: PipelineRun) -> PipelineRunResponse:
-    """
-    PipelineRun ORM → PipelineRunResponse 변환.
+# ─────────────────────────────────────────────────────────────────────────────
+# 공통 빌더
+# ─────────────────────────────────────────────────────────────────────────────
 
-    pipeline_image_url은 output_dataset의 storage_uri를 통해 생성한다.
-    output_dataset relationship이 로드된 상태여야 한다.
-    """
+def _build_run_response(run: PipelineRun) -> PipelineRunResponse:
+    """PipelineRun ORM → PipelineRunResponse. output_dataset 선로드 전제."""
     pipeline_image_url = None
-    output_dataset = execution.output_dataset
+    output_dataset = run.output_dataset
     if output_dataset and output_dataset.storage_uri:
         storage = get_storage_client()
         png_path = storage.resolve_path(output_dataset.storage_uri) / "pipeline.png"
@@ -52,7 +69,6 @@ def _build_execution_response(execution: PipelineRun) -> PipelineRunResponse:
                 f"{output_dataset.storage_uri}/pipeline.png"
             )
 
-    # 출력 데이터셋 버전 및 그룹 ID
     output_dataset_version = None
     output_dataset_group_id = None
     if output_dataset:
@@ -60,33 +76,27 @@ def _build_execution_response(execution: PipelineRun) -> PipelineRunResponse:
         output_dataset_group_id = output_dataset.group_id
 
     return PipelineRunResponse(
-        id=execution.id,
-        output_dataset_id=execution.output_dataset_id,
-        config=execution.transform_config,
-        status=execution.status,
-        current_stage=execution.current_stage,
-        processed_count=execution.processed_count,
-        total_count=execution.total_count,
-        error_message=execution.error_message,
-        celery_task_id=execution.celery_task_id,
-        task_progress=execution.task_progress,
+        id=run.id,
+        output_dataset_id=run.output_dataset_id,
+        config=run.transform_config,
+        status=run.status,
+        current_stage=run.current_stage,
+        processed_count=run.processed_count,
+        total_count=run.total_count,
+        error_message=run.error_message,
+        celery_task_id=run.celery_task_id,
+        task_progress=run.task_progress,
         pipeline_image_url=pipeline_image_url,
         output_dataset_version=output_dataset_version,
         output_dataset_group_id=output_dataset_group_id,
-        started_at=execution.started_at,
-        finished_at=execution.finished_at,
-        created_at=execution.created_at,
+        started_at=run.started_at,
+        finished_at=run.finished_at,
+        created_at=run.created_at,
     )
 
 
-def _pydantic_errors_to_issues(
-    exc: "ValidationError",
-) -> list[PipelineValidationIssueResponse]:
-    """Pydantic ValidationError 를 PipelineValidationIssueResponse 목록으로 변환.
-
-    PipelineConfig 파싱 단계에서 422 가 떨어지면 FE 가 detail 을 파싱하지 않고
-    "API 호출 실패" 만 표시되는 문제를 우회 — 200 OK + issues 응답으로 통일.
-    """
+def _pydantic_errors_to_issues(exc) -> list[PipelineValidationIssueResponse]:
+    """Pydantic ValidationError → 친화적 issue 목록."""
     return [
         PipelineValidationIssueResponse(
             severity="error",
@@ -98,23 +108,157 @@ def _pydantic_errors_to_issues(
     ]
 
 
+def _version_summary(version: PipelineVersion) -> PipelineVersionSummary:
+    return PipelineVersionSummary(
+        id=version.id,
+        version=version.version,
+        is_active=version.is_active,
+        has_automation=getattr(version, "automation", None) is not None,
+        created_at=version.created_at,
+        updated_at=version.updated_at,
+    )
+
+
+def _pipeline_to_response(pipeline: Pipeline) -> PipelineResponse:
+    """Pipeline (concept) ORM → 응답. family / output_split / versions 선로드 전제."""
+    output_split = pipeline.output_split
+    output_group = output_split.group if output_split else None
+    family = pipeline.family
+    versions_sorted = sorted(
+        list(pipeline.versions or []),
+        key=lambda v: v.created_at, reverse=True,
+    )
+    versions_summaries = [_version_summary(v) for v in versions_sorted]
+    latest_active = next(
+        (v for v in versions_summaries if v.is_active), None,
+    )
+    return PipelineResponse(
+        id=pipeline.id,
+        family_id=pipeline.family_id,
+        family_name=family.name if family else None,
+        name=pipeline.name,
+        description=pipeline.description,
+        output_split_id=pipeline.output_split_id,
+        output_group_id=output_group.id if output_group else None,
+        output_group_name=output_group.name if output_group else None,
+        output_split=output_split.split if output_split else None,
+        task_type=pipeline.task_type,
+        is_active=pipeline.is_active,
+        versions=versions_summaries,
+        latest_version=latest_active,
+        created_at=pipeline.created_at,
+        updated_at=pipeline.updated_at,
+    )
+
+
+def _pipeline_to_list_item(
+    pipeline: Pipeline,
+    *,
+    run_count: int = 0,
+    last_run_at=None,
+) -> PipelineListItemResponse:
+    output_split = pipeline.output_split
+    output_group = output_split.group if output_split else None
+    family = pipeline.family
+    active_versions = [v for v in (pipeline.versions or []) if v.is_active]
+    latest_version_str: str | None = None
+    has_automation = False
+    if active_versions:
+        latest = sorted(active_versions, key=lambda v: v.created_at, reverse=True)[0]
+        latest_version_str = latest.version
+        has_automation = getattr(latest, "automation", None) is not None
+    return PipelineListItemResponse(
+        id=pipeline.id,
+        family_id=pipeline.family_id,
+        family_name=family.name if family else None,
+        name=pipeline.name,
+        description=pipeline.description,
+        output_split_id=pipeline.output_split_id,
+        output_group_id=output_group.id if output_group else None,
+        output_group_name=output_group.name if output_group else None,
+        output_split=output_split.split if output_split else None,
+        task_type=pipeline.task_type,
+        is_active=pipeline.is_active,
+        version_count=len(pipeline.versions or []),
+        latest_version=latest_version_str,
+        has_automation=has_automation,
+        run_count=run_count,
+        last_run_at=last_run_at,
+        created_at=pipeline.created_at,
+        updated_at=pipeline.updated_at,
+    )
+
+
+def _version_to_response(version: PipelineVersion) -> PipelineVersionResponse:
+    pipeline = version.pipeline
+    output_split = pipeline.output_split if pipeline else None
+    output_group = output_split.group if output_split else None
+    family = pipeline.family if pipeline else None
+    return PipelineVersionResponse(
+        id=version.id,
+        pipeline_id=version.pipeline_id,
+        pipeline_name=pipeline.name if pipeline else "",
+        family_id=pipeline.family_id if pipeline else None,
+        family_name=family.name if family else None,
+        version=version.version,
+        config=version.config,
+        task_type=pipeline.task_type if pipeline else "",
+        output_split_id=pipeline.output_split_id if pipeline else "",
+        output_group_id=output_group.id if output_group else None,
+        output_group_name=output_group.name if output_group else None,
+        output_split=output_split.split if output_split else None,
+        is_active=version.is_active,
+        has_automation=getattr(version, "automation", None) is not None,
+        created_at=version.created_at,
+        updated_at=version.updated_at,
+    )
+
+
+def _automation_to_response(automation: PipelineAutomation) -> PipelineAutomationResponse:
+    pipeline_version = getattr(automation, "pipeline_version", None)
+    pipeline = pipeline_version.pipeline if pipeline_version else None
+    return PipelineAutomationResponse(
+        id=automation.id,
+        pipeline_version_id=automation.pipeline_version_id,
+        pipeline_id=pipeline.id if pipeline else None,
+        pipeline_name=pipeline.name if pipeline else None,
+        pipeline_version=pipeline_version.version if pipeline_version else None,
+        status=automation.status,
+        mode=automation.mode,
+        poll_interval=automation.poll_interval,
+        error_reason=automation.error_reason,
+        last_seen_input_versions=automation.last_seen_input_versions,
+        is_active=automation.is_active,
+        deleted_at=automation.deleted_at,
+        created_at=automation.created_at,
+        updated_at=automation.updated_at,
+    )
+
+
+def _family_to_response(family: PipelineFamily) -> PipelineFamilyResponse:
+    pipeline_count = len(
+        [p for p in (family.pipelines or []) if p.is_active]
+    ) if hasattr(family, "pipelines") else 0
+    return PipelineFamilyResponse(
+        id=family.id,
+        name=family.name,
+        description=family.description,
+        pipeline_count=pipeline_count,
+        created_at=family.created_at,
+        updated_at=family.updated_at,
+    )
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Validate / Preview / Execute (FE 호환 진입점)
+# ═════════════════════════════════════════════════════════════════════════════
+
 @router.post("/validate", response_model=PipelineValidationResponse)
 async def validate_pipeline(
     config_dict: dict,
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    파이프라인 설정을 실행 전에 검증한다.
-
-    정적 검증(operator 존재, 입력 수, output 유효성)과
-    DB 검증(source dataset 존재/상태)을 모두 수행한다.
-
-    is_valid가 False이면 error 수준의 문제가 있어 실행할 수 없다.
-    issues 배열에 개별 사유가 담긴다.
-
-    Pydantic 파싱 단계에서 형식 오류 (예: tasks[*].inputs 가 비어있음) 가 있으면
-    422 대신 issues 로 변환해 200 OK 로 응답한다.
-    """
+    """파이프라인 설정 검증. Pydantic 422 는 issue 로 평탄화 응답."""
     from pydantic import ValidationError
     try:
         config = PipelineConfig(**config_dict)
@@ -126,10 +270,8 @@ async def validate_pipeline(
             warning_count=0,
             issues=issues,
         )
-
     service = PipelineService(db)
     validation_result = await service.validate_pipeline(config)
-
     return PipelineValidationResponse(
         is_valid=validation_result.is_valid,
         error_count=validation_result.error_count,
@@ -151,14 +293,7 @@ async def preview_schema(
     payload: SchemaPreviewRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    DAG 의 특정 노드 시점에서 head_schema 가 어떻게 변할지 계산한다.
-
-    실제 이미지 실체화 없이 transform_annotation 만 호출하므로 수 ms 수준.
-    Classification 파이프라인에서 속성 패널의 schema 프리뷰를 그리기 위해 사용한다.
-    Detection 파이프라인(소스에 head_schema 가 없음)은 task_kind='detection' 으로
-    반환되며 head_schema 는 None.
-    """
+    """DAG 노드 시점 head_schema 프리뷰."""
     service = PipelineService(db)
     preview_dict = await service.preview_head_schema(
         config=payload.config,
@@ -173,13 +308,9 @@ async def execute_pipeline(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    파이프라인 실행을 제출한다.
+    에디터에서 "실행" — config 기반 자동 concept+version+run 생성.
 
-    요청 본문으로 PipelineConfig JSON을 받아
-    Celery 워커에 비동기 실행을 위임한다.
-    즉시 execution_id를 반환하며, 실행 상태는 GET /{id}/status로 조회한다.
-
-    Pydantic 파싱 단계의 형식 오류는 400 + 첫 issue 메시지로 응답한다 (FE 친화).
+    §12-1 "저장/실행 분리" UX 도입 시 deprecated. 그때까지는 호환 유지.
     """
     from pydantic import ValidationError
     try:
@@ -192,285 +323,227 @@ async def execute_pipeline(
     return await service.submit_pipeline(config)
 
 
-@router.get("/{execution_id}/status", response_model=PipelineRunResponse)
-async def get_pipeline_status(
-    execution_id: str,
-    db: AsyncSession = Depends(get_db),
-):
-    """파이프라인 실행 상태를 조회한다."""
-    service = PipelineService(db)
-    execution = await service.get_execution_status(execution_id)
-    if execution is None:
-        raise HTTPException(status_code=404, detail="실행 이력을 찾을 수 없습니다.")
-    return _build_execution_response(execution)
+# ═════════════════════════════════════════════════════════════════════════════
+# PipelineRun (실행 이력) — `/runs`
+# ═════════════════════════════════════════════════════════════════════════════
 
-
-@router.get("", response_model=PipelineListResponse)
+@router.get("/runs", response_model=PipelineListResponse)
 async def list_pipeline_runs(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
 ):
-    """파이프라인 실행 이력 목록을 조회한다."""
+    """전체 PipelineRun 이력 목록 (최신순)."""
     service = PipelineService(db)
     items, total = await service.list_executions(page=page, page_size=page_size)
     return PipelineListResponse(
-        items=[_build_execution_response(item) for item in items],
+        items=[_build_run_response(item) for item in items],
         total=total,
     )
 
 
-# =============================================================================
-# Pipeline 엔티티 CRUD (v7.10, 핸드오프 027 §2-1 / §12)
-#
-# 경로 규약: path 충돌을 피하기 위해 `/entities` / `/automations` sub-path 사용.
-# §9-7 페이지 재배선 시 정식 `/pipelines` top-level 로 승격 검토.
-# =============================================================================
-
-
-def _build_pipeline_list_item(
-    pipeline: Pipeline,
-    run_count: int = 0,
-    last_run_at=None,
-) -> PipelineListItemResponse:
-    """Pipeline ORM → PipelineListItemResponse. output_split / automation 선로드 전제."""
-    output_split = pipeline.output_split
-    output_group = output_split.group if output_split else None
-    return PipelineListItemResponse(
-        id=pipeline.id,
-        name=pipeline.name,
-        version=pipeline.version,
-        description=pipeline.description,
-        output_split_id=pipeline.output_split_id,
-        output_group_id=output_group.id if output_group else None,
-        output_group_name=output_group.name if output_group else None,
-        output_split=output_split.split if output_split else None,
-        task_type=pipeline.task_type,
-        is_active=pipeline.is_active,
-        has_automation=pipeline.automation is not None,
-        run_count=run_count,
-        last_run_at=last_run_at,
-        created_at=pipeline.created_at,
-        updated_at=pipeline.updated_at,
-    )
-
-
-def _build_pipeline_response(pipeline: Pipeline) -> PipelineResponse:
-    """Pipeline ORM → PipelineResponse (상세용, config 포함)."""
-    output_split = pipeline.output_split
-    output_group = output_split.group if output_split else None
-    return PipelineResponse(
-        id=pipeline.id,
-        name=pipeline.name,
-        version=pipeline.version,
-        description=pipeline.description,
-        output_split_id=pipeline.output_split_id,
-        output_group_id=output_group.id if output_group else None,
-        output_group_name=output_group.name if output_group else None,
-        output_split=output_split.split if output_split else None,
-        config=pipeline.config,
-        task_type=pipeline.task_type,
-        is_active=pipeline.is_active,
-        has_automation=pipeline.automation is not None,
-        created_at=pipeline.created_at,
-        updated_at=pipeline.updated_at,
-    )
-
-
-def _build_automation_response(
-    automation: PipelineAutomation,
-) -> PipelineAutomationResponse:
-    return PipelineAutomationResponse(
-        id=automation.id,
-        pipeline_id=automation.pipeline_id,
-        status=automation.status,
-        mode=automation.mode,
-        poll_interval=automation.poll_interval,
-        error_reason=automation.error_reason,
-        last_seen_input_versions=automation.last_seen_input_versions,
-        is_active=automation.is_active,
-        deleted_at=automation.deleted_at,
-        created_at=automation.created_at,
-        updated_at=automation.updated_at,
-    )
-
-
-@router.get("/entities", response_model=PipelineListPageResponse)
-async def list_pipeline_entities(
-    include_inactive: bool = Query(
-        False, description="FALSE (기본) 면 is_active=TRUE (soft-deleted 숨김)",
-    ),
-    name_filter: str | None = Query(None, description="name ILIKE 부분 일치"),
-    task_type: list[str] | None = Query(None, description="DETECTION / CLASSIFICATION ..."),
-    limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
+@router.get("/runs/{run_id}", response_model=PipelineRunResponse)
+async def get_pipeline_run(
+    run_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Pipeline 목록 — Automation 관리 페이지 좌측 + /pipelines 페이지 본체 (§9-7 예정).
-    기본은 `is_active=TRUE` (soft-deleted 숨김 기본 ON).
-    """
+    """PipelineRun 단건 상태."""
     service = PipelineService(db)
-    items, total = await service.list_pipelines(
-        include_inactive=include_inactive,
-        name_filter=name_filter,
-        task_type_filter=task_type,
-        limit=limit,
-        offset=offset,
-    )
-    pipeline_ids = [p.id for p in items]
-    run_stats = await service.count_runs_by_pipeline(pipeline_ids)
-    response_items = []
-    for pipeline in items:
-        run_count, last_run_at = run_stats.get(pipeline.id, (0, None))
-        response_items.append(
-            _build_pipeline_list_item(pipeline, run_count, last_run_at)
-        )
-    return PipelineListPageResponse(
-        items=response_items, total=total, limit=limit, offset=offset,
-    )
+    run = await service.get_execution_status(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="실행 이력을 찾을 수 없습니다.")
+    return _build_run_response(run)
 
 
-@router.get("/entities/{pipeline_id}", response_model=PipelineResponse)
-async def get_pipeline_entity(
-    pipeline_id: str,
+# ═════════════════════════════════════════════════════════════════════════════
+# PipelineFamily — `/families`
+# ═════════════════════════════════════════════════════════════════════════════
+
+@router.get("/families", response_model=list[PipelineFamilyResponse])
+async def list_families(db: AsyncSession = Depends(get_db)):
+    service = PipelineService(db)
+    families = await service.list_families()
+    # pipeline_count 채우기 위해 selectinload 가 안 돼 있을 수 있음 — 빈 리스트 안전
+    return [_family_to_response(f) for f in families]
+
+
+@router.post(
+    "/families", response_model=PipelineFamilyResponse, status_code=201,
+)
+async def create_family(
+    payload: PipelineFamilyCreateRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """Pipeline 단건 상세 (config JSONB 포함)."""
     service = PipelineService(db)
-    pipeline = await service.get_pipeline(pipeline_id)
-    if pipeline is None:
-        raise HTTPException(status_code=404, detail="Pipeline 을 찾을 수 없습니다.")
-    return _build_pipeline_response(pipeline)
+    family = await service.create_family(
+        name=payload.name, description=payload.description,
+    )
+    return _family_to_response(family)
 
 
-@router.patch("/entities/{pipeline_id}", response_model=PipelineResponse)
-async def update_pipeline_entity(
-    pipeline_id: str,
-    payload: PipelineUpdateRequest,
+@router.get("/families/{family_id}", response_model=PipelineFamilyResponse)
+async def get_family(family_id: str, db: AsyncSession = Depends(get_db)):
+    service = PipelineService(db)
+    family = await service.get_family(family_id)
+    if family is None:
+        raise HTTPException(status_code=404, detail="Family 를 찾을 수 없습니다.")
+    return _family_to_response(family)
+
+
+@router.patch("/families/{family_id}", response_model=PipelineFamilyResponse)
+async def update_family(
+    family_id: str,
+    payload: PipelineFamilyUpdateRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Pipeline 편집 (§6-1 config immutable, §12-4 RBAC 없는 자유 편집).
-    name / description / is_active 만 수정 가능. config 필드 변경은 거부된다.
-    """
     service = PipelineService(db)
-    pipeline = await service.update_pipeline(
-        pipeline_id,
-        name=payload.name,
-        description=payload.description,
-        is_active=payload.is_active,
+    family = await service.update_family(
+        family_id, name=payload.name, description=payload.description,
     )
-    if pipeline is None:
-        raise HTTPException(status_code=404, detail="Pipeline 을 찾을 수 없습니다.")
-    return _build_pipeline_response(pipeline)
+    if family is None:
+        raise HTTPException(status_code=404, detail="Family 를 찾을 수 없습니다.")
+    return _family_to_response(family)
 
 
-@router.get("/entities/{pipeline_id}/runs", response_model=PipelineListResponse)
-async def list_runs_of_pipeline(
-    pipeline_id: str,
+@router.delete("/families/{family_id}", status_code=204)
+async def delete_family(family_id: str, db: AsyncSession = Depends(get_db)):
+    """Family hard delete. 자식 Pipeline 들은 family_id NULL 로 (ON DELETE SET NULL)."""
+    service = PipelineService(db)
+    deleted = await service.delete_family(family_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Family 를 찾을 수 없습니다.")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# PipelineVersion — `/versions/{id}`
+# ═════════════════════════════════════════════════════════════════════════════
+
+@router.get("/versions/{version_id}", response_model=PipelineVersionResponse)
+async def get_pipeline_version(
+    version_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """PipelineVersion 상세 — config 포함."""
+    service = PipelineService(db)
+    version = await service.get_pipeline_version(version_id)
+    if version is None:
+        raise HTTPException(status_code=404, detail="PipelineVersion 을 찾을 수 없습니다.")
+    return _version_to_response(version)
+
+
+@router.patch("/versions/{version_id}", response_model=PipelineVersionResponse)
+async def update_pipeline_version(
+    version_id: str,
+    payload: PipelineVersionUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """PipelineVersion 편집 — is_active 토글만. config 는 immutable."""
+    service = PipelineService(db)
+    version = await service.update_pipeline_version(
+        version_id, is_active=payload.is_active,
+    )
+    if version is None:
+        raise HTTPException(status_code=404, detail="PipelineVersion 을 찾을 수 없습니다.")
+    return _version_to_response(version)
+
+
+@router.get("/versions/{version_id}/runs", response_model=PipelineListResponse)
+async def list_runs_of_version(
+    version_id: str,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
 ):
-    """특정 Pipeline 의 실행 이력 (최신순)."""
+    """이 PipelineVersion 의 PipelineRun 이력."""
     service = PipelineService(db)
     offset = (page - 1) * page_size
-    items, total = await service.list_runs_by_pipeline(
-        pipeline_id, limit=page_size, offset=offset,
+    items, total = await service.list_runs_by_pipeline_version(
+        version_id, limit=page_size, offset=offset,
     )
     return PipelineListResponse(
-        items=[_build_execution_response(item) for item in items],
+        items=[_build_run_response(item) for item in items],
         total=total,
     )
 
 
 @router.post(
-    "/entities/{pipeline_id}/runs",
+    "/versions/{version_id}/runs",
     response_model=PipelineSubmitResponse,
     status_code=202,
 )
-async def submit_run_for_pipeline(
-    pipeline_id: str,
+async def submit_run_for_version(
+    version_id: str,
     payload: PipelineRunSubmitRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Version Resolver Modal (027 §4-3) → 실제 dispatch 진입점.
-    resolved_input_versions = `{split_id: version}` 확정값을 받아 run 1건 dispatch.
-    """
+    """Version Resolver Modal → PipelineVersion 기반 run dispatch."""
     service = PipelineService(db)
     try:
-        return await service.submit_run_from_pipeline(
-            pipeline_id, payload.resolved_input_versions,
+        return await service.submit_run_from_pipeline_version(
+            version_id, payload.resolved_input_versions,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# PipelineAutomation (§2-3 + §12-3 soft delete)
-# ─────────────────────────────────────────────────────────────────────────────
-
+# ═════════════════════════════════════════════════════════════════════════════
+# PipelineAutomation — `/automations` (version 단위)
+# ═════════════════════════════════════════════════════════════════════════════
 
 @router.get("/automations", response_model=list[PipelineAutomationResponse])
-async def list_active_automations(
-    db: AsyncSession = Depends(get_db),
-):
-    """활성 자동화 전체. Automation 관리 페이지 좌측 목록."""
+async def list_active_automations(db: AsyncSession = Depends(get_db)):
     service = PipelineAutomationService(db)
     automations = await service.list_all_active()
-    return [_build_automation_response(a) for a in automations]
+    return [_automation_to_response(a) for a in automations]
 
 
 @router.get(
-    "/entities/{pipeline_id}/automation",
+    "/versions/{version_id}/automation",
     response_model=PipelineAutomationResponse | None,
 )
-async def get_pipeline_automation(
-    pipeline_id: str,
+async def get_version_automation(
+    version_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    """Pipeline 의 현재 active automation. 없으면 null."""
+    """PipelineVersion 의 현재 active automation. 없으면 null."""
     service = PipelineAutomationService(db)
-    automation = await service.get_active_by_pipeline(pipeline_id)
+    automation = await service.get_active_by_pipeline_version(version_id)
     if automation is None:
         return None
-    return _build_automation_response(automation)
+    return _automation_to_response(automation)
 
 
 @router.put(
-    "/entities/{pipeline_id}/automation",
+    "/versions/{version_id}/automation",
     response_model=PipelineAutomationResponse,
 )
-async def upsert_pipeline_automation(
-    pipeline_id: str,
+async def upsert_version_automation(
+    version_id: str,
     payload: PipelineAutomationUpsertRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """자동화 등록 또는 갱신 (idempotent). 같은 Pipeline active 가 있으면 덮어씀."""
+    """PipelineVersion 의 automation 등록 또는 갱신."""
     service = PipelineAutomationService(db)
     try:
-        automation = await service.upsert_automation(pipeline_id, payload)
+        automation = await service.upsert_automation(version_id, payload)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return _build_automation_response(automation)
+    return _automation_to_response(automation)
 
 
 @router.delete(
-    "/automations/{automation_id}",
-    response_model=PipelineAutomationResponse,
+    "/automations/{automation_id}", response_model=PipelineAutomationResponse,
 )
 async def delete_automation(
     automation_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    """자동화 soft delete (§12-3). row 유지, is_active=FALSE + deleted_at=NOW()."""
+    """Automation soft delete."""
     service = PipelineAutomationService(db)
     automation = await service.soft_delete(automation_id)
     if automation is None:
         raise HTTPException(status_code=404, detail="Automation 을 찾을 수 없습니다.")
-    return _build_automation_response(automation)
+    return _automation_to_response(automation)
 
 
 @router.post(
@@ -479,18 +552,22 @@ async def delete_automation(
 )
 async def reassign_automation(
     automation_id: str,
-    new_pipeline_id: str = Query(..., description="새 target Pipeline ID"),
+    new_pipeline_version_id: str = Query(
+        ..., description="새 target PipelineVersion ID",
+    ),
     db: AsyncSession = Depends(get_db),
 ):
-    """자동화가 가리키는 Pipeline 을 다른 Pipeline 으로 이전 (§6-4 (a))."""
+    """Automation 을 다른 PipelineVersion 으로 이전."""
     service = PipelineAutomationService(db)
     try:
-        automation = await service.reassign_pipeline(automation_id, new_pipeline_id)
+        automation = await service.reassign_pipeline_version(
+            automation_id, new_pipeline_version_id,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if automation is None:
         raise HTTPException(status_code=404, detail="Automation 을 찾을 수 없습니다.")
-    return _build_automation_response(automation)
+    return _automation_to_response(automation)
 
 
 @router.post(
@@ -503,14 +580,108 @@ async def trigger_manual_rerun(
     payload: PipelineAutomationRerunRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    수동 재실행 — 026 §5-2a 2-버튼 UX.
-
-    - if_delta: 상류 delta 있을 때만 dispatch, 없으면 SKIPPED_NO_DELTA 레코드
-    - force_latest: delta 무시, 최신 version 으로 강제 dispatch
-    """
+    """수동 재실행 (if_delta / force_latest)."""
     service = PipelineAutomationService(db)
     try:
         return await service.trigger_manual_rerun(automation_id, payload)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Pipeline (concept) CRUD — `/{pipeline_id}` (마지막에 와야 정적 경로 우선)
+# ═════════════════════════════════════════════════════════════════════════════
+
+@router.get("", response_model=PipelineListPageResponse)
+async def list_pipelines(
+    include_inactive: bool = Query(False),
+    name_filter: str | None = Query(None, description="name ILIKE 부분 일치"),
+    task_type: list[str] | None = Query(None),
+    family_id: str | None = Query(None, description="이 family 의 Pipeline 만"),
+    family_unfiled: bool = Query(False, description="family_id IS NULL 만"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db),
+):
+    """Pipeline (concept) 목록."""
+    service = PipelineService(db)
+    items, total = await service.list_pipelines(
+        include_inactive=include_inactive,
+        name_filter=name_filter,
+        task_type_filter=task_type,
+        family_id=family_id,
+        family_unfiled=family_unfiled,
+        limit=limit,
+        offset=offset,
+    )
+    pipeline_ids = [p.id for p in items]
+    run_stats = await service.count_runs_by_pipeline(pipeline_ids)
+    response_items = []
+    for pipeline in items:
+        run_count, last_run_at = run_stats.get(pipeline.id, (0, None))
+        response_items.append(
+            _pipeline_to_list_item(
+                pipeline, run_count=run_count, last_run_at=last_run_at,
+            )
+        )
+    return PipelineListPageResponse(
+        items=response_items, total=total, limit=limit, offset=offset,
+    )
+
+
+@router.get("/{pipeline_id}", response_model=PipelineResponse)
+async def get_pipeline_concept(
+    pipeline_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Pipeline (concept) 단건 — 모든 versions 요약 포함."""
+    service = PipelineService(db)
+    pipeline = await service.get_pipeline(pipeline_id)
+    if pipeline is None:
+        raise HTTPException(status_code=404, detail="Pipeline 을 찾을 수 없습니다.")
+    return _pipeline_to_response(pipeline)
+
+
+@router.patch("/{pipeline_id}", response_model=PipelineResponse)
+async def update_pipeline_concept(
+    pipeline_id: str,
+    payload: PipelineUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Pipeline (concept) 편집 — name / description / family_id / is_active."""
+    if payload.unset_family and payload.family_id is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="unset_family 와 family_id 를 동시에 지정할 수 없습니다.",
+        )
+    service = PipelineService(db)
+    pipeline = await service.update_pipeline(
+        pipeline_id,
+        name=payload.name,
+        description=payload.description,
+        family_id=payload.family_id,
+        unset_family=payload.unset_family,
+        is_active=payload.is_active,
+    )
+    if pipeline is None:
+        raise HTTPException(status_code=404, detail="Pipeline 을 찾을 수 없습니다.")
+    return _pipeline_to_response(pipeline)
+
+
+@router.get("/{pipeline_id}/runs", response_model=PipelineListResponse)
+async def list_runs_of_pipeline(
+    pipeline_id: str,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+):
+    """이 Pipeline (concept) 의 모든 version 에 걸친 run 이력."""
+    service = PipelineService(db)
+    offset = (page - 1) * page_size
+    items, total = await service.list_runs_by_pipeline(
+        pipeline_id, limit=page_size, offset=offset,
+    )
+    return PipelineListResponse(
+        items=[_build_run_response(item) for item in items],
+        total=total,
+    )

@@ -19,6 +19,7 @@ import type {
 import type { Manipulator } from '@/types/dataset'
 import { getNodeDefinition } from '../registry'
 import type { AnyNodeData, MatchContext, NodeKind } from '../types'
+import { parseSourceRef } from '../sourceFormat'
 
 export interface DatasetDisplayInfo {
   datasetId: string
@@ -88,9 +89,9 @@ export function pipelineConfigToGraph(
     if (!targetNodeId) continue
     for (const input of taskConfig.inputs) {
       let sourceNodeId: string | undefined
-      if (input.startsWith('source:')) {
-        const datasetId = input.split(':', 2)[1]
-        sourceNodeId = datasetIdToNodeId.get(datasetId)
+      const parsed = parseSourceRef(input)
+      if (parsed) {
+        sourceNodeId = datasetIdToNodeId.get(parsed.id)
       } else {
         sourceNodeId = taskKeyToNodeId.get(input)
       }
@@ -123,7 +124,7 @@ export function pipelineConfigToGraph(
     const referencedTaskKeys = new Set<string>()
     for (const taskConfig of Object.values(config.tasks)) {
       for (const input of taskConfig.inputs) {
-        if (!input.startsWith('source:')) {
+        if (parseSourceRef(input) === null) {
           referencedTaskKeys.add(input)
         }
       }
@@ -150,12 +151,57 @@ export function extractSourceDatasetIdsFromConfig(config: PipelineConfig): strin
   const datasetIds = new Set<string>()
   for (const task of Object.values(config.tasks)) {
     for (const input of task.inputs) {
-      if (input.startsWith('source:')) {
-        datasetIds.add(input.split(':', 2)[1])
-      }
+      const parsed = parseSourceRef(input)
+      if (parsed) datasetIds.add(parsed.id)
     }
   }
   return [...datasetIds]
+}
+
+/**
+ * v3 PipelineRun.transform_config 의 `source:dataset_version:<id>` 토큰을
+ * 부모 split 의 `source:dataset_split:<split_id>` 로 되돌린 config 를 반환한다.
+ * JSON 복사로 PipelineRun 의 config 를 에디터로 import 할 때 사용.
+ *
+ * 변환에 필요한 `versionToSplitMap` 은 호출자가 백엔드 조회 결과로 채워서 전달.
+ * 누락된 매핑이 있으면 토큰을 그대로 두고 호출자가 사용자에게 경고하도록 한다.
+ */
+export function unresolveVersionRefsToSplitRefs(
+  config: PipelineConfig,
+  versionToSplitMap: Record<string, string>,
+): { config: PipelineConfig; missingVersionIds: string[] } {
+  const missing: string[] = []
+  const cloned: PipelineConfig = JSON.parse(JSON.stringify(config))
+  for (const task of Object.values(cloned.tasks ?? {})) {
+    if (!Array.isArray(task.inputs)) continue
+    task.inputs = task.inputs.map((input) => {
+      const parsed = parseSourceRef(input)
+      if (!parsed || parsed.type !== 'dataset_version') return input
+      const splitId = versionToSplitMap[parsed.id]
+      if (!splitId) {
+        missing.push(parsed.id)
+        return input
+      }
+      return `source:dataset_split:${splitId}`
+    })
+  }
+  // passthrough_source_dataset_id 가 있으면 split 으로 환원
+  const passthroughVer = (cloned as PipelineConfig & {
+    passthrough_source_dataset_id?: string | null
+  }).passthrough_source_dataset_id
+  if (passthroughVer) {
+    const splitId = versionToSplitMap[passthroughVer]
+    if (splitId) {
+      cloned.passthrough_source_split_id = splitId
+      ;(cloned as PipelineConfig & {
+        passthrough_source_dataset_id?: string | null
+      }).passthrough_source_dataset_id = null
+    } else {
+      missing.push(passthroughVer)
+    }
+  }
+  cloned.schema_version = 3
+  return { config: cloned, missingVersionIds: missing }
 }
 
 /** topological sort 기반 좌→우 배치 (기존 pipelineConverter에서 이관) */

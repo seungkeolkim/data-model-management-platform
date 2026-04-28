@@ -3,7 +3,7 @@
  *
  * v7.10 (핸드오프 027 §4-1, §12-1).
  * 그룹 → Split 까지만 선택. 버전은 실행 시점 Version Resolver Modal 에서 확정.
- * 이 노드는 task 를 발생시키지 않고 `source:<split_id>` 토큰만 outputRef 로 제공.
+ * 이 노드는 task 를 발생시키지 않고 `source:dataset_split:<split_id>` 토큰만 outputRef 로 제공.
  */
 import { memo, useMemo } from 'react'
 import type { NodeProps } from '@xyflow/react'
@@ -15,6 +15,7 @@ import { useNodeData, useSetNodeData } from '../hooks/useNodeData'
 import { NodeShell } from '../components/NodeShell'
 import type { NodeDefinition } from '../types'
 import type { DataLoadNodeData } from '@/types/pipeline'
+import { buildSplitSourceRef, parseSourceRef } from '../sourceFormat'
 import type { DatasetGroup, DatasetSummary } from '@/types/dataset'
 
 const { Text } = Typography
@@ -323,15 +324,20 @@ export const dataLoadDefinition: NodeDefinition<'dataLoad'> = {
     return []
   },
 
-  // v7.10: task 를 발생시키지 않고 `source:<splitId>` outputRef 제공.
+  // v7.11: task 를 발생시키지 않고 `source:dataset_split:<splitId>` outputRef 제공.
   toConfigContribution(data) {
     if (!data.splitId) return null
-    return { outputRef: `source:${data.splitId}` }
+    return { outputRef: buildSplitSourceRef(data.splitId) }
   },
 
   /**
-   * config 의 `source:<split_id>` 토큰을 점유하여 DataLoadNode 로 복원.
+   * config 의 `source:dataset_split:<split_id>` 토큰을 점유하여 DataLoadNode 로 복원.
    * passthrough_source_split_id 도 포함.
+   *
+   * `source:dataset_version:<id>` 는 PipelineRun 스냅샷용이므로 에디터 import 전에
+   * `unresolveVersionRefsToSplitRefs` 헬퍼로 split_id 로 변환된 상태여야 한다.
+   * 변환되지 않은 dataset_version 토큰은 datasetDisplayMap 에 없을 가능성이 커서
+   * "source:..." placeholder 라벨로 표시된다.
    */
   matchFromConfig(ctx) {
     const { config, datasetDisplayMap, claimedSourceDatasetIds } = ctx
@@ -339,9 +345,8 @@ export const dataLoadDefinition: NodeDefinition<'dataLoad'> = {
     const splitIds = new Set<string>()
     for (const task of Object.values(config.tasks)) {
       for (const input of task.inputs) {
-        if (input.startsWith('source:')) {
-          splitIds.add(input.split(':', 2)[1])
-        }
+        const parsed = parseSourceRef(input)
+        if (parsed) splitIds.add(parsed.id)
       }
     }
     if (config.passthrough_source_split_id) {
