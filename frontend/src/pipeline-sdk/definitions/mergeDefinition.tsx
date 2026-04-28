@@ -255,17 +255,29 @@ export const mergeDefinition: NodeDefinition<'merge'> = {
   },
 }
 
-/** 들어오는 엣지로부터 PipelineConfig TaskConfig.inputs 토큰 배열을 구성. */
+/**
+ * 들어오는 엣지로부터 PipelineConfig TaskConfig.inputs 토큰 배열을 구성.
+ *
+ * v7.10 (핸드오프 027 §4-1) — DataLoad 노드의 source 식별자가 datasetId 에서
+ * splitId 로 격상됐다. v2 우선 처리하고 v1 (datasetId) 은 legacy 호환을 위해 fallback.
+ */
 function buildInputsFromIncoming(ctx: {
   incomingEdges: { source: string }[]
-  getNodeData: (id: string) => { type?: string; datasetId?: string | null } | undefined
+  getNodeData: (id: string) =>
+    | { type?: string; splitId?: string | null; datasetId?: string | null }
+    | undefined
 }): string[] {
   const inputs: string[] = []
   for (const edge of ctx.incomingEdges) {
     const source = ctx.getNodeData(edge.source)
     if (!source) continue
-    if (source.type === 'dataLoad' && source.datasetId) {
-      inputs.push(`source:${source.datasetId}`)
+    if (source.type === 'dataLoad') {
+      // v2 우선: splitId 가 있으면 source:<split_id>. 없으면 v1 datasetId fallback.
+      if (source.splitId) {
+        inputs.push(`source:${source.splitId}`)
+      } else if (source.datasetId) {
+        inputs.push(`source:${source.datasetId}`)
+      }
     } else if (source.type === 'operator' || source.type === 'merge' || source.type === 'placeholder') {
       inputs.push(`task_${edge.source}`)
     }

@@ -6,7 +6,7 @@
  *
  * 표시 규칙:
  *   - detection / task_kind=='detection' → 섹션 자체를 숨김
- *   - dataLoad 가 datasetId 없음 → "소스를 먼저 선택" 안내
+ *   - dataLoad 가 splitId 없음 → "소스를 먼저 선택" 안내
  *   - graph 가 불완전(output 없음, 사이클, 미연결) → config 생성 실패 메시지
  *   - 백엔드 에러 응답 → error_message 를 그대로 표시
  *   - 정상 → head 별 name/multi_label/classes 리스트
@@ -36,11 +36,13 @@ function resolveTargetRef(
   nodeData: PipelineNodeData,
 ): { ref: string } | { ref: null; reason: string } {
   if (nodeData.type === 'dataLoad') {
-    const datasetId = (nodeData as { datasetId?: string }).datasetId
-    if (!datasetId) {
+    // v7.10 (027 §4-1): splitId 우선. v1 datasetId 는 legacy 호환.
+    const dl = nodeData as { splitId?: string | null; datasetId?: string | null }
+    const sourceRef = dl.splitId ?? dl.datasetId ?? null
+    if (!sourceRef) {
       return { ref: null, reason: '소스 데이터셋을 먼저 선택하세요.' }
     }
-    return { ref: `source:${datasetId}` }
+    return { ref: `source:${sourceRef}` }
   }
   if (nodeData.type === 'operator' || nodeData.type === 'merge') {
     return { ref: `task_${selectedNodeId}` }
