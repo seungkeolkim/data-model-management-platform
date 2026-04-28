@@ -1,10 +1,10 @@
 # 데이터 관리 & 학습 자동화 플랫폼 — 7차 설계서
 
-> **작업지시서 v7.9** | Dataset 3계층 분리 — DatasetGroup → DatasetSplit → DatasetVersion
-> 기준일: 2026-04-23
+> **작업지시서 v7.10** | Pipeline / PipelineRun / PipelineAutomation 3 엔티티 분리 + schema_version=2
+> 기준일: 2026-04-28
 > 이전 설계서: `docs_history/objective_n_plan_6th.md`
-> 현행 핸드오프: `docs_history/handoffs/025-dataset-three-tier-separation-handoff.md`
-> 직전 핸드오프: `docs_history/handoffs/024-head-schema-ssot-enforcement-handoff.md` (main 머지 완료)
+> 진행 중 핸드오프: `docs_for_claude/027-pipeline-run-automation-separation-design.md` (§12-8 진행 스냅샷)
+> 직전 핸드오프 (main 머지 완료): `docs_history/handoffs/025-dataset-three-tier-separation-handoff.md`
 > 노드 SDK 규약: `docs/pipeline-node-sdk-guide.md` (2026-04-15 재작성본)
 
 6차 설계서의 §7-1 최우선 액션(노드 SDK화 + 가이드)이 완료되어 baseline에 편입됐다.
@@ -121,6 +121,72 @@ upgrade → downgrade → upgrade 왕복 성공. 실데이터 파이프라인 `f
 설계가 FK 무결성 하에 자연스럽게 가능해졌다. 다음 챕터는 자동화 목업 브랜치 재생성
 (`feature/pipeline-automation-mockup`) 에서 023 §6 스코프로 착수.
 
+**v7.10 (2026-04-28, Pipeline / PipelineRun / PipelineAutomation 3 엔티티 분리 +
+schema_version=2 전환).** 핸드오프 027 의 9 단계 중 §9-1 ~ §9-7 완료 + §9-8 일부 / 사용자
+UI 스모크 누적 fix + v1 legacy 호환 코드 전수 제거. 026 자동화 목업의 "Pipeline = Automation
+엔트리" 단일 모델의 한계를 해소하고, "split 까지 고정 / version 은 run-time 해석" (2 안) 으로
+전환. 진행 중 핸드오프: `docs_for_claude/027-pipeline-run-automation-separation-design.md`.
+
+**핵심 결정 (027 §12 확정)**:
+- **3 엔티티 분리** — `Pipeline` (정적 템플릿, config immutable) / `PipelineRun` (동적
+  immutable run, 기존 `PipelineExecution` rename) / `PipelineAutomation` (Pipeline 과
+  1:0..1 runner 등록, partial unique index 로 active 1개 제약)
+- **2 안 채택** — Pipeline 은 `output_split_id` FK 까지만 고정. DatasetVersion 은 run 제출
+  시 Version Resolver Modal 에서 선택 (기본 = 최신). `input_split_id` 는 §12-9 결정으로
+  top-level FK 두지 않고 `config.tasks[*].inputs` 의 `source:<split_id>` 가 유일 진리
+  ("싱글은 FK, 복수는 JSONB" 원칙)
+- **schema_version=2** — `source:<split_id>` / `passthrough_source_split_id` 기반 spec.
+  v1 (`source:<dataset_version_id>`) 는 v7.10 이후 폐지. 백엔드 submit 단계에서 `_substitute
+  _resolved_versions` 가 `{split_id: version}` → `{split_id: dataset_version_id}` 로 치환해
+  `transform_config` 에 저장. dag_executor 는 dataset_version_id 단위로 동작 (변경 없음)
+- **버전 정책** — `Pipeline.version = "{major}.{minor}"` (예 `"1.0"`). 사용자 명시로만
+  major++. hash 판정 없음, 동일 config 겹쳐도 OK
+- **PipelineAutomation soft delete** (§12-3) — `is_active` + `deleted_at`. partial unique
+  index 덕에 같은 Pipeline 에 새 automation 등록 가능. FK 제약 유지 (과거 run 의
+  `automation_id` 영원히 유효)
+- **저장 시점 vs 실행 시점 검증 분리 의도** (§12-5) — 저장 검증은 version 무관 (split_id
+  존재 + group active 등), 실행 검증은 `resolved_input_versions` 기반. 현재 구현은
+  validate_with_database 가 v2 단일 가정으로 단순화됨
+- **v1 호환 제거** (2026-04-28) — DB 초기화 후 v1 데이터 부재 시점에 사용자 결정. 17 파일,
+  +246/-696 (450 줄 감소). schema_version 분기 자체가 사라짐
+
+**변경 내용 요약** (커밋 누적):
+- **DB / Alembic 031** (`031_split_pipeline_entities`):
+  - `pipelines` / `pipeline_automations` 테이블 신규
+  - `pipeline_executions` → `pipeline_runs` rename + 컬럼 확장 (`pipeline_id` /
+    `automation_id` / `resolved_input_versions` / `trigger_kind` /
+    `automation_trigger_source` / `automation_batch_id` / `pipeline_image_url`)
+  - `config` → `transform_config` 컬럼 rename (027 §2-2 일관성)
+  - `pipelines.config` JSONB GIN 인덱스는 미생성 (성능 이슈 발생 시 한 줄로 추가, §12-9 주석 참조)
+- **ORM** — `Pipeline` / `PipelineAutomation` 신규, `PipelineExecution` → `PipelineRun`
+  rename + `DatasetVersion.pipeline_runs` relationship + `pipeline_run_id` property
+- **서비스 레이어** — `pipeline_service` 의 Pipeline CRUD (`create_pipeline` /
+  `list_pipelines` / `get_pipeline` / `update_pipeline` / `submit_run_from_pipeline` 등),
+  `pipeline_automation_service` 신규 (`upsert_automation` / `soft_delete` /
+  `reassign_pipeline` / `trigger_manual_rerun`)
+- **API 신규** (`/api/v1/pipelines` 하위) — `GET/PATCH /entities`, `GET/POST /entities/{id}/runs`,
+  `GET/PUT /entities/{id}/automation`, `DELETE /automations/{id}`,
+  `POST /automations/{id}/reassign|rerun`. Pydantic 422 → friendly issue 변환
+- **FE** — `pipeline-sdk/definitions/dataLoadDefinition` 의 version Select 제거
+  (`(group, split)` 까지만), `mergeDefinition.buildInputsFromIncoming` 이 splitId 사용,
+  `graphToConfig` 가 schema_version=2 + `passthrough_source_split_id` 생성, `configToGraph`
+  가 v2 복원, `VersionResolverModal` 신규, `PipelineListPage` 신규 (실행 버튼 + 활성/비활성
+  토글), 사이드바 "데이터 변형" 하위 (목록 / 실행 이력) 분리, `CreatePipelineButton` 공통
+  컴포넌트
+- **개념 분리 후 사용자 UI 스모크 통과** — RAW 등록 (det/cls), DAG 노드 (cls_sample_n_images
+  등), 파이프라인 실행 (`e8a54621`, `466382fc` 등), 출력 그룹 task_types 자동 채워짐
+
+**검증.** backend 회귀 446/446. FE pre-existing 11 건 외 신규 0. v1 legacy 데이터 없는 환경
+(DB 초기화 후) 에서 사용자 UI 스모크 통과. 브랜치: `feature/pipeline-run-automation-separation`
+(10+ commits).
+
+**남은 작업 (v7.10 → v7.11 으로 이어질 항목)**:
+- §9-8 Automation 메뉴 실 API 재연결 (026 mock fixture → 실 endpoint, AutomationPage /
+  AutomationHistoryPage / AutomationPipelineDetailPage 3 페이지 재배선)
+- §9-9 핸드오프 028 작성 + 설계서 v7.11 승격 (현재 v7.10 = 본 챕터)
+- §12-1 저장/실행 분리 UX (`POST /pipelines/entities` 신설 + 에디터 "실행" → "저장")
+- §12-2 #1 파이프라인명 입력 UI
+
 ---
 
 ## 1. 로드맵 위치
@@ -144,23 +210,32 @@ upgrade → downgrade → upgrade 왕복 성공. 실데이터 파이프라인 `f
 - 스토리지: `LocalStorageClient` (S3 대비 추상화)
 - `lib/` ↔ `app/` 격리 — `lib/` → `app/` import 금지
 
-### 2-2. 데이터 모델 (v7.9 3계층 분리 반영)
+### 2-2. 데이터 모델 (v7.10 — 3 엔티티 분리 반영)
 
 ```
 DatasetGroup (정적)
   └─ DatasetSplit (정적)       — unique(group_id, split)
      └─ DatasetVersion (동적)   — unique(split_id, version)
+
+Pipeline (정적, config immutable)
+  ├─ output_split_id FK → DatasetSplit
+  ├─ PipelineRun (동적 immutable, output_dataset_id FK → DatasetVersion)
+  └─ PipelineAutomation (1:0..1, partial unique active)
 ```
 
 - **DatasetGroup** — 그룹 정적 메타 (불변). `name, dataset_type, annotation_format, task_types, head_schema, modality, ...`
 - **DatasetSplit** (v7.9 신규) — `(group_id, split)` 정적 슬롯. `split: TRAIN | VAL | TEST | NONE`. `created_at` 만 (updated_at 없음).
 - **DatasetVersion** (v7.9 — 기존 `Dataset` 을 rename) — 실제 데이터 버전 단위. `split_id FK, version, storage_uri, annotation_files, status, metadata, ...`. 유니크: `(split_id, version)`, `version = "{major}.{minor}"`.
-- 기타 테이블: `DatasetLineage` (parent/child = DatasetVersion), `Manipulator`, `PipelineExecution`, `Objective`.
+- **Pipeline** (v7.10 신규) — 정적 템플릿. `name, version, description, output_split_id FK, config (JSONB, immutable), task_type, is_active`. `UNIQUE(name, version)`. `input_split_id` top-level FK 없음 (§12-9, multi-input 케이스 위해 `config.tasks[*].inputs` 의 `source:<split_id>` 가 유일 진리).
+- **PipelineRun** (v7.10 — 기존 `PipelineExecution` rename) — 동적 immutable run. `pipeline_id FK NOT NULL, automation_id FK NULL, output_dataset_id FK, transform_config (resolved 스냅샷), resolved_input_versions (`{split_id: version}`), trigger_kind, automation_*` ...
+- **PipelineAutomation** (v7.10 신규) — Pipeline 의 runner. `pipeline_id FK, status (stopped/active/error), mode (polling/triggering), poll_interval, error_reason, last_seen_input_versions, is_active (soft delete), deleted_at`. partial unique `(pipeline_id) WHERE is_active=TRUE` 로 1:0..1 보장.
+- 기타 테이블: `DatasetLineage` (parent/child = DatasetVersion), `Manipulator`, `Objective`.
 - `dataset_type`: RAW / SOURCE / PROCESSED / FUSION (강제 제약은 없음, 그룹 속성)
 - `annotation_files` 는 JSONB. `metadata` (JSONB) 에 `class_info` / EDA 결과 저장.
 - ORM 편의: `DatasetVersion.split_slot` 이 relationship, `split` / `group` / `group_id` 는
   `association_proxy("split_slot", ...)` 로 투명 노출 — 기존 코드 호환 유지.
 - `DatasetGroup.datasets` 는 flat `@property` (모든 splits 의 versions 를 평탄화). 쿼리에는 쓰지 않고 직렬화용.
+- `Pipeline.config.passthrough_source_dataset_id` 는 FE 가 보내지 않는 **resolved-only** 필드 — submit 단계에서 backend 가 채워 dag_executor 가 dataset_version_id 단위로 데이터 로드 (executor 호환).
 
 ### 2-3. 파이프라인 (통일포맷 기반)
 
@@ -646,7 +721,8 @@ Automation / Detection 미구현 2종 / Step 2 진입 (item 16 ~ 22) 중심. 아
 15. ~~Classification manipulator 파라미터 label 축약 (UI 가독성)~~ ✅ **완료 (2026-04-20)** — Alembic `028_shorten_cls_param_labels` 로 `cls_add_head.{class_candidates,multi_label}`, `cls_set_head_labels_for_all_images.{set_unknown,classes}`, `cls_filter_by_class.{include_unknown,classes}` 총 6건의 params label 을 축약. DAG 박스에서 노드 가로폭이 길어지던 문제와 우측 속성 패널에서 텍스트가 잘리던 문제 해결. `jsonb_set` 으로 label 필드만 타겟하여 다른 스키마 속성은 불변. 장기 TODO: `DynamicParamForm` 에 `help` / tooltip 필드 정식 추가 시 label 은 짧게 유지하면서 상세 설명 되살리기.
 15-b. ~~DatasetGroup.head_schema SSOT 단일 원칙 강제~~ ✅ **완료 (2026-04-22 · v7.8)** — `preview-schema` task_kind 판정을 `group.task_types` 기반으로 전환, `pipeline_tasks` 의 `group.head_schema` setdefault 초기화, `_diff_head_schema` NEW_HEAD/NEW_CLASS 허용 제거, `pipeline_service._validate_output_schema_compatibility` (신설) 로 파이프라인 출력 schema 불일치 사전 차단, Alembic `029_backfill_group_head_schema` 로 기존 NULL 5건 복원. 상세 §2-8.
 15-c. ~~Dataset 3계층 분리~~ ✅ **완료 (2026-04-23 · v7.9)** — Alembic `030_dataset_three_tier_split` 로 `dataset_splits` 신규 + `datasets` → `dataset_versions` rename + 89 versions 무손실 이행. `DatasetVersion.split_slot` relationship + `split`/`group`/`group_id` association_proxy 로 기존 호출 경로 호환 유지. 이벤트 리스너 / 서비스 / 라우터 / Celery / FE 전수 조정. 실데이터 파이프라인 `fafbd6ad-c66a-4f1f-a7c2-9c9a9f5da60a` 정상 완주. 브랜치: `feature/change-dataset-db-schema`. 상세 §2-2 + 핸드오프 025.
-16. **Automation 실구현** — **v7.9 3계층 분리로 unblocked.** 023 §9 확정 결정 (Pipeline 엔티티 신규 + `automation_*` 컬럼 + chaining 분석기 + polling/triggering + 수동 재실행) 위에서 실구현. 참조: `docs_for_claude/023-automation-mockup-tech-note.md` §9.
+15-d. ~~Pipeline / PipelineRun / PipelineAutomation 3 엔티티 분리 + schema_version=2~~ 🟡 **§9-1~§9-7 완료, §9-8/§9-9 진행 중 (2026-04-28 · v7.10)** — Alembic 031 + ORM 신규 + 서비스 / 라우터 / FE 전면 재배선. v1 호환 코드 전수 제거 (450 줄 감소). DataLoad 노드는 `(group, split)` 까지만, version 은 실행 시점 Version Resolver Modal. PipelineListPage / VersionResolverModal / CreatePipelineButton 신규. 자세한 결정 / 진행 상황: `docs_for_claude/027-pipeline-run-automation-separation-design.md` §12.
+16. **Automation 실구현** — chaining 분석기 / polling+triggering 스캐너 / `last_seen_input_versions` 갱신 등 자동 실행 로직. 026 mock fixture → 실 endpoint 재연결 (§9-8) 후 진입. 참조: `docs_for_claude/023-automation-mockup-tech-note.md` §9.
 17. **미구현 Detection manipulator 2종** — `det_change_compression` / `det_shuffle_image_ids`
 17. **미구현 Detection manipulator 2종** — `det_change_compression` / `det_shuffle_image_ids`
 18. **버전 정책 운영 검증** — automation과 함께
