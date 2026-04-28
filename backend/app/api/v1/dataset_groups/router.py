@@ -151,9 +151,27 @@ async def get_next_version(
     split: str = Query(..., description="TRAIN | VAL | TEST | NONE"),
     db: AsyncSession = Depends(get_db),
 ):
-    """해당 그룹+split의 다음 자동 생성 버전 조회."""
+    """해당 그룹+split의 다음 자동 생성 버전 조회.
+
+    v7.9 3계층 분리 이후 `_next_version` 은 split_id 한 인자만 받으므로,
+    여기서 (group_id, split) → DatasetSplit 조회 후 split_id 로 위임한다.
+    그룹은 있으나 해당 split 슬롯이 아직 없으면 신규 그룹과 동일하게 "1.0".
+    """
+    from sqlalchemy import select
+    from app.models.all_models import DatasetSplit
+
     svc = DatasetGroupService(db)
-    version = await svc._next_version(group_id, split)
+    split_row = await db.execute(
+        select(DatasetSplit).where(
+            DatasetSplit.group_id == group_id,
+            DatasetSplit.split == split.upper(),
+        )
+    )
+    split_obj = split_row.scalar_one_or_none()
+    if split_obj is None:
+        # split 슬롯이 아직 없는 경우 = 해당 split 의 첫 등록.
+        return {"version": "1.0"}
+    version = await svc._next_version(split_obj.id)
     return {"version": version}
 
 
