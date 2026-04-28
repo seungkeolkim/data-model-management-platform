@@ -28,17 +28,12 @@ export interface PipelineConfig {
   description?: string
   output: OutputConfig
   tasks: Record<string, TaskConfig>
-  /** [schema v1 legacy] Load→Save 직결 모드의 소스 DatasetVersion.id */
-  passthrough_source_dataset_id?: string | null
   /**
-   * [schema v2, v7.10 / 027 §4-1] Load→Save 직결 모드의 소스 DatasetSplit.id.
-   * v2 에서는 version 은 실행 시점 Version Resolver Modal 에서 확정된다.
+   * Load→Save 직결 모드의 소스 DatasetSplit.id (v7.10 / 027 §4-1).
+   * version 은 실행 시점 Version Resolver Modal 에서 확정된다.
    */
   passthrough_source_split_id?: string | null
-  /**
-   * DAG 스키마 버전. 현재 SDK 는 v2 를 생성 (v7.10 부터).
-   * v1 config 은 legacy — placeholder 노드로 복원되어 재실행 차단.
-   */
+  /** DAG 스키마 버전. 현재 SDK 는 항상 2 를 생성. */
   schema_version?: number
 }
 
@@ -53,7 +48,6 @@ export interface PartialPipelineConfig {
   description?: string
   output: OutputConfig | null
   tasks: Record<string, TaskConfig>
-  passthrough_source_dataset_id?: string | null
   passthrough_source_split_id?: string | null
   schema_version?: number
 }

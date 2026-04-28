@@ -82,39 +82,25 @@ class PipelineService:
         """
         DB 조회가 필요한 검증을 수행한다.
 
-        v1 (schema_version != 2) 경로: `source:<dataset_version_id>` 를 v1 방식으로 검증
-        v2 (schema_version == 2)  경로: `source:<split_id>` 를 v2 방식으로 검증
-            (split 존재 + group deleted 여부만 체크. version 은 실행 시점에 Resolver 에서)
-
-        cls_merge / cls_set_head_labels / cls_filter_by_class / output_schema 호환성
-        검증은 v1/v2 공통 — head_schema 는 group 레벨이므로 schema_version 과 무관.
+        검증 항목:
+          - source:<split_id> 참조의 DatasetSplit 존재 / 상위 group soft-delete 여부
+          - cls_merge / cls_set_head_labels / cls_filter_by_class / output_schema 호환성
+            (head_schema 는 group 레벨 SSOT 이므로 source 가 healthy 한 후에만 수행)
         """
         result = PipelineValidationResult()
 
-        # 모든 source ref 수집 (태스크별로 추적하여 field 정보 제공)
+        # 모든 source split 수집 (태스크별로 추적하여 field 정보 제공)
         for task_name, task_config in config.tasks.items():
-            for source_ref in task_config.get_source_dataset_ids():
-                await self._validate_source_ref(
-                    source_ref, task_name, result, is_schema_v2=config.is_schema_v2,
-                )
+            for split_id in task_config.get_source_dataset_ids():
+                await self._validate_source_split_ref(split_id, task_name, result)
 
         # Passthrough 모드(tasks 비어있음)에서도 소스 검증
-        if config.is_passthrough:
-            if config.is_schema_v2 and config.passthrough_source_split_id:
-                await self._validate_source_ref(
-                    config.passthrough_source_split_id, "__passthrough__",
-                    result, is_schema_v2=True,
-                )
-            elif not config.is_schema_v2 and config.passthrough_source_dataset_id:
-                await self._validate_source_ref(
-                    config.passthrough_source_dataset_id, "__passthrough__",
-                    result, is_schema_v2=False,
-                )
+        if config.is_passthrough and config.passthrough_source_split_id:
+            await self._validate_source_split_ref(
+                config.passthrough_source_split_id, "__passthrough__", result,
+            )
 
-        # (4), (5), (6), (7) — 상류/출력 head_schema 를 preview 로 계산해야 하므로
-        # 소스 검증이 먼저 통과한 경우에만 수행. 네 검사 모두
-        # preview_head_schema_at_task 를 재사용하므로 source_meta_by_dataset_id 는
-        # 호출 지점 각자가 필요 시 준비한다 (현재 구조 유지).
+        # 상류/출력 head_schema 호환성 — source 검증이 먼저 통과한 경우에만 수행.
         if result.is_valid:
             await self._validate_cls_merge_compatibility(config, result)
             await self._validate_cls_set_head_labels_compatibility(config, result)
@@ -123,39 +109,19 @@ class PipelineService:
 
         return result
 
-    async def _validate_source_ref(
-        self,
-        source_ref: str,
-        task_name: str,
-        result: PipelineValidationResult,
-        *,
-        is_schema_v2: bool,
-    ) -> None:
-        """
-        단일 `source:<X>` 참조에 대한 DB 검증 (v1/v2 분기).
-
-        v2 (split_id 참조) — 저장 시점 검증:
-          - DatasetSplit 존재
-          - 상위 DatasetGroup 이 soft-delete 되지 않음
-          (실제 version 선택 및 READY 상태 체크는 실행 시점 Version Resolver 에서)
-
-        v1 (dataset_version_id 참조) — legacy 경로:
-          - DatasetVersion 존재 + group soft-delete 아님 + status=READY + annotation_files 존재
-        """
-        if is_schema_v2:
-            await self._validate_source_split_ref(source_ref, task_name, result)
-        else:
-            await self._validate_source_dataset_version_ref(
-                source_ref, task_name, result,
-            )
-
     async def _validate_source_split_ref(
         self,
         split_id: str,
         task_name: str,
         result: PipelineValidationResult,
     ) -> None:
-        """v2 저장 시점 검증 — split_id 존재 + group 활성만 확인."""
+        """
+        단일 `source:<split_id>` 참조에 대한 저장 시점 검증.
+          - DatasetSplit 존재
+          - 상위 DatasetGroup 이 soft-delete 되지 않음
+
+        실제 version 선택 및 READY 상태 체크는 실행 시점 Version Resolver 에서.
+        """
         row = (await self.db.execute(
             select(DatasetSplit, DatasetGroup)
             .join(DatasetGroup, DatasetSplit.group_id == DatasetGroup.id)
@@ -182,123 +148,36 @@ class PipelineService:
                 issue_field=f"tasks.{task_name}.inputs",
             )
 
-    async def _validate_source_dataset_version_ref(
-        self,
-        dataset_id: str,
-        task_name: str,
-        result: PipelineValidationResult,
-    ) -> None:
-        """v1 legacy 경로 — 기존 검증 로직 그대로."""
-        query_result = await self.db.execute(
-            select(DatasetVersion, DatasetGroup)
-            .join(DatasetSplit, DatasetVersion.split_id == DatasetSplit.id)
-            .join(DatasetGroup, DatasetSplit.group_id == DatasetGroup.id)
-            .where(DatasetVersion.id == dataset_id)
-        )
-        row = query_result.first()
-
-        if row is None:
-            result.add_error(
-                code="SOURCE_DATASET_NOT_FOUND",
-                message=(
-                    f"태스크 '{task_name}'의 소스 데이터셋 '{dataset_id}'이(가) "
-                    f"DB에 존재하지 않습니다."
-                ),
-                issue_field=f"tasks.{task_name}.inputs",
-            )
-            return
-
-        dataset, dataset_group = row.tuple()
-
-        if dataset_group.deleted_at is not None:
-            result.add_error(
-                code="SOURCE_DATASET_GROUP_DELETED",
-                message=(
-                    f"태스크 '{task_name}'의 소스 데이터셋 '{dataset_id}'이(가) 속한 "
-                    f"그룹 '{dataset_group.name}'이(가) 삭제되었습니다."
-                ),
-                issue_field=f"tasks.{task_name}.inputs",
-            )
-            return
-
-        if dataset.status != "READY":
-            result.add_error(
-                code="SOURCE_DATASET_NOT_READY",
-                message=(
-                    f"태스크 '{task_name}'의 소스 데이터셋 '{dataset_id}'의 "
-                    f"상태가 '{dataset.status}'입니다. "
-                    f"READY 상태의 데이터셋만 파이프라인 입력으로 사용할 수 있습니다."
-                ),
-                issue_field=f"tasks.{task_name}.inputs",
-            )
-
-        if not dataset.annotation_files:
-            result.add_warning(
-                code="SOURCE_DATASET_NO_ANNOTATIONS",
-                message=(
-                    f"태스크 '{task_name}'의 소스 데이터셋 '{dataset_id}'에 "
-                    f"annotation 파일이 등록되어 있지 않습니다."
-                ),
-                issue_field=f"tasks.{task_name}.inputs",
-            )
-
-    # v7.10 호환용 — 외부/테스트 호출부가 남아있으면 기존 v1 검증을 유지.
-    _validate_source_dataset = _validate_source_dataset_version_ref
-
     async def _build_source_meta_map(
         self, config: PipelineConfig,
     ) -> dict[str, Any]:
         """
         config 의 모든 source ref 에 대해 head_schema 기반 stub meta 를 생성 (v7.10).
 
-        반환 dict 의 key = source ref 값 (v1=dataset_version_id, v2=split_id).
-        4개 validator (cls_merge / cls_set_head_labels / cls_filter_by_class /
-        output_schema_compatibility) 가 동일한 key 로 meta 를 조회한다.
+        반환 dict 의 key = source split_id. 4개 validator (cls_merge /
+        cls_set_head_labels / cls_filter_by_class / output_schema_compatibility) 가
+        동일한 key 로 meta 를 조회한다.
 
-        head_schema 는 group 레벨 SSOT 이므로 version 무관 — v2 에서도 group 을 거슬러
-        올라가면 동일 schema 를 얻는다.
+        head_schema 는 group 레벨 SSOT 이므로 version 무관 — split → group 만 거슬러
+        올라가면 충분.
         """
         from lib.pipeline.schema_preview import build_stub_source_meta
 
         meta_map: dict[str, Any] = {}
-        if config.is_schema_v2:
-            split_ids = config.get_all_source_split_ids()
-            if not split_ids:
-                return meta_map
-            rows = (await self.db.execute(
-                select(DatasetSplit)
-                .options(selectinload(DatasetSplit.group))
-                .where(DatasetSplit.id.in_(split_ids))
-            )).scalars().all()
-            for split_obj in rows:
-                head_schema = split_obj.group.head_schema if split_obj.group else None
-                meta_map[split_obj.id] = build_stub_source_meta(
-                    dataset_id=split_obj.id,  # key 는 split_id, stub 의 dataset_id 도 같은 값
-                    head_schema_json=head_schema,
-                )
-        else:
-            for dataset_id in config.get_all_source_dataset_ids():
-                dataset_row = await self.db.execute(
-                    select(DatasetVersion)
-                    .options(
-                        selectinload(DatasetVersion.split_slot)
-                        .selectinload(DatasetSplit.group)
-                    )
-                    .where(
-                        DatasetVersion.id == dataset_id,
-                        DatasetVersion.deleted_at.is_(None),
-                    )
-                )
-                dataset_obj = dataset_row.scalar_one_or_none()
-                if dataset_obj is None:
-                    continue
-                head_schema = (
-                    dataset_obj.group.head_schema if dataset_obj.group else None
-                )
-                meta_map[dataset_id] = build_stub_source_meta(
-                    dataset_id=dataset_id,
-                    head_schema_json=head_schema,
-                )
+        split_ids = config.get_all_source_split_ids()
+        if not split_ids:
+            return meta_map
+        rows = (await self.db.execute(
+            select(DatasetSplit)
+            .options(selectinload(DatasetSplit.group))
+            .where(DatasetSplit.id.in_(split_ids))
+        )).scalars().all()
+        for split_obj in rows:
+            head_schema = split_obj.group.head_schema if split_obj.group else None
+            meta_map[split_obj.id] = build_stub_source_meta(
+                dataset_id=split_obj.id,  # stub 인터페이스 호환 — key 는 split_id
+                head_schema_json=head_schema,
+            )
         return meta_map
 
     # -------------------------------------------------------------------------
@@ -341,7 +220,7 @@ class PipelineService:
         if not cls_merge_tasks:
             return
 
-        # source head_schema stub meta 미리 로드 — v7.10 공통 헬퍼 사용 (v1/v2 분기 포함)
+        # source head_schema stub meta 미리 로드 — 공통 헬퍼
         source_meta_by_dataset_id = await self._build_source_meta_map(config)
 
         for task_name, task_config in cls_merge_tasks:
@@ -624,17 +503,13 @@ class PipelineService:
             return
 
         # 2) 출력 head_schema 계산 — passthrough / tasks 분기
-        # v7.10 공통 헬퍼 사용 (v1/v2 둘 다 처리). classification 소스가 없으면
-        # passthrough/preview 모두 head_schema=None 을 리턴해 아래 분기에서 자연 처리.
+        # classification 소스가 없으면 passthrough/preview 모두 head_schema=None 을
+        # 리턴해 아래 분기에서 자연 처리.
         source_meta_by_dataset_id = await self._build_source_meta_map(config)
 
-        # passthrough 참조 해석 — v2 는 split_id, v1 은 dataset_version_id
-        passthrough_source_ref: str | None = None
-        if config.is_passthrough:
-            if config.is_schema_v2 and config.passthrough_source_split_id:
-                passthrough_source_ref = config.passthrough_source_split_id
-            elif not config.is_schema_v2 and config.passthrough_source_dataset_id:
-                passthrough_source_ref = config.passthrough_source_dataset_id
+        passthrough_source_ref = (
+            config.passthrough_source_split_id if config.is_passthrough else None
+        )
 
         output_head_schema_list = None
         if passthrough_source_ref:
@@ -778,19 +653,17 @@ class PipelineService:
         # ── resolved_input_versions 추출 (현재 시점의 input 버전 스냅샷, 기본 = 최신) ──
         resolved_input_versions = await self._extract_resolved_input_versions(config)
 
-        # ── v2 config 을 실행용 resolved config 으로 치환 (§9-5) ──
-        # source:<split_id> → source:<dataset_version_id>. Celery executor 는 기존대로
-        # dataset_version_id 를 읽어서 동작. transform_config 스냅샷에도 동일 resolved 저장.
+        # ── config 를 실행용 resolved config 으로 치환 (§9-5) ──
+        # source:<split_id> → source:<dataset_version_id>. Celery executor 는 dataset_version_id
+        # 단위로 데이터를 로드하므로 submit 시점에 한 번 치환. transform_config 스냅샷에도
+        # 동일 resolved 저장 (027 §2-2 "실행 시점 최종 config 스냅샷").
         config_dict_raw = config.model_dump()
-        if config.is_schema_v2:
-            split_to_dataset = await self._resolve_versions_to_dataset_ids(
-                resolved_input_versions
-            )
-            resolved_config_dict = self._substitute_v2_to_resolved_config(
-                config_dict_raw, split_to_dataset,
-            )
-        else:
-            resolved_config_dict = config_dict_raw
+        split_to_dataset = await self._resolve_versions_to_dataset_ids(
+            resolved_input_versions
+        )
+        resolved_config_dict = self._substitute_resolved_versions(
+            config_dict_raw, split_to_dataset,
+        )
 
         # ── PipelineRun 생성 (v7.10 — 기존 PipelineExecution rename + 확장) ──
         execution = PipelineRun(
@@ -805,7 +678,7 @@ class PipelineService:
         self.db.add(execution)
         await self.db.flush()
 
-        # ── Celery 태스크 디스패치 — executor 는 v1 형식으로 해석하므로 resolved 를 전달 ──
+        # ── Celery 태스크 디스패치 — executor 는 source:<dataset_version_id> 로 해석 ──
         from app.tasks.pipeline_tasks import run_pipeline
 
         celery_result = run_pipeline.delay(
@@ -921,72 +794,38 @@ class PipelineService:
             """
             return "CLASSIFICATION" in (task_types or [])
 
-        # 1) 파이프라인에서 참조하는 모든 source 의 head_schema + task_types 를 DB 에서 로드.
-        #    v1 (dataset_version_id) / v2 (split_id) 분기. task_ 분기에서 그룹 판정에 사용.
+        # 1) 파이프라인에서 참조하는 모든 source split 의 head_schema + task_types 를 DB 에서 로드.
+        #    task_ 분기에서 그룹 판정에 사용.
         source_meta_by_dataset_id: dict[str, object] = {}
         source_task_types_by_dataset_id: dict[str, list[str]] = {}
 
-        is_v2 = getattr(config, "is_schema_v2", False) or (
-            getattr(config, "schema_version", None) == 2
-        )
-        if is_v2:
-            split_ids = config.get_all_source_split_ids()
-            for split_id in split_ids:
-                split_row = await self.db.execute(
-                    select(DatasetSplit)
-                    .options(selectinload(DatasetSplit.group))
-                    .where(DatasetSplit.id == split_id)
-                )
-                split_obj = split_row.scalar_one_or_none()
-                if split_obj is None:
-                    return {
-                        "task_kind": "unknown",
-                        "head_schema": None,
-                        "error_code": "SOURCE_NOT_FOUND",
-                        "error_message": (
-                            f"source split_id='{split_id}' 를 DB 에서 찾을 수 없습니다."
-                        ),
-                    }
-                group_head_schema = (
-                    split_obj.group.head_schema if split_obj.group else None
-                )
-                group_task_types = (
-                    split_obj.group.task_types if split_obj.group else None
-                )
-                source_meta_by_dataset_id[split_id] = build_stub_source_meta(
-                    dataset_id=split_id,
-                    head_schema_json=group_head_schema,
-                )
-                source_task_types_by_dataset_id[split_id] = group_task_types or []
-        else:
-            source_dataset_ids = config.get_all_source_dataset_ids()
-            for dataset_id in source_dataset_ids:
-                dataset_row = await self.db.execute(
-                    select(DatasetVersion)
-                    .options(selectinload(DatasetVersion.split_slot).selectinload(DatasetSplit.group))
-                    .where(DatasetVersion.id == dataset_id, DatasetVersion.deleted_at.is_(None))
-                )
-                dataset_obj = dataset_row.scalar_one_or_none()
-                if dataset_obj is None:
-                    return {
-                        "task_kind": "unknown",
-                        "head_schema": None,
-                        "error_code": "SOURCE_NOT_FOUND",
-                        "error_message": (
-                            f"source dataset_id='{dataset_id}' 를 DB 에서 찾을 수 없습니다."
-                        ),
-                    }
-                group_head_schema = (
-                    dataset_obj.group.head_schema if dataset_obj.group else None
-                )
-                group_task_types = (
-                    dataset_obj.group.task_types if dataset_obj.group else None
-                )
-                source_meta_by_dataset_id[dataset_id] = build_stub_source_meta(
-                    dataset_id=dataset_id,
-                    head_schema_json=group_head_schema,
-                )
-                source_task_types_by_dataset_id[dataset_id] = group_task_types or []
+        for split_id in config.get_all_source_split_ids():
+            split_row = await self.db.execute(
+                select(DatasetSplit)
+                .options(selectinload(DatasetSplit.group))
+                .where(DatasetSplit.id == split_id)
+            )
+            split_obj = split_row.scalar_one_or_none()
+            if split_obj is None:
+                return {
+                    "task_kind": "unknown",
+                    "head_schema": None,
+                    "error_code": "SOURCE_NOT_FOUND",
+                    "error_message": (
+                        f"source split_id='{split_id}' 를 DB 에서 찾을 수 없습니다."
+                    ),
+                }
+            group_head_schema = (
+                split_obj.group.head_schema if split_obj.group else None
+            )
+            group_task_types = (
+                split_obj.group.task_types if split_obj.group else None
+            )
+            source_meta_by_dataset_id[split_id] = build_stub_source_meta(
+                dataset_id=split_id,
+                head_schema_json=group_head_schema,
+            )
+            source_task_types_by_dataset_id[split_id] = group_task_types or []
 
         # 2) target_ref 분기.
         #
@@ -996,54 +835,32 @@ class PipelineService:
         # source_meta_by_dataset_id 에 포함되지 않을 수 있다) 에도 프리뷰가
         # 정상 동작하도록 하기 위함.
         if target_ref.startswith("source:"):
-            source_ref_value = target_ref.split(":", 1)[1]
-            source_meta = source_meta_by_dataset_id.get(source_ref_value)
-            group_task_types = source_task_types_by_dataset_id.get(source_ref_value)
+            source_split_id = target_ref.split(":", 1)[1]
+            source_meta = source_meta_by_dataset_id.get(source_split_id)
+            group_task_types = source_task_types_by_dataset_id.get(source_split_id)
             if source_meta is None:
                 # config 에 참조되지 않은 source — dataLoad 단독 선택 등.
-                # v1 (dataset_version_id) / v2 (split_id) 분기하여 DB 에서 직접 로드.
-                group_obj = None
-                if is_v2:
-                    split_row = await self.db.execute(
-                        select(DatasetSplit)
-                        .options(selectinload(DatasetSplit.group))
-                        .where(DatasetSplit.id == source_ref_value)
-                    )
-                    split_obj = split_row.scalar_one_or_none()
-                    if split_obj is None:
-                        return {
-                            "task_kind": "unknown",
-                            "head_schema": None,
-                            "error_code": "SOURCE_NOT_FOUND",
-                            "error_message": (
-                                f"source split_id='{source_ref_value}' 를 DB 에서 찾을 수 없습니다."
-                            ),
-                        }
-                    group_obj = split_obj.group
-                else:
-                    dataset_row = await self.db.execute(
-                        select(DatasetVersion)
-                        .options(selectinload(DatasetVersion.split_slot).selectinload(DatasetSplit.group))
-                        .where(
-                            DatasetVersion.id == source_ref_value,
-                            DatasetVersion.deleted_at.is_(None),
-                        )
-                    )
-                    dataset_obj = dataset_row.scalar_one_or_none()
-                    if dataset_obj is None:
-                        return {
-                            "task_kind": "unknown",
-                            "head_schema": None,
-                            "error_code": "SOURCE_NOT_FOUND",
-                            "error_message": (
-                                f"source dataset_id='{source_ref_value}' 를 DB 에서 찾을 수 없습니다."
-                            ),
-                        }
-                    group_obj = dataset_obj.group
+                # split → group 직접 로드.
+                split_row = await self.db.execute(
+                    select(DatasetSplit)
+                    .options(selectinload(DatasetSplit.group))
+                    .where(DatasetSplit.id == source_split_id)
+                )
+                split_obj = split_row.scalar_one_or_none()
+                if split_obj is None:
+                    return {
+                        "task_kind": "unknown",
+                        "head_schema": None,
+                        "error_code": "SOURCE_NOT_FOUND",
+                        "error_message": (
+                            f"source split_id='{source_split_id}' 를 DB 에서 찾을 수 없습니다."
+                        ),
+                    }
+                group_obj = split_obj.group
                 group_head_schema = group_obj.head_schema if group_obj else None
                 group_task_types = group_obj.task_types if group_obj else None
                 source_meta = build_stub_source_meta(
-                    dataset_id=source_ref_value,
+                    dataset_id=source_split_id,
                     head_schema_json=group_head_schema,
                 )
             head_schema = getattr(source_meta, "head_schema", None)
@@ -1184,34 +1001,18 @@ class PipelineService:
         self, config: PipelineConfig,
     ) -> list[str] | None:
         """
-        파이프라인 config 의 소스들이 속한 그룹들의 task_types 교집합 반환.
+        파이프라인 config 의 소스 split 들이 속한 그룹들의 task_types 교집합 반환.
         소스가 없거나 교집합이 비어 있으면 None.
-
-        v7.10 schema_version 분기:
-          v2 — config 의 source ref = split_id 직접. split → group 1단 JOIN
-          v1 — source ref = dataset_version_id. version → split → group 2단 JOIN
         """
-        if config.is_schema_v2:
-            split_ids: set[str] = set(config.get_all_source_split_ids())
-            if not split_ids:
-                return None
-            result = await self.db.execute(
-                select(DatasetGroup.task_types)
-                .join(DatasetSplit, DatasetSplit.group_id == DatasetGroup.id)
-                .where(DatasetSplit.id.in_(split_ids))
-                .distinct()
-            )
-        else:
-            source_dataset_ids: set[str] = set(config.get_all_source_dataset_ids())
-            if not source_dataset_ids:
-                return None
-            result = await self.db.execute(
-                select(DatasetGroup.task_types)
-                .join(DatasetSplit, DatasetSplit.group_id == DatasetGroup.id)
-                .join(DatasetVersion, DatasetVersion.split_id == DatasetSplit.id)
-                .where(DatasetVersion.id.in_(source_dataset_ids))
-                .distinct()
-            )
+        split_ids: set[str] = set(config.get_all_source_split_ids())
+        if not split_ids:
+            return None
+        result = await self.db.execute(
+            select(DatasetGroup.task_types)
+            .join(DatasetSplit, DatasetSplit.group_id == DatasetGroup.id)
+            .where(DatasetSplit.id.in_(split_ids))
+            .distinct()
+        )
         all_task_types_rows = result.scalars().all()
 
         # 교집합 계산
@@ -1244,7 +1045,7 @@ class PipelineService:
         경로가 그대로 동작하도록 Pipeline 엔티티를 자동 get-or-create 한다. §12-2 네이밍
         규칙에 맞춰 `{config.name}_{split.lower()}` 로 자동 생성. 동일 이름 Pipeline 이 이미
         있으면 재사용 (version='1.0' 고정). config.name / split 이 바뀌면 새 Pipeline 이
-        만들어짐 — 사용자 명시적 의도는 없지만 legacy 흐름 호환을 위한 임시 정책.
+        만들어짐 — 사용자 명시적 의도는 없지만 호환을 위한 임시 정책.
 
         TODO §9-3: "저장" 엔드포인트 분리 시 이 함수는 제거하고 사용자 명시 create 로 대체.
         """
@@ -1283,29 +1084,12 @@ class PipelineService:
     ) -> dict[str, str]:
         """
         config 가 참조하는 source split 들의 **현재 최신 READY 버전** 을 `{split_id: version}`
-        으로 반환 (v7.10). submit_pipeline 호환 경로에서 자동 기본값 생성용.
+        으로 반환. submit_pipeline 호환 경로의 기본값 생성용.
 
-        §4-2 schema_version 분기:
-          v2 — config.get_all_source_split_ids() 로 split_id 직접
-          v1 — dataset_version_id 들을 DB 에서 조회해 split_id 로 해석 (legacy 경로)
-
-        두 경우 모두 마지막에 "split_id 별 최신 READY 버전" 을 DB 에서 조회한다.
-        submit_run_from_pipeline 은 사용자가 선택한 resolved_input_versions 를 그대로
-        받으므로 이 함수를 거치지 않음.
+        submit_run_from_pipeline 은 사용자가 Version Resolver 에서 선택한
+        resolved_input_versions 를 그대로 받으므로 이 함수를 거치지 않음.
         """
-        if config.is_schema_v2:
-            split_ids: set[str] = set(config.get_all_source_split_ids())
-        else:
-            dataset_version_ids = config.get_all_source_dataset_ids()
-            if not dataset_version_ids:
-                return {}
-            rs = await self.db.execute(
-                select(DatasetVersion)
-                .where(DatasetVersion.id.in_(dataset_version_ids))
-                .options(selectinload(DatasetVersion.split_slot))
-            )
-            split_ids = {v.split_slot.id for v in rs.scalars().all()}
-
+        split_ids: set[str] = set(config.get_all_source_split_ids())
         if not split_ids:
             return {}
 
@@ -1324,28 +1108,25 @@ class PipelineService:
                 latest[dv.split_id] = dv.version
         return latest
 
-    def _substitute_v2_to_resolved_config(
+    def _substitute_resolved_versions(
         self,
         config_dict: dict[str, Any],
         split_to_dataset_version_id: dict[str, str],
     ) -> dict[str, Any]:
         """
-        v7.10 schema_version=2 config 의 `source:<split_id>` 참조를 실제 선택된
-        `source:<dataset_version_id>` 로 치환한 **resolved** dict 반환.
+        config 의 `source:<split_id>` 참조를 실제 선택된 `source:<dataset_version_id>` 로
+        치환한 resolved dict 반환. passthrough 도 동일 방식.
 
         이 치환된 dict 가:
-          - `PipelineRun.transform_config` 스냅샷으로 저장되고 (027 §2-2 의 "실행 시점
-            최종 config 스냅샷 · resolved version 포함"),
-          - Celery `run_pipeline` 태스크에 전달되어 기존 executor (v1 형식 assume) 가
-            변경 없이 돌게 한다.
+          - PipelineRun.transform_config 스냅샷으로 저장되고 (027 §2-2 "실행 시점 최종
+            config 스냅샷 · resolved version 포함"),
+          - Celery run_pipeline 태스크에 전달되어 executor 가 dataset_version_id 단위로
+            데이터를 로드한다.
 
-        v1 config 이거나 schema_version 이 없으면 deep copy 만 반환 (no-op).
         순수 파이썬 — DB 접근 없음.
         """
         import copy
         resolved = copy.deepcopy(config_dict)
-        if resolved.get("schema_version") != 2:
-            return resolved
 
         # tasks[*].inputs 치환
         for task_config in (resolved.get("tasks") or {}).values():
@@ -1358,13 +1139,13 @@ class PipelineService:
                     if dataset_version_id:
                         new_inputs.append(f"source:{dataset_version_id}")
                     else:
-                        # resolved 가 부족하면 원본 유지 — executor 에서 에러 날 가능성
+                        # resolved 누락 — 원본 유지해 executor 에서 명시적 에러 유도
                         new_inputs.append(inp)
                 else:
                     new_inputs.append(inp)
             task_config["inputs"] = new_inputs
 
-        # v2 passthrough_source_split_id → v1 passthrough_source_dataset_id 치환
+        # passthrough — split_id 를 resolved dataset_version_id 로 치환해 executor 로 전달
         passthrough_split_id = resolved.get("passthrough_source_split_id")
         if passthrough_split_id:
             dataset_version_id = split_to_dataset_version_id.get(passthrough_split_id)
@@ -1440,7 +1221,7 @@ class PipelineService:
         offset: int = 0,
     ) -> tuple[list[Pipeline], int]:
         """
-        Pipeline 목록 + 총 개수. 기본은 `is_active=TRUE` 만 (§5-3 legacy 숨기기 기본 ON).
+        Pipeline 목록 + 총 개수. 기본은 `is_active=TRUE` 만 (soft-deleted 숨김).
 
         정렬 기준: name ASC, version DESC (같은 name 안에서 최신 version 이 위로).
         §3-4 "과거 run 복원 시 (name, version) 한 눈에 보임" 원칙 반영.
@@ -1593,19 +1374,18 @@ class PipelineService:
         `POST /pipelines/{id}/runs` 구현. Version Resolver Modal 이 확정한
         `{split_id: version}` 을 받아 PipelineRun 1건을 생성하고 Celery dispatch.
 
-        legacy Pipeline (is_active=FALSE) 은 차단 (§5-3).
+        soft-deleted Pipeline (is_active=FALSE) 은 차단.
 
         본 메서드는 §12-5 기준 "실행 시점" 에 해당하므로 validate_runtime 성격의
-        최소 체크만 수행 (현 단계 §9-3 에서는 structural 재검증은 수행하지 않음 — 저장
-        시점에 이미 통과했다고 가정. §9-4 FE DataLoad 축소 시 저장 경로가 생기면 재검토).
+        최소 체크만 수행 (저장 시점에 이미 structural 검증을 통과했다고 가정).
         """
         pipeline = await self.get_pipeline(pipeline_id)
         if pipeline is None:
             raise ValueError(f"Pipeline not found: {pipeline_id}")
         if not pipeline.is_active:
             raise ValueError(
-                "Pipeline 이 비활성(legacy 또는 soft-deleted) 이라 새 run 을 제출할 수 없습니다. "
-                "새 버전을 만들어 실행하거나 is_active=True 로 복원하세요."
+                "Pipeline 이 soft-deleted 상태라 새 run 을 제출할 수 없습니다. "
+                "새 버전을 만들거나 is_active=True 로 복원하세요."
             )
 
         # config 에서 PipelineConfig Pydantic 복원 (실행 파이프라인의 진짜 스펙)
@@ -1633,7 +1413,7 @@ class PipelineService:
             output_group.deleted_at = None
 
         # task_types 백필 — 신규 그룹이 처음 만들어질 때 source 교집합으로 채워졌어야
-        # 했는데 누락된 케이스 (예: 과거 v1/v2 분기 버그). 매 실행 시 source 교집합을
+        # 했는데 누락된 케이스 회복용. 매 실행 시 source 교집합을
         # 재계산해 빈 경우만 채운다.
         if not output_group.task_types:
             inferred_task_types = await self._intersect_source_task_types(config)
@@ -1644,17 +1424,8 @@ class PipelineService:
                     group_id=output_group.id, task_types=inferred_task_types,
                 )
 
-        # 실행 시점 runtime 검증: resolved_input_versions 에 모든 source split 이 있는지.
-        # §4-2 schema_version 분기:
-        #   v2 (source:<split_id>) — split_id 직접 추출
-        #   v1 (source:<dataset_version_id>) — dataset_version_id 를 split_id 로 해석
-        #     (legacy 경로이고 Pipeline.is_active=FALSE 라 실제로 도달하지 않음)
-        if config.is_schema_v2:
-            expected_split_ids = set(config.get_all_source_split_ids())
-        else:
-            expected_split_ids = await self._resolve_expected_input_split_ids(
-                config.get_all_source_dataset_ids()
-            )
+        # 실행 시점 runtime 검증: resolved_input_versions 에 모든 source split 이 포함됐는지.
+        expected_split_ids = set(config.get_all_source_split_ids())
         missing = expected_split_ids - set(resolved_input_versions.keys())
         if missing:
             raise ValueError(
@@ -1700,11 +1471,12 @@ class PipelineService:
         self.db.add(dataset)
         await self.db.flush()
 
-        # PipelineRun 생성 — Pipeline.config 는 v2 (split_id) 템플릿이므로, 실행 시점에
+        # PipelineRun 생성 — Pipeline.config 는 split_id 단위 spec 이므로 실행 시점에
         # source:<split_id> → source:<dataset_version_id> 로 치환한 resolved dict 를
         # transform_config 에 저장 (027 §2-2 "실행 시점 최종 config 스냅샷 · resolved
-        # version 포함"). Celery executor 는 이 resolved dict 로 기존 v1 경로를 돈다.
-        resolved_config_dict = self._substitute_v2_to_resolved_config(
+        # version 포함"). Celery executor 는 이 resolved dict 의 dataset_version_id 단위로
+        # 데이터를 로드한다.
+        resolved_config_dict = self._substitute_resolved_versions(
             pipeline.config, runtime_dataset_ids,
         )
         run = PipelineRun(
@@ -1720,7 +1492,7 @@ class PipelineService:
         self.db.add(run)
         await self.db.flush()
 
-        # Celery dispatch — resolved dict (v1 형식) 을 executor 에 전달
+        # Celery dispatch — resolved dict (dataset_version_id 단위) 을 executor 에 전달
         from app.tasks.pipeline_tasks import run_pipeline
         celery_result = run_pipeline.delay(run.id, resolved_config_dict)
         run.celery_task_id = celery_result.id
@@ -1739,23 +1511,6 @@ class PipelineService:
             celery_task_id=run.celery_task_id,
             message="파이프라인 실행이 제출되었습니다.",
         )
-
-    async def _resolve_expected_input_split_ids(
-        self, dataset_version_ids: list[str],
-    ) -> set[str]:
-        """
-        Pipeline.config (schema v1) 의 source:<dataset_version_id> 들을 split_id 집합으로.
-
-        Version Resolver 가 resolved_input_versions 로 채워야 하는 split 의 기대 집합.
-        """
-        if not dataset_version_ids:
-            return set()
-        result = await self.db.execute(
-            select(DatasetVersion)
-            .where(DatasetVersion.id.in_(dataset_version_ids))
-            .options(selectinload(DatasetVersion.split_slot))
-        )
-        return {v.split_slot.id for v in result.scalars().all()}
 
     async def _resolve_versions_to_dataset_ids(
         self, resolved_input_versions: dict[str, str],

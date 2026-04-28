@@ -13,7 +13,7 @@ import type { PipelineNode } from '@/types/pipeline'
 /**
  * 현재 SDK 가 생성하는 PipelineConfig 의 schema_version.
  * v7.10 (핸드오프 027 §4-2) — 2 로 승격: source 참조가 dataset_version_id 에서
- * split_id 로 격상됨. v1 config 은 legacy (placeholder 로 복원, 재실행 차단).
+ * split_id 로 격상됨. FE / 사용자가 작성하는 spec 단계 — Pipeline.config 에 그대로 저장.
  */
 export const CURRENT_SCHEMA_VERSION = 2
 
@@ -78,8 +78,6 @@ export function graphToPipelineConfig(
     description: rootParts.description,
     output: rootParts.output,
     tasks,
-    // v7.10: v1 호환 필드는 null 로 명시 (백엔드가 v2 를 우선 해석)
-    passthrough_source_dataset_id: null,
     passthrough_source_split_id: rootWithPassthrough.passthrough_source_split_id ?? null,
     schema_version: CURRENT_SCHEMA_VERSION,
   } as PipelineConfig
@@ -166,7 +164,6 @@ export function graphToPartialPipelineConfig(
     description: rootParts.description,
     output: rootParts.output ?? null,
     tasks,
-    passthrough_source_dataset_id: null,
     passthrough_source_split_id: rootPartial.passthrough_source_split_id ?? null,
     schema_version: CURRENT_SCHEMA_VERSION,
   } as PartialPipelineConfig

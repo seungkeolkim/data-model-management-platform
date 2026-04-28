@@ -163,9 +163,7 @@ export const saveDefinition: NodeDefinition<'save'> = {
   },
 
   // SaveNode 는 task 를 발생시키지 않고 PipelineConfig 루트(name/output)만 기여.
-  // v7.10 (schema_version=2, 027 §4-2): Load→Save 직결(passthrough) 이면
-  // `passthrough_source_split_id` 를 root 에 추가. v1 의 `passthrough_source_dataset_id`
-  // 는 이제 사용하지 않는다.
+  // Load→Save 직결(passthrough) 이면 `passthrough_source_split_id` 를 root 에 추가.
   toConfigContribution(data, ctx) {
     let passthroughSplitId: string | undefined
     if (ctx.incomingEdges.length === 1) {

@@ -1,12 +1,9 @@
 /**
  * DataLoadDefinition — 소스 데이터셋 2단계 선택 노드.
  *
- * v7.10 (핸드오프 027 §4-1, §12-1) — schema_version=2 전환.
+ * v7.10 (핸드오프 027 §4-1, §12-1).
  * 그룹 → Split 까지만 선택. 버전은 실행 시점 Version Resolver Modal 에서 확정.
  * 이 노드는 task 를 발생시키지 않고 `source:<split_id>` 토큰만 outputRef 로 제공.
- *
- * schema v1 (legacy) config 은 configToGraph 에서 placeholder 노드로 복원되어
- * 읽기 전용이며 재실행 차단. 본 정의는 v2 config 만 생성 / 복원.
  */
 import { memo, useMemo } from 'react'
 import type { NodeProps } from '@xyflow/react'
@@ -333,16 +330,11 @@ export const dataLoadDefinition: NodeDefinition<'dataLoad'> = {
   },
 
   /**
-   * schema_version=2 config 의 `source:<split_id>` 토큰을 점유하여 DataLoadNode 로 복원.
-   * passthrough_source_split_id 도 포함. v1 (source:<dataset_version_id>) 토큰은
-   * placeholderDefinition 이 수거해 읽기 전용 노드로 복원.
+   * config 의 `source:<split_id>` 토큰을 점유하여 DataLoadNode 로 복원.
+   * passthrough_source_split_id 도 포함.
    */
   matchFromConfig(ctx) {
     const { config, datasetDisplayMap, claimedSourceDatasetIds } = ctx
-    const isV2 = config.schema_version === 2
-
-    // v1 legacy 는 DataLoad 가 수거하지 않는다 — placeholder 로 흘려보냄
-    if (!isV2) return []
 
     const splitIds = new Set<string>()
     for (const task of Object.values(config.tasks)) {
@@ -352,10 +344,8 @@ export const dataLoadDefinition: NodeDefinition<'dataLoad'> = {
         }
       }
     }
-    const v2PassthroughId = (config as { passthrough_source_split_id?: string | null })
-      .passthrough_source_split_id
-    if (v2PassthroughId) {
-      splitIds.add(v2PassthroughId)
+    if (config.passthrough_source_split_id) {
+      splitIds.add(config.passthrough_source_split_id)
     }
 
     const restored = []

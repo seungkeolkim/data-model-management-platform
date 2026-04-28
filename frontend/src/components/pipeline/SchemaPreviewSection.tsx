@@ -36,13 +36,11 @@ function resolveTargetRef(
   nodeData: PipelineNodeData,
 ): { ref: string } | { ref: null; reason: string } {
   if (nodeData.type === 'dataLoad') {
-    // v7.10 (027 §4-1): splitId 우선. v1 datasetId 는 legacy 호환.
-    const dl = nodeData as { splitId?: string | null; datasetId?: string | null }
-    const sourceRef = dl.splitId ?? dl.datasetId ?? null
-    if (!sourceRef) {
+    const splitId = (nodeData as { splitId?: string | null }).splitId ?? null
+    if (!splitId) {
       return { ref: null, reason: '소스 데이터셋을 먼저 선택하세요.' }
     }
-    return { ref: `source:${sourceRef}` }
+    return { ref: `source:${splitId}` }
   }
   if (nodeData.type === 'operator' || nodeData.type === 'merge') {
     return { ref: `task_${selectedNodeId}` }

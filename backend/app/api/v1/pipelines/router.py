@@ -298,7 +298,7 @@ def _build_automation_response(
 @router.get("/entities", response_model=PipelineListPageResponse)
 async def list_pipeline_entities(
     include_inactive: bool = Query(
-        False, description="FALSE (기본) 면 is_active=TRUE 만. legacy 숨김",
+        False, description="FALSE (기본) 면 is_active=TRUE (soft-deleted 숨김)",
     ),
     name_filter: str | None = Query(None, description="name ILIKE 부분 일치"),
     task_type: list[str] | None = Query(None, description="DETECTION / CLASSIFICATION ..."),
@@ -308,7 +308,7 @@ async def list_pipeline_entities(
 ):
     """
     Pipeline 목록 — Automation 관리 페이지 좌측 + /pipelines 페이지 본체 (§9-7 예정).
-    기본은 `is_active=TRUE` (§5-3 legacy 숨김 기본 ON).
+    기본은 `is_active=TRUE` (soft-deleted 숨김 기본 ON).
     """
     service = PipelineService(db)
     items, total = await service.list_pipelines(

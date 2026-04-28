@@ -26,10 +26,7 @@ interface VersionResolverModalProps {
 
 /**
  * config 에서 필요한 모든 source split_id 를 추출.
- *
- * v2 경로: `config.tasks[*].inputs` 의 `source:<split_id>` + `config.passthrough_source_split_id`
- * v1 legacy 는 dataset_version_id 라 여기서는 다루지 않음 (legacy Pipeline 은
- * is_active=FALSE 로 실행 차단).
+ * `config.tasks[*].inputs` 의 `source:<split_id>` + `config.passthrough_source_split_id`.
  */
 function collectSourceSplitIdsFromConfig(config: Record<string, unknown>): string[] {
   const ids = new Set<string>()
@@ -161,8 +158,6 @@ export function VersionResolverModal({
     requiredSplitIds.length > 0
     && requiredSplitIds.every((sid) => !!resolvedVersions[sid])
 
-  const isV2Config = pipeline.config.schema_version === 2
-
   return (
     <Modal
       open={open}
@@ -183,14 +178,6 @@ export function VersionResolverModal({
       width={600}
       destroyOnClose
     >
-      {!isV2Config && (
-        <Alert
-          type="warning" showIcon
-          message="이 Pipeline 은 schema v1 (legacy) 입니다"
-          description="v1 Pipeline 은 읽기 전용이며 새 run 제출이 차단됩니다. 새 Pipeline 을 생성해 주세요."
-          style={{ marginBottom: 12 }}
-        />
-      )}
       {errorMessage && (
         <Alert
           type="error" showIcon closable

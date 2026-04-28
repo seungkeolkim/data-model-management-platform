@@ -339,7 +339,7 @@ class Pipeline(Base):
     )
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default="true",
-        comment="soft delete. legacy Pipeline 은 FALSE (Alembic 031 백필).",
+        comment="soft delete. is_active=FALSE 면 새 run 제출 / automation 등록 차단.",
     )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=False), nullable=False, default=_now, server_default=func.now()
@@ -436,7 +436,7 @@ class PipelineRun(Base):
         UUID(as_uuid=False),
         ForeignKey("pipelines.id", ondelete="RESTRICT"),
         nullable=False,
-        comment="소속 Pipeline. legacy 백필 포함 항상 존재 (027 §5-2)",
+        comment="소속 Pipeline (NOT NULL).",
     )
     automation_id: Mapped[str | None] = mapped_column(
         UUID(as_uuid=False),
@@ -456,7 +456,7 @@ class PipelineRun(Base):
     )
     resolved_input_versions: Mapped[dict | None] = mapped_column(
         JSONB, nullable=True,
-        comment="{split_id: version} — run 제출 시점의 input 버전 해석. legacy 는 best-effort",
+        comment="{split_id: version} — run 제출 시점의 input 버전 해석",
     )
     trigger_kind: Mapped[str] = mapped_column(
         String(40), nullable=False, default="manual_from_editor",

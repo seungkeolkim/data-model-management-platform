@@ -6,7 +6,7 @@
  *
  * 각 행 우측에 "실행" 버튼 — 클릭 시 Version Resolver Modal (027 §4-3) 로 input
  * version 확정 후 `POST /pipelines/entities/{id}/runs` dispatch.
- * legacy Pipeline (is_active=FALSE) 은 버튼 비활성 + 배지 (§5-3).
+ * is_active=FALSE (soft-deleted) Pipeline 은 실행 버튼 비활성 + soft-deleted 배지.
  */
 import { useMemo, useState } from 'react'
 import {
@@ -62,7 +62,7 @@ export function PipelineListPage() {
       message.success(
         vars.nextValue
           ? '활성화했습니다. 이제 run 을 제출할 수 있습니다.'
-          : '비활성(legacy) 로 전환했습니다. 자동화가 있으면 error 상태가 됩니다.',
+          : '비활성으로 전환했습니다. 자동화가 있으면 error 상태가 됩니다.',
       )
       queryClient.invalidateQueries({ queryKey: ['pipeline-entities'] })
     },
@@ -98,8 +98,8 @@ export function PipelineListPage() {
             <Text strong>{name}</Text>
             <Tag style={{ margin: 0, fontSize: 10 }}>v{row.version}</Tag>
             {!row.is_active && (
-              <Tooltip title="is_active=FALSE. Alembic 백필 또는 soft-deleted. 새 run 제출 차단.">
-                <Tag color="default" style={{ margin: 0, fontSize: 10 }}>legacy</Tag>
+              <Tooltip title="is_active=FALSE (soft-deleted). 새 run 제출 차단.">
+                <Tag color="default" style={{ margin: 0, fontSize: 10 }}>비활성</Tag>
               </Tooltip>
             )}
             {row.has_automation && <Tag color="purple" style={{ margin: 0, fontSize: 10 }}>auto</Tag>}
@@ -166,7 +166,7 @@ export function PipelineListPage() {
       width: 230,
       render: (_v, row) => (
         <Space size={6}>
-          <Tooltip title={row.is_active ? '실행 전 input version 을 선택합니다' : 'legacy Pipeline 은 실행 불가'}>
+          <Tooltip title={row.is_active ? '실행 전 input version 을 선택합니다' : '비활성 Pipeline 은 실행 불가'}>
             <Button
               type="primary"
               size="small"
@@ -209,7 +209,7 @@ export function PipelineListPage() {
               onSearch={(value) => setNameFilter(value)}
             />
             <Space size={4}>
-              <Text style={{ fontSize: 12 }}>legacy 포함</Text>
+              <Text style={{ fontSize: 12 }}>비활성 포함</Text>
               <Switch
                 size="small"
                 checked={includeInactive}
@@ -230,7 +230,7 @@ export function PipelineListPage() {
           type="info"
           showIcon
           closable
-          message="Pipeline = 정적 템플릿. 실행 시 버전을 선택하세요 (v7.10 / 027 §12-1)."
+          message="Pipeline = 정적 템플릿. 실행 시 버전을 선택하세요."
           description="에디터에서는 (group, split) 까지만 저장됩니다. 버전은 각 실행 시 Version Resolver 모달에서 선택합니다."
           style={{ marginBottom: 0 }}
         />
@@ -241,7 +241,7 @@ export function PipelineListPage() {
           columns={columns}
           pagination={false}
           size="middle"
-          rowClassName={(row) => (row.is_active ? '' : 'legacy-row')}
+          rowClassName={(row) => (row.is_active ? '' : 'inactive-row')}
         />
       </Space>
 

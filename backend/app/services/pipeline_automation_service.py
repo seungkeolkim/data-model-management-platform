@@ -86,7 +86,7 @@ class PipelineAutomationService:
         자동화 등록 또는 갱신. 해당 Pipeline 에 active automation 이 있으면 갱신,
         없으면 신규 INSERT.
 
-        Pipeline.is_active=FALSE (legacy / soft-deleted) 에는 automation 등록 불가.
+        Pipeline.is_active=FALSE (soft-deleted) 에는 automation 등록 불가.
         """
         pipeline = await self._get_pipeline_strict(pipeline_id)
         if not pipeline.is_active:
@@ -310,26 +310,9 @@ class PipelineAutomationService:
         self, config: PipelineConfig,
     ) -> dict[str, str]:
         """
-        config 가 참조하는 source split 들의 현재 최신 version 수집.
-
-        §4-2 schema_version 분기:
-          v2 — config.get_all_source_split_ids() 로 split_id 직접 추출
-          v1 — dataset_version_id → split_id 매핑 후 split 별 최신 조회 (legacy 경로)
+        config 가 참조하는 source split 들의 현재 최신 READY version 수집.
         """
-        if config.is_schema_v2:
-            split_ids = set(config.get_all_source_split_ids())
-        else:
-            # v1 legacy: dataset_version_id → split_id 매핑
-            dataset_version_ids = config.get_all_source_dataset_ids()
-            if not dataset_version_ids:
-                return {}
-            result = await self.db.execute(
-                select(DatasetVersion)
-                .where(DatasetVersion.id.in_(dataset_version_ids))
-                .options(selectinload(DatasetVersion.split_slot))
-            )
-            split_ids = {v.split_slot.id for v in result.scalars().all()}
-
+        split_ids = set(config.get_all_source_split_ids())
         if not split_ids:
             return {}
         # split 별 최신 version 조회 (READY 상태만)

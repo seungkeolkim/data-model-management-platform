@@ -105,7 +105,7 @@ export const datasetsForPipelineApi = {
 // =============================================================================
 
 export const pipelineEntitiesApi = {
-  /** Pipeline 목록 (legacy 숨김 기본 ON, §5-3) */
+  /** Pipeline 목록 (is_active=FALSE / soft-deleted 숨김 기본 ON) */
   list: (params?: {
     include_inactive?: boolean
     name_filter?: string

@@ -48,20 +48,13 @@ NOTE: revision ID 는 alembic_version.version_num (VARCHAR(32)) 길이 제약 �
         - 테이블 rename: pipeline_executions → pipeline_runs
         - 외부 FK 참조 없음 (사전 확인 완료)
 
-백필 전략 (027 §5 전략 2 — 엄격 비교, N → N legacy Pipeline):
-    1. 각 pipeline_executions 행당 1 Pipeline legacy 생성 (is_active=FALSE)
-        - name = 'legacy_{execution_id[:8]}'
-        - version = '1.0'
-        - output_split_id = execution.output_dataset → dataset_versions.split_id
-        - config = execution.config (v1 schema 그대로. schema_version=1)
-        - task_type 추정:
-            · config.tasks 의 operator 중 'det_' prefix 있으면 DETECTION
-            · 'cls_' prefix 있으면 CLASSIFICATION
-            · 그 외 (passthrough, 빈 tasks) 는 output group.task_types[0] 로 fallback
-    2. pipeline_runs.pipeline_id 에 legacy Pipeline 의 id 를 UPDATE
-    3. resolved_input_versions best-effort 백필 — config.tasks[*].inputs 의
-       source:<dataset_version_id> 를 파싱해 dataset_versions 조회 → {split_id: version}
-       JSONB. 실패 (dataset 삭제 등) 시 NULL. legacy 는 is_active=FALSE 라 재실행 불가
+백필 전략:
+    본 migration 은 v7.10 신규 도입 시점이라 기존 pipeline_executions 가 비어있는
+    환경을 가정한다 (DB 초기화 후 적용). pipeline_runs.pipeline_id NOT NULL 제약은
+    빈 테이블에서 즉시 추가된다.
+
+    만약 기존 데이터가 있으면 alter_column 단계에서 NOT NULL 위반이 발생하므로,
+    그 경우 사용자가 별도 정책으로 수동 백필 후 재시도해야 한다.
 
 downgrade:
     역순. pipeline_runs → pipeline_executions rename 복구 + 신규 컬럼 drop +
@@ -116,7 +109,7 @@ def upgrade() -> None:
         sa.Column(
             "config", postgresql.JSONB, nullable=False,
             comment=(
-                "PipelineConfig JSONB 스냅샷 (schema_version=1 legacy 또는 2 신규). "
+                "PipelineConfig JSONB 스냅샷 (schema_version=2). "
                 "생성 후 절대 수정 금지 — 027 §6-1 immutable"
             ),
         ),
@@ -127,7 +120,7 @@ def upgrade() -> None:
         sa.Column(
             "is_active", sa.Boolean, nullable=False,
             server_default=sa.text("TRUE"),
-            comment="soft delete. 027 §6-2. legacy Pipeline 은 FALSE 로 생성됨",
+            comment="soft delete. 027 §6-2.",
         ),
         sa.Column(
             "created_at", sa.TIMESTAMP, nullable=False,
@@ -236,7 +229,7 @@ def upgrade() -> None:
         "pipeline_executions",
         sa.Column(
             "resolved_input_versions", postgresql.JSONB, nullable=True,
-            comment="{split_id: version} — run 제출 시점의 input 버전 해석. legacy 는 best-effort",
+            comment="{split_id: version} — run 제출 시점의 input 버전 해석",
         ),
     )
     op.add_column(
@@ -267,103 +260,12 @@ def upgrade() -> None:
     )
 
     # ==========================================================================
-    # 4) Legacy Pipeline 백필 (1 execution = 1 Pipeline, is_active=FALSE)
+    # 4) FK 제약 추가
     # ==========================================================================
-
-    # 4-1. 각 execution 에 대응하는 legacy Pipeline 을 pipelines 에 INSERT.
-    #      task_type 은 config.tasks 내 operator prefix 로 추정, 실패 시 output
-    #      group.task_types[0] 로 fallback.
-    connection.execute(sa.text("""
-        INSERT INTO pipelines (
-            id, name, version, description,
-            output_split_id, config, task_type, is_active,
-            created_at, updated_at
-        )
-        SELECT
-            gen_random_uuid(),
-            'legacy_' || LEFT(e.id::text, 8),
-            '1.0',
-            'Alembic 031 legacy 백필 (is_active=FALSE, 재실행 불가). execution_id=' || e.id::text,
-            dv.split_id,
-            e.transform_config,
-            CASE
-                WHEN EXISTS (
-                    SELECT 1
-                    FROM jsonb_each(COALESCE(e.transform_config->'tasks', '{}'::jsonb)) AS t(key, tk)
-                    WHERE (tk->>'operator') ~ '^det_'
-                ) THEN 'DETECTION'
-                WHEN EXISTS (
-                    SELECT 1
-                    FROM jsonb_each(COALESCE(e.transform_config->'tasks', '{}'::jsonb)) AS t(key, tk)
-                    WHERE (tk->>'operator') ~ '^cls_'
-                ) THEN 'CLASSIFICATION'
-                ELSE COALESCE(g.task_types->>0, 'DETECTION')
-            END,
-            FALSE,
-            e.created_at,
-            e.created_at
-        FROM pipeline_executions e
-        JOIN dataset_versions dv ON dv.id = e.output_dataset_id
-        JOIN dataset_splits ds ON ds.id = dv.split_id
-        JOIN dataset_groups g ON g.id = ds.group_id
-    """))
-
-    # 4-2. pipeline_executions.pipeline_id 에 방금 만든 legacy Pipeline 의 id 를 매핑
-    connection.execute(sa.text("""
-        UPDATE pipeline_executions e
-        SET pipeline_id = p.id
-        FROM pipelines p
-        WHERE p.name = 'legacy_' || LEFT(e.id::text, 8)
-          AND p.is_active = FALSE
-    """))
-
-    # 4-3. resolved_input_versions best-effort 백필.
-    #      두 경로에서 dataset_version_id 를 수집한다:
-    #        (a) config.tasks[*].inputs 의 'source:<dataset_version_id>' 패턴 — 일반 DAG
-    #        (b) config.passthrough_source_dataset_id 최상위 키 — passthrough 모드
-    #      dataset_versions 조회 → {split_id: version} JSONB 로 집계.
-    #      매칭 실패는 NULL 로 남김 (legacy 재실행 불가이므로 허용).
-    connection.execute(sa.text("""
-        WITH exec_sources AS (
-            -- (a) DAG source:<uuid> 패턴
-            SELECT DISTINCT
-                e.id AS exec_id,
-                SUBSTRING(input_str FROM 8) AS dataset_version_id
-            FROM pipeline_executions e,
-                 jsonb_each(COALESCE(e.transform_config->'tasks', '{}'::jsonb)) AS t(task_key, task_val),
-                 jsonb_array_elements_text(COALESCE(task_val->'inputs', '[]'::jsonb)) AS input_str
-            WHERE input_str LIKE 'source:%'
-
-            UNION
-
-            -- (b) passthrough_source_dataset_id 최상위 키 (passthrough 모드)
-            SELECT
-                e.id AS exec_id,
-                e.transform_config->>'passthrough_source_dataset_id' AS dataset_version_id
-            FROM pipeline_executions e
-            WHERE e.transform_config ? 'passthrough_source_dataset_id'
-              AND e.transform_config->>'passthrough_source_dataset_id' IS NOT NULL
-        ),
-        resolved AS (
-            SELECT
-                es.exec_id,
-                dv.split_id::text AS split_id,
-                dv.version AS version
-            FROM exec_sources es
-            JOIN dataset_versions dv ON dv.id::text = es.dataset_version_id
-        ),
-        agg AS (
-            SELECT exec_id, jsonb_object_agg(split_id, version) AS versions
-            FROM resolved
-            GROUP BY exec_id
-        )
-        UPDATE pipeline_executions e
-        SET resolved_input_versions = a.versions
-        FROM agg a
-        WHERE a.exec_id = e.id
-    """))
-
-    # 4-4. pipeline_id NOT NULL + FK 제약 (백필 완료 후)
+    # NOTE: 본 migration 은 v7.10 신규 도입 시점이라 기존 pipeline_executions 가
+    # 비어있는 환경 (DB 초기화 직후) 을 가정한다. 만약 기존 데이터가 있으면
+    # pipeline_id NOT NULL 제약이 즉시 위반되므로, 그 경우 사용자가 별도 정책으로
+    # 수동 백필해야 한다.
     op.alter_column("pipeline_executions", "pipeline_id", nullable=False)
     op.create_foreign_key(
         "fk_pipeline_executions_pipeline_id",
