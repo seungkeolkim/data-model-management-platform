@@ -1,8 +1,8 @@
 /**
- * PipelineListPage — Pipeline (concept) 목록 + 행 클릭 drawer.
+ * PipelineListPage — Pipeline (concept) 목록 + 행 클릭 인라인 expand.
  *
  * v7.11 (feature/pipeline-family-and-version):
- *   - 행 클릭 시 우측 drawer 펼침 — 개념 메타 + 모든 versions (세로 목록)
+ *   - 행 클릭 시 그 행이 아래로 펼쳐짐 — 개념 메타 + 모든 versions (세로 목록)
  *   - 각 version 행: 클릭 시 미니 상세 토글, "상세" 버튼 → 풀 페이지
  *   - 행의 "상세 보기" 버튼 → 최신 active version 풀 페이지로 이동
  *   - "실행" 버튼 → Version Resolver Modal (최신 active version 의 config 사용)
@@ -22,7 +22,6 @@ import {
   message,
   Alert,
   Tooltip,
-  Drawer,
   Descriptions,
   Empty,
 } from 'antd'
@@ -58,8 +57,8 @@ export function PipelineListPage() {
   const [includeInactive, setIncludeInactive] = useState(false)
   const [nameFilter, setNameFilter] = useState('')
 
-  // 행 클릭 시 펼치는 drawer 상태
-  const [drawerPipelineId, setDrawerPipelineId] = useState<string | null>(null)
+  // 행 인라인 expand 상태 — 한 번에 한 concept 만 펼침
+  const [expandedConceptId, setExpandedConceptId] = useState<string | null>(null)
   const [expandedVersionId, setExpandedVersionId] = useState<string | null>(null)
 
   // 실행 모달 상태 — version 단위
@@ -78,14 +77,14 @@ export function PipelineListPage() {
         .then((r) => r.data),
   })
 
-  // drawer 열린 concept 의 상세 (versions 포함)
-  const drawerQuery = useQuery({
-    queryKey: ['pipeline-concept-detail', drawerPipelineId],
+  // 펼친 concept 의 상세 (versions 포함)
+  const conceptDetailQuery = useQuery({
+    queryKey: ['pipeline-concept-detail', expandedConceptId],
     queryFn: () =>
-      drawerPipelineId
-        ? pipelineConceptsApi.get(drawerPipelineId).then((r) => r.data)
+      expandedConceptId
+        ? pipelineConceptsApi.get(expandedConceptId).then((r) => r.data)
         : null,
-    enabled: !!drawerPipelineId,
+    enabled: !!expandedConceptId,
   })
 
   // 펼친 version 의 상세 (config / 메타)
@@ -303,6 +302,11 @@ export function PipelineListPage() {
 
   return (
     <div style={{ padding: 24 }}>
+      <style>{`
+        .pipeline-concept-expanded-row > .ant-table-cell {
+          border-left: 3px solid #1677ff !important;
+        }
+      `}</style>
       <Space direction="vertical" size={16} style={{ width: '100%' }}>
         <Space style={{ width: '100%', justifyContent: 'space-between' }}>
           <Title level={3} style={{ margin: 0 }}>
@@ -339,7 +343,7 @@ export function PipelineListPage() {
           type="info"
           showIcon
           closable
-          message="행을 클릭하면 버전 목록이 펼쳐집니다."
+          message="행을 클릭하면 그 행 아래로 버전 목록이 펼쳐집니다."
           description="Pipeline = 개념 정체성. 같은 Pipeline 안에 여러 version 이 누적되며, 실행 시점에 input version 을 선택합니다."
           style={{ marginBottom: 0 }}
         />
@@ -351,91 +355,41 @@ export function PipelineListPage() {
           pagination={false}
           size="middle"
           rowClassName={(row) => (row.is_active ? '' : 'inactive-row')}
+          expandable={{
+            expandedRowKeys: expandedConceptId ? [expandedConceptId] : [],
+            expandedRowClassName: () => 'pipeline-concept-expanded-row',
+            // 한 번에 한 행만 펼치도록 onExpand 에서 직접 컨트롤
+            onExpand: (expanded, record) => {
+              setExpandedConceptId(expanded ? record.id : null)
+              setExpandedVersionId(null)
+            },
+            expandedRowRender: (record) => {
+              const isCurrent = expandedConceptId === record.id
+              return (
+                <ExpandedConceptContent
+                  conceptDetail={isCurrent ? conceptDetailQuery.data ?? null : null}
+                  loading={isCurrent && conceptDetailQuery.isLoading}
+                  expandedVersionId={expandedVersionId}
+                  setExpandedVersionId={setExpandedVersionId}
+                  versionDetail={versionDetailQuery.data ?? null}
+                  versionDetailLoading={versionDetailQuery.isLoading}
+                  onVersionDetailClick={goToVersionDetail}
+                  onVersionRunClick={openResolverForVersion}
+                  onConceptDetailClick={goToLatestActiveDetail}
+                />
+              )
+            },
+          }}
           onRow={(row) => ({
             onClick: () => {
-              setDrawerPipelineId(row.id)
+              const next = expandedConceptId === row.id ? null : row.id
+              setExpandedConceptId(next)
               setExpandedVersionId(null)
             },
             style: { cursor: 'pointer' },
           })}
         />
       </Space>
-
-      {/* 행 클릭 drawer — concept 메타 + versions 세로 목록 */}
-      <Drawer
-        title={drawerQuery.data?.name ?? '파이프라인'}
-        open={!!drawerPipelineId}
-        onClose={() => {
-          setDrawerPipelineId(null)
-          setExpandedVersionId(null)
-        }}
-        width={520}
-        extra={
-          drawerQuery.data && (
-            <Button
-              type="primary"
-              icon={<EyeOutlined />}
-              disabled={!drawerQuery.data.latest_version}
-              onClick={() => goToLatestActiveDetail(drawerQuery.data!)}
-            >
-              상세 보기
-            </Button>
-          )
-        }
-      >
-        {drawerQuery.isLoading && <Text>로딩 중…</Text>}
-        {drawerQuery.data && (
-          <Space direction="vertical" size={16} style={{ width: '100%' }}>
-            <Descriptions column={1} size="small" bordered>
-              <Descriptions.Item label="개념명">{drawerQuery.data.name}</Descriptions.Item>
-              <Descriptions.Item label="설명">
-                {drawerQuery.data.description ?? <Text type="secondary">—</Text>}
-              </Descriptions.Item>
-              <Descriptions.Item label="Family">
-                {drawerQuery.data.family_name ?? <Text type="secondary">미분류</Text>}
-              </Descriptions.Item>
-              <Descriptions.Item label="Task">
-                {drawerQuery.data.task_type}
-              </Descriptions.Item>
-              <Descriptions.Item label="Output">
-                {drawerQuery.data.output_group_name} / {drawerQuery.data.output_split}
-              </Descriptions.Item>
-              <Descriptions.Item label="활성">
-                {drawerQuery.data.is_active ? <Tag color="green">active</Tag> : <Tag>비활성</Tag>}
-              </Descriptions.Item>
-            </Descriptions>
-
-            <div>
-              <Title level={5} style={{ margin: '0 0 8px 0' }}>
-                버전 ({drawerQuery.data.versions.length}개)
-              </Title>
-              {drawerQuery.data.versions.length === 0 && (
-                <Empty description="version 이 아직 없습니다." />
-              )}
-              <Space direction="vertical" size={6} style={{ width: '100%' }}>
-                {drawerQuery.data.versions.map((v) => (
-                  <VersionRow
-                    key={v.id}
-                    summary={v}
-                    expanded={expandedVersionId === v.id}
-                    onToggle={() =>
-                      setExpandedVersionId(expandedVersionId === v.id ? null : v.id)
-                    }
-                    detail={
-                      expandedVersionId === v.id ? versionDetailQuery.data ?? null : null
-                    }
-                    detailLoading={
-                      expandedVersionId === v.id && versionDetailQuery.isLoading
-                    }
-                    onDetailClick={() => goToVersionDetail(v.id)}
-                    onRunClick={() => openResolverForVersion(v.id)}
-                  />
-                ))}
-              </Space>
-            </div>
-          </Space>
-        )}
-      </Drawer>
 
       <VersionResolverModal
         open={resolverOpen}
@@ -529,6 +483,104 @@ function VersionRow({
           )}
         </div>
       )}
+    </div>
+  )
+}
+
+
+/**
+ * 행 클릭 시 인라인으로 펼쳐지는 concept 메타 + versions 목록.
+ * Table.expandable.expandedRowRender 안에서 호출.
+ */
+interface ExpandedConceptContentProps {
+  conceptDetail: PipelineEntityResponse | null
+  loading: boolean
+  expandedVersionId: string | null
+  setExpandedVersionId: (id: string | null) => void
+  versionDetail: PipelineVersionResponse | null
+  versionDetailLoading: boolean
+  onVersionDetailClick: (versionId: string) => void
+  onVersionRunClick: (versionId: string) => void
+  onConceptDetailClick: (concept: PipelineEntityResponse) => void
+}
+
+function ExpandedConceptContent({
+  conceptDetail,
+  loading,
+  expandedVersionId,
+  setExpandedVersionId,
+  versionDetail,
+  versionDetailLoading,
+  onVersionDetailClick,
+  onVersionRunClick,
+  onConceptDetailClick,
+}: ExpandedConceptContentProps) {
+  if (loading) {
+    return <Text type="secondary">로딩 중…</Text>
+  }
+  if (!conceptDetail) {
+    return <Text type="secondary">상세 정보를 불러오지 못했습니다.</Text>
+  }
+  return (
+    <div onClick={(e) => e.stopPropagation()}>
+      <Space direction="vertical" size={12} style={{ width: '100%' }}>
+        <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+          <Title level={5} style={{ margin: 0 }}>
+            {conceptDetail.name}
+          </Title>
+          <Button
+            type="primary"
+            size="small"
+            icon={<EyeOutlined />}
+            disabled={!conceptDetail.latest_version}
+            onClick={() => onConceptDetailClick(conceptDetail)}
+          >
+            상세 보기 (최신 active)
+          </Button>
+        </Space>
+        <Descriptions column={2} size="small" bordered>
+          <Descriptions.Item label="설명" span={2}>
+            {conceptDetail.description ?? <Text type="secondary">—</Text>}
+          </Descriptions.Item>
+          <Descriptions.Item label="Family">
+            {conceptDetail.family_name ?? <Text type="secondary">미분류</Text>}
+          </Descriptions.Item>
+          <Descriptions.Item label="Task">{conceptDetail.task_type}</Descriptions.Item>
+          <Descriptions.Item label="Output">
+            {conceptDetail.output_group_name} / {conceptDetail.output_split}
+          </Descriptions.Item>
+          <Descriptions.Item label="활성">
+            {conceptDetail.is_active ? <Tag color="green">active</Tag> : <Tag>비활성</Tag>}
+          </Descriptions.Item>
+        </Descriptions>
+
+        <div>
+          <Title level={5} style={{ margin: '0 0 8px 0' }}>
+            버전 ({conceptDetail.versions.length}개)
+          </Title>
+          {conceptDetail.versions.length === 0 && (
+            <Empty description="version 이 아직 없습니다." />
+          )}
+          <Space direction="vertical" size={6} style={{ width: '100%' }}>
+            {conceptDetail.versions.map((v) => (
+              <VersionRow
+                key={v.id}
+                summary={v}
+                expanded={expandedVersionId === v.id}
+                onToggle={() =>
+                  setExpandedVersionId(expandedVersionId === v.id ? null : v.id)
+                }
+                detail={expandedVersionId === v.id ? versionDetail ?? null : null}
+                detailLoading={
+                  expandedVersionId === v.id && versionDetailLoading
+                }
+                onDetailClick={() => onVersionDetailClick(v.id)}
+                onRunClick={() => onVersionRunClick(v.id)}
+              />
+            ))}
+          </Space>
+        </div>
+      </Space>
     </div>
   )
 }
