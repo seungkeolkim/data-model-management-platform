@@ -441,7 +441,24 @@ function ReadonlyDagFlow({
   }, [nodes.length, fitView])
 
   return (
-    <div style={{ width: '100%', height: '100%' }}>
+    <div className="pipeline-version-readonly-dag" style={{ width: '100%', height: '100%' }}>
+      {/*
+        readonly DAG — 노드 body 안의 Select / input / button 만 비활성화 (pointer-events).
+        ReactFlow 의 zoom / fitView / 노드 selection / pan 은 그대로 유지하기 위해
+        `.react-flow__node` 하위에만 적용. Save 노드의 textarea 도 포함.
+      */}
+      <style>{`
+        .pipeline-version-readonly-dag .react-flow__node .ant-select,
+        .pipeline-version-readonly-dag .react-flow__node .ant-select-selector,
+        .pipeline-version-readonly-dag .react-flow__node input,
+        .pipeline-version-readonly-dag .react-flow__node textarea {
+          pointer-events: none !important;
+          cursor: default !important;
+        }
+        .pipeline-version-readonly-dag .react-flow__node .ant-select-selector {
+          background-color: #fafafa !important;
+        }
+      `}</style>
       <ReactFlow
         nodes={nodes}
         edges={edges}
