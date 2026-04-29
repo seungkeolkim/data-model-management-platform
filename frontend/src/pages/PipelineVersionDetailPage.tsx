@@ -31,6 +31,7 @@ import {
   ArrowLeftOutlined,
   CodeOutlined,
 } from '@ant-design/icons'
+import { copyToClipboard } from '@/utils/clipboard'
 import { useQuery } from '@tanstack/react-query'
 import {
   ReactFlow,
@@ -191,13 +192,12 @@ function PipelineVersionDetailContent() {
     )
   }
 
-  const handleCopyJson = async () => {
-    try {
-      const json = JSON.stringify(versionDetail.config, null, 2)
-      await navigator.clipboard.writeText(json)
+  const handleCopyJsonFromDrawer = () => {
+    const json = JSON.stringify(versionDetail.config, null, 2)
+    if (copyToClipboard(json)) {
       message.success('PipelineVersion config JSON 을 클립보드에 복사했습니다.')
-    } catch (err) {
-      message.error(`복사 실패: ${(err as Error)?.message ?? ''}`)
+    } else {
+      message.error('클립보드 복사에 실패했습니다.')
     }
   }
 
@@ -249,11 +249,6 @@ function PipelineVersionDetailContent() {
           >
             실행
           </Button>
-          <Tooltip title="이 version 의 config JSON 을 클립보드 복사">
-            <Button icon={<CopyOutlined />} onClick={handleCopyJson}>
-              JSON 복사
-            </Button>
-          </Tooltip>
           <Tooltip title="config JSON 본문 보기">
             <Button icon={<CodeOutlined />} onClick={() => setJsonDrawerOpen(true)}>
               JSON 보기
@@ -372,7 +367,7 @@ function PipelineVersionDetailContent() {
         width={640}
       >
         <Paragraph>
-          <Button icon={<CopyOutlined />} size="small" onClick={handleCopyJson}>
+          <Button icon={<CopyOutlined />} size="small" onClick={handleCopyJsonFromDrawer}>
             클립보드 복사
           </Button>
         </Paragraph>
