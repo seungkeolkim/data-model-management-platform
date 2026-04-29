@@ -38,6 +38,7 @@ import {
   Background,
   Controls,
   ReactFlowProvider,
+  useReactFlow,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import dayjs from 'dayjs'
@@ -53,6 +54,7 @@ import {
   pipelineConfigToGraph,
   buildNodeTypesFromRegistry,
 } from '@/pipeline-sdk'
+import { usePipelineEditorStore } from '@/stores/pipelineEditorStore'
 import type {
   PipelineConfig,
   PipelineNode,
@@ -155,13 +157,21 @@ function PipelineVersionDetailContent() {
     }
   }, [versionDetail, manipulatorMap, datasetDisplayMap, manipulatorsQuery.data, groupsQuery.data])
 
-  const [graphNodes, setGraphNodes] = useState<PipelineNode[]>([])
-  const [graphEdges, setGraphEdges] = useState<PipelineEdge[]>([])
+  // graph 가 readonly 이고 ReactFlow 의 onNodesChange / onEdgesChange 가 없으므로
+  // 별도 state 로 sync 할 필요 없음 — 직접 graph?.nodes / graph?.edges 사용.
+  const graphNodes = graph?.nodes ?? []
+  const graphEdges = graph?.edges ?? []
 
+  // SDK NodeComponent 들이 useNodeData(nodeId) 로 zustand store 에서 nodeData 를 가져온다.
+  // detail 페이지는 readonly 이지만, store 에 nodeData 를 넣지 않으면 모든 NodeComponent
+  // 가 빈 DOM 을 그려 ReactFlow 가 dimensions 측정 못 하고 노드를 visibility:hidden 으로
+  // 둔다. 따라서 graph 빌드 후 store 에 bulk put.
+  // unmount 시 reset 으로 editor 에 영향 없도록 정리.
   useEffect(() => {
-    if (graph) {
-      setGraphNodes(graph.nodes)
-      setGraphEdges(graph.edges)
+    if (!graph) return
+    usePipelineEditorStore.setState({ nodeDataMap: graph.nodeDataMap })
+    return () => {
+      usePipelineEditorStore.getState().reset()
     }
   }, [graph])
 
@@ -208,7 +218,7 @@ function PipelineVersionDetailContent() {
   }
 
   return (
-    <div style={{ padding: 24, height: '100%', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ padding: 24, display: 'flex', flexDirection: 'column' }}>
       {/* 헤더 */}
       <Space style={{ width: '100%', justifyContent: 'space-between', marginBottom: 12 }}>
         <Space size={12}>
@@ -257,8 +267,15 @@ function PipelineVersionDetailContent() {
         </Space>
       </Space>
 
-      <div style={{ flex: 1, display: 'flex', gap: 16, overflow: 'hidden' }}>
-        {/* DAG (readonly) */}
+      <div
+        style={{
+          display: 'flex',
+          gap: 16,
+          height: 600,
+          minHeight: 480,
+        }}
+      >
+        {/* DAG (readonly) — AppLayout Content 가 height 100% 를 보장하지 않으므로 명시 height */}
         <div
           style={{
             flex: 1,
@@ -267,29 +284,30 @@ function PipelineVersionDetailContent() {
             background: '#f8f9fa',
             position: 'relative',
             overflow: 'hidden',
+            minHeight: 0,
           }}
         >
           {!graph && (
             <div style={{ padding: 24, textAlign: 'center' }}>
               <Spin tip="DAG 복원 중…" />
+              <div style={{ marginTop: 12, fontSize: 11, color: '#888' }}>
+                manipulators={manipulatorsQuery.data?.items?.length ?? '...'},{' '}
+                groups={groupsQuery.data?.items?.length ?? '...'},{' '}
+                tasks={Object.keys((versionDetail.config as { tasks?: object }).tasks ?? {}).length}
+              </div>
             </div>
           )}
-          {graph && (
-            <ReactFlow
-              nodes={graphNodes}
-              edges={graphEdges}
-              nodeTypes={nodeTypes}
-              fitView
-              nodesDraggable={false}
-              nodesConnectable={false}
-              elementsSelectable={true}
-              edgesFocusable={false}
-              deleteKeyCode={null}
-              proOptions={{ hideAttribution: true }}
-            >
-              <Background gap={20} size={1} color="#e0e0e0" />
-              <Controls showInteractive={false} />
-            </ReactFlow>
+          {graph && graphNodes.length === 0 && (
+            <Alert
+              type="warning"
+              showIcon
+              message="DAG 노드가 0개로 복원됨"
+              description={`config tasks ${Object.keys((versionDetail.config as { tasks?: object }).tasks ?? {}).length}개를 매칭할 manipulator/dataLoad 매핑이 부족합니다. 콘솔의 'Graph 복원 실패' 경고를 확인하세요.`}
+              style={{ margin: 16 }}
+            />
+          )}
+          {graph && graphNodes.length > 0 && (
+            <ReadonlyDagFlow nodes={graphNodes} edges={graphEdges} />
           )}
         </div>
 
@@ -383,6 +401,48 @@ function PipelineVersionDetailContent() {
           {JSON.stringify(versionDetail.config, null, 2)}
         </pre>
       </Drawer>
+    </div>
+  )
+}
+
+/**
+ * ReactFlow readonly 래퍼. nodes 가 비동기로 채워지면 그 시점에 fitView() 를 한 번 더
+ * 강제 호출해야 자동 줌이 정상 적용된다 (ReactFlow 기본 fitView prop 은 mount 시 1회만).
+ */
+function ReadonlyDagFlow({
+  nodes,
+  edges,
+}: {
+  nodes: PipelineNode[]
+  edges: PipelineEdge[]
+}) {
+  const { fitView } = useReactFlow()
+  useEffect(() => {
+    if (nodes.length === 0) return
+    // 다음 paint 에 fitView — DOM 측정이 끝난 후 호출
+    const id = window.requestAnimationFrame(() => {
+      fitView({ padding: 0.1, duration: 200 })
+    })
+    return () => window.cancelAnimationFrame(id)
+  }, [nodes.length, fitView])
+
+  return (
+    <div style={{ width: '100%', height: '100%' }}>
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        nodeTypes={nodeTypes}
+        fitView
+        nodesDraggable={false}
+        nodesConnectable={false}
+        elementsSelectable={true}
+        edgesFocusable={false}
+        deleteKeyCode={null}
+        proOptions={{ hideAttribution: true }}
+      >
+        <Background gap={20} size={1} color="#e0e0e0" />
+        <Controls showInteractive={false} />
+      </ReactFlow>
     </div>
   )
 }
