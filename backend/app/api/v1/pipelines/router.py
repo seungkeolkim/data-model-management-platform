@@ -243,6 +243,7 @@ def _family_to_response(family: PipelineFamily) -> PipelineFamilyResponse:
         id=family.id,
         name=family.name,
         description=family.description,
+        color=family.color,
         pipeline_count=pipeline_count,
         created_at=family.created_at,
         updated_at=family.updated_at,
@@ -376,7 +377,7 @@ async def create_family(
 ):
     service = PipelineService(db)
     family = await service.create_family(
-        name=payload.name, description=payload.description,
+        name=payload.name, description=payload.description, color=payload.color,
     )
     return _family_to_response(family)
 
@@ -398,7 +399,10 @@ async def update_family(
 ):
     service = PipelineService(db)
     family = await service.update_family(
-        family_id, name=payload.name, description=payload.description,
+        family_id,
+        name=payload.name,
+        description=payload.description,
+        color=payload.color,
     )
     if family is None:
         raise HTTPException(status_code=404, detail="Family 를 찾을 수 없습니다.")

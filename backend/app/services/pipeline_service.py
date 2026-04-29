@@ -5,8 +5,18 @@
 """
 from __future__ import annotations
 
+import random
 import uuid
 from typing import Any
+
+
+def _random_family_color() -> str:
+    """가독성 좋은 mid-tone 랜덤 hex (각 채널 80~200) — Family 자동 색상 할당."""
+    return "#{:02x}{:02x}{:02x}".format(
+        random.randint(80, 200),
+        random.randint(80, 200),
+        random.randint(80, 200),
+    )
 
 import structlog
 from sqlalchemy import func, select
@@ -1577,12 +1587,17 @@ class PipelineService:
         return result.scalars().first()
 
     async def create_family(
-        self, *, name: str, description: str | None = None,
+        self,
+        *,
+        name: str,
+        description: str | None = None,
+        color: str | None = None,
     ) -> PipelineFamily:
         family = PipelineFamily(
             id=str(uuid.uuid4()),
             name=name,
             description=description,
+            color=color or _random_family_color(),
         )
         self.db.add(family)
         await self.db.flush()
@@ -1601,6 +1616,7 @@ class PipelineService:
         *,
         name: str | None = None,
         description: str | None = None,
+        color: str | None = None,
     ) -> PipelineFamily | None:
         family = await self.get_family(family_id)
         if family is None:
@@ -1609,6 +1625,8 @@ class PipelineService:
             family.name = name
         if description is not None:
             family.description = description
+        if color is not None:
+            family.color = color
         await self.db.flush()
         return family
 

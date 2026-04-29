@@ -312,6 +312,10 @@ class PipelineFamily(Base):
         comment="family 이름 — 전역 UNIQUE",
     )
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    color: Mapped[str] = mapped_column(
+        String(7), nullable=False,
+        comment="Family 시각 구분 색 (`#RRGGBB`). 신규 생성 시 자동 할당, 수정 가능.",
+    )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=False), nullable=False, default=_now, server_default=func.now()
     )

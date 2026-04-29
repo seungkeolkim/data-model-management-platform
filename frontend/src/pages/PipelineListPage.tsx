@@ -507,6 +507,18 @@ export function PipelineListPage() {
                               value={f.id}
                               style={{ whiteSpace: 'nowrap' }}
                             >
+                              <span
+                                style={{
+                                  display: 'inline-block',
+                                  width: 12,
+                                  height: 12,
+                                  borderRadius: 2,
+                                  background: f.color,
+                                  border: '1px solid rgba(0,0,0,0.08)',
+                                  marginRight: 6,
+                                  verticalAlign: 'middle',
+                                }}
+                              />
                               {f.name}
                             </Checkbox>
                           ))}

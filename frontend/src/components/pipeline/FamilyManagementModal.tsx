@@ -16,7 +16,9 @@ import {
   Tooltip,
   Typography,
   Tag,
+  ColorPicker,
 } from 'antd'
+import type { Color } from 'antd/es/color-picker'
 import {
   PlusOutlined,
   EditOutlined,
@@ -40,6 +42,7 @@ interface EditState {
   id: string
   name: string
   description: string
+  color: string
 }
 
 export function FamilyManagementModal({
@@ -88,9 +91,18 @@ export function FamilyManagementModal({
   })
 
   const updateMutation = useMutation({
-    mutationFn: (vars: { id: string; name: string; description: string | null }) =>
+    mutationFn: (vars: {
+      id: string
+      name: string
+      description: string | null
+      color: string
+    }) =>
       pipelineFamiliesApi
-        .update(vars.id, { name: vars.name, description: vars.description })
+        .update(vars.id, {
+          name: vars.name,
+          description: vars.description,
+          color: vars.color,
+        })
         .then((r) => r.data),
     onSuccess: () => {
       message.success('Family 수정 완료')
@@ -109,7 +121,46 @@ export function FamilyManagementModal({
     onError: showError,
   })
 
+  const submitEdit = () => {
+    if (!editing) return
+    updateMutation.mutate({
+      id: editing.id,
+      name: editing.name.trim(),
+      description: editing.description.trim() || null,
+      color: editing.color,
+    })
+  }
+
   const columns: ColumnsType<PipelineFamilyResponse> = [
+    {
+      title: '색',
+      dataIndex: 'color',
+      key: 'color',
+      width: 70,
+      render: (_v, row) =>
+        editing?.id === row.id ? (
+          <ColorPicker
+            size="small"
+            value={editing.color}
+            onChange={(c: Color) =>
+              setEditing({ ...editing, color: c.toHexString() })
+            }
+            disabledAlpha
+          />
+        ) : (
+          <span
+            title={row.color}
+            style={{
+              display: 'inline-block',
+              width: 20,
+              height: 20,
+              borderRadius: 4,
+              background: row.color,
+              border: '1px solid rgba(0,0,0,0.08)',
+            }}
+          />
+        ),
+    },
     {
       title: 'Family',
       dataIndex: 'name',
@@ -120,13 +171,7 @@ export function FamilyManagementModal({
             size="small"
             value={editing.name}
             onChange={(e) => setEditing({ ...editing, name: e.target.value })}
-            onPressEnter={() =>
-              updateMutation.mutate({
-                id: editing.id,
-                name: editing.name.trim(),
-                description: editing.description.trim() || null,
-              })
-            }
+            onPressEnter={submitEdit}
           />
         ) : (
           <Text strong>{row.name}</Text>
@@ -172,13 +217,7 @@ export function FamilyManagementModal({
                 type="primary"
                 icon={<SaveOutlined />}
                 loading={updateMutation.isPending}
-                onClick={() =>
-                  updateMutation.mutate({
-                    id: editing.id,
-                    name: editing.name.trim(),
-                    description: editing.description.trim() || null,
-                  })
-                }
+                onClick={submitEdit}
               />
             </Tooltip>
             <Tooltip title="취소">
@@ -191,7 +230,7 @@ export function FamilyManagementModal({
           </Space>
         ) : (
           <Space size={4}>
-            <Tooltip title="이름/설명 수정">
+            <Tooltip title="이름/설명/색 수정">
               <Button
                 size="small"
                 icon={<EditOutlined />}
@@ -200,6 +239,7 @@ export function FamilyManagementModal({
                     id: row.id,
                     name: row.name,
                     description: row.description ?? '',
+                    color: row.color,
                   })
                 }
               />

@@ -120,6 +120,10 @@ class PipelineFamilyResponse(BaseModel):
     id: str
     name: str
     description: str | None
+    color: str = Field(
+        ...,
+        description="Family 시각 구분 색 (`#RRGGBB`)",
+    )
     pipeline_count: int = Field(
         default=0,
         description="이 family 에 묶인 active Pipeline 수",
@@ -133,11 +137,21 @@ class PipelineFamilyResponse(BaseModel):
 class PipelineFamilyCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     description: str | None = None
+    color: str | None = Field(
+        default=None,
+        pattern=r"^#[0-9a-fA-F]{6}$",
+        description="`#RRGGBB`. 미지정 시 backend 가 랜덤 할당.",
+    )
 
 
 class PipelineFamilyUpdateRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = None
+    color: str | None = Field(
+        default=None,
+        pattern=r"^#[0-9a-fA-F]{6}$",
+        description="`#RRGGBB`. 미지정 시 변경 안 함.",
+    )
 
 
 class PipelineVersionSummary(BaseModel):

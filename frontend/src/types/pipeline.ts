@@ -129,6 +129,8 @@ export interface PipelineFamilyResponse {
   id: string
   name: string
   description: string | null
+  /** Family 시각 구분 색 (`#RRGGBB`). */
+  color: string
   pipeline_count: number
   created_at: string
   updated_at: string
@@ -137,11 +139,14 @@ export interface PipelineFamilyResponse {
 export interface PipelineFamilyCreateRequest {
   name: string
   description?: string | null
+  /** `#RRGGBB`. 미지정 시 backend 가 랜덤 할당. */
+  color?: string | null
 }
 
 export interface PipelineFamilyUpdateRequest {
   name?: string | null
   description?: string | null
+  color?: string | null
 }
 
 export interface PipelineVersionSummary {

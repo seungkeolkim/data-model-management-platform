@@ -11,7 +11,9 @@ import {
   Space,
   Typography,
   message,
+  ColorPicker,
 } from 'antd'
+import type { Color } from 'antd/es/color-picker'
 import {
   ApartmentOutlined,
   EditOutlined,
@@ -34,6 +36,7 @@ export function FamilyHeadingPopover({ family }: FamilyHeadingPopoverProps) {
   const [editing, setEditing] = useState(false)
   const [draftName, setDraftName] = useState(family.name)
   const [draftDescription, setDraftDescription] = useState(family.description ?? '')
+  const [draftColor, setDraftColor] = useState(family.color)
 
   const updateMutation = useMutation({
     mutationFn: () =>
@@ -41,6 +44,7 @@ export function FamilyHeadingPopover({ family }: FamilyHeadingPopoverProps) {
         .update(family.id, {
           name: draftName.trim(),
           description: draftDescription.trim() || null,
+          color: draftColor,
         })
         .then((r) => r.data),
     onSuccess: () => {
@@ -62,6 +66,7 @@ export function FamilyHeadingPopover({ family }: FamilyHeadingPopoverProps) {
   const startEdit = () => {
     setDraftName(family.name)
     setDraftDescription(family.description ?? '')
+    setDraftColor(family.color)
     setEditing(true)
   }
   const cancelEdit = () => {
@@ -74,7 +79,22 @@ export function FamilyHeadingPopover({ family }: FamilyHeadingPopoverProps) {
         <Space direction="vertical" size={6} style={{ width: '100%' }}>
           <div>
             <Text type="secondary" style={{ fontSize: 11 }}>이름</Text>
-            <div><Text strong>{family.name}</Text></div>
+            <div>
+              <Space size={6}>
+                <span
+                  style={{
+                    display: 'inline-block',
+                    width: 14,
+                    height: 14,
+                    borderRadius: 3,
+                    background: family.color,
+                    border: '1px solid rgba(0,0,0,0.08)',
+                    verticalAlign: 'middle',
+                  }}
+                />
+                <Text strong>{family.name}</Text>
+              </Space>
+            </div>
           </div>
           <div>
             <Text type="secondary" style={{ fontSize: 11 }}>설명</Text>
@@ -123,6 +143,27 @@ export function FamilyHeadingPopover({ family }: FamilyHeadingPopoverProps) {
               placeholder="이 family 의 용도를 적어주세요"
             />
           </div>
+          <div>
+            <Text type="secondary" style={{ fontSize: 11 }}>색상</Text>
+            <div>
+              <ColorPicker
+                value={draftColor}
+                onChange={(c: Color) => setDraftColor(c.toHexString())}
+                disabledAlpha
+                showText
+                presets={[
+                  {
+                    label: '추천',
+                    colors: [
+                      '#8a91a8', '#6c8aae', '#7ab0a8', '#a3b56b',
+                      '#d8a657', '#d68a8a', '#a37cb5', '#b58a6c',
+                      '#5a7a9a', '#7c9a5a', '#9a7c5a', '#9a5a7c',
+                    ],
+                  },
+                ]}
+              />
+            </div>
+          </div>
           <Space size={6}>
             <Button
               type="primary"
@@ -161,8 +202,14 @@ export function FamilyHeadingPopover({ family }: FamilyHeadingPopoverProps) {
       destroyTooltipOnHide
     >
       <Tag
-        color="gold"
-        style={{ margin: 0, fontSize: 12, cursor: 'pointer' }}
+        style={{
+          margin: 0,
+          fontSize: 12,
+          cursor: 'pointer',
+          background: family.color,
+          color: '#fff',
+          borderColor: family.color,
+        }}
       >
         <ApartmentOutlined /> {family.name}
       </Tag>
