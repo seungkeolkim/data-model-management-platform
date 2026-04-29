@@ -419,6 +419,13 @@ class PipelineVersion(Base):
             "생성 후 immutable"
         ),
     )
+    description: Mapped[str | None] = mapped_column(
+        Text, nullable=True,
+        comment=(
+            "이 버전에서 무엇을 바꿨는가 (사람이 적는 메모). config 는 immutable"
+            " 이므로 의도 추적은 이 컬럼에 의존. concept-level description 과 별개."
+        ),
+    )
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default="true",
         comment="version 단위 soft delete (Pipeline 의 is_active 와 독립)",

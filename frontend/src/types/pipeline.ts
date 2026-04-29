@@ -168,6 +168,8 @@ export interface PipelineFamilyUpdateRequest {
 export interface PipelineVersionSummary {
   id: string
   version: string
+  /** 이 버전에 사용자가 적은 메모 (없으면 null). */
+  description: string | null
   is_active: boolean
   has_automation: boolean
   created_at: string
@@ -236,6 +238,8 @@ export interface PipelineVersionResponse {
   family_name: string | null
   version: string
   config: Record<string, unknown>
+  /** 이 버전에 사용자가 적은 메모 (없으면 null). */
+  description: string | null
   task_type: string
   output_split_id: string
   output_group_id: string | null
@@ -249,6 +253,13 @@ export interface PipelineVersionResponse {
 
 export interface PipelineVersionUpdateRequest {
   is_active?: boolean | null
+  /**
+   * 버전 메모 갱신.
+   * - undefined / null → 미변경
+   * - "" (빈 문자열) → NULL 로 clear
+   * - 그 외 → 그 값으로 갱신
+   */
+  description?: string | null
 }
 
 /** POST /pipelines/versions/{id}/runs 요청 바디 */

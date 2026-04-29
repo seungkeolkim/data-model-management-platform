@@ -1480,8 +1480,15 @@ class PipelineService:
         pipeline_version_id: str,
         *,
         is_active: bool | None = None,
+        description: str | None = None,
     ) -> PipelineVersion | None:
-        """PipelineVersion 편집 — config 는 immutable. is_active 만 토글 가능."""
+        """PipelineVersion 편집 — config 는 immutable. is_active / description 만 변경 가능.
+
+        description 시맨틱:
+            - None → 미변경
+            - 빈 문자열 ("") → NULL 로 clear
+            - 그 외 → 그 값으로 갱신
+        """
         version = await self.get_pipeline_version(pipeline_version_id)
         if version is None:
             return None
@@ -1492,6 +1499,8 @@ class PipelineService:
                 if version.automation is not None:
                     version.automation.status = "error"
                     version.automation.error_reason = "PIPELINE_DELETED"
+        if description is not None:
+            version.description = description.strip() or None
         await self.db.flush()
         return version
 

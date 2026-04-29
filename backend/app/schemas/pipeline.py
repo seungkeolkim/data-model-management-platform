@@ -177,6 +177,10 @@ class PipelineVersionSummary(BaseModel):
     """PipelineVersion 요약 — concept 응답 안에서 versions 목록 행."""
     id: str
     version: str
+    description: str | None = Field(
+        default=None,
+        description="이 버전의 사람-작성 메모 (없으면 NULL)",
+    )
     is_active: bool
     has_automation: bool = False
     created_at: datetime
@@ -274,6 +278,10 @@ class PipelineVersionResponse(BaseModel):
     family_name: str | None = None
     version: str
     config: dict[str, Any]
+    description: str | None = Field(
+        default=None,
+        description="이 버전의 사람-작성 메모 (없으면 NULL)",
+    )
     task_type: str
     output_split_id: str
     output_group_id: str | None = None
@@ -288,8 +296,12 @@ class PipelineVersionResponse(BaseModel):
 
 
 class PipelineVersionUpdateRequest(BaseModel):
-    """PipelineVersion 편집 — is_active 토글만 (config immutable)."""
+    """PipelineVersion 편집 — is_active 토글 + description 수정 (config 는 immutable)."""
     is_active: bool | None = None
+    description: str | None = Field(
+        default=None,
+        description="버전 메모 갱신. None 이면 미변경, 빈 문자열이면 NULL 로 clear",
+    )
 
 
 # =============================================================================

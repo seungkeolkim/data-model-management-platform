@@ -25,6 +25,7 @@ import {
   Tooltip,
   Empty,
 } from 'antd'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   PlayCircleOutlined,
   CopyOutlined,
@@ -74,6 +75,7 @@ const nodeTypes = buildNodeTypesFromRegistry()
 function PipelineVersionDetailContent() {
   const { versionId } = useParams<{ versionId: string }>()
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const [searchParams, setSearchParams] = useSearchParams()
   const [resolverOpen, setResolverOpen] = useState(false)
   const [jsonDrawerOpen, setJsonDrawerOpen] = useState(false)
@@ -96,6 +98,28 @@ function PipelineVersionDetailContent() {
         ? pipelineConceptsApi.get(versionDetail.pipeline_id).then((r) => r.data)
         : null,
     enabled: !!versionDetail?.pipeline_id,
+  })
+
+  // 버전 description inline 편집 — Paragraph editable 한 필드만 갱신.
+  const updateVersionDescription = useMutation({
+    mutationFn: async (description: string) => {
+      if (!versionId) return null
+      const r = await pipelineVersionsApi.update(versionId, { description })
+      return r.data
+    },
+    onSuccess: () => {
+      message.success('버전 설명을 갱신했습니다.')
+      queryClient.invalidateQueries({ queryKey: ['pipeline-version-detail-page', versionId] })
+      queryClient.invalidateQueries({ queryKey: ['pipeline-concepts'] })
+      queryClient.invalidateQueries({ queryKey: ['pipeline-concept-detail'] })
+    },
+    onError: (err: unknown) => {
+      const detail =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+        ?? (err as Error)?.message
+        ?? '알 수 없는 오류'
+      message.error(`수정 실패: ${detail}`)
+    },
   })
 
   // PipelineRun 이력
@@ -342,6 +366,26 @@ function PipelineVersionDetailContent() {
             </Descriptions.Item>
             <Descriptions.Item label="개념명">
               {versionDetail.pipeline_name}
+            </Descriptions.Item>
+            <Descriptions.Item label="버전 설명">
+              <Paragraph
+                style={{ margin: 0, fontSize: 12 }}
+                editable={{
+                  tooltip: '클릭해서 편집',
+                  triggerType: ['icon', 'text'],
+                  onChange: (next: string) => {
+                    if (next === (versionDetail.description ?? '')) return
+                    updateVersionDescription.mutate(next)
+                  },
+                }}
+              >
+                {versionDetail.description ?? '(설명 없음 — 클릭해서 추가)'}
+              </Paragraph>
+              {updateVersionDescription.isPending && (
+                <Text type="secondary" style={{ fontSize: 10 }}>
+                  저장 중…
+                </Text>
+              )}
             </Descriptions.Item>
             <Descriptions.Item label="Family">
               {versionDetail.family_name ?? <Text type="secondary">미분류</Text>}

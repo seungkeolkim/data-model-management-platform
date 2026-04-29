@@ -59,7 +59,7 @@ import { FamilyAssignControl } from '@/components/pipeline/FamilyAssignControl'
 import { FamilyHeadingPopover } from '@/components/pipeline/FamilyHeadingPopover'
 import { ApartmentOutlined } from '@ant-design/icons'
 
-const { Title, Text } = Typography
+const { Title, Text, Paragraph } = Typography
 
 export function PipelineListPage() {
   const queryClient = useQueryClient()
@@ -205,6 +205,51 @@ export function PipelineListPage() {
         ?? (err as Error)?.message
         ?? '알 수 없는 오류'
       message.error(`처리 실패: ${msg}`)
+    },
+  })
+
+  // Pipeline (concept) 의 name / description inline 편집.
+  // Typography.Paragraph editable 콜백이 한 필드씩 호출되므로 mutation 도 단일 필드만 갱신.
+  const updateConcept = useMutation({
+    mutationFn: async (vars: { id: string; patch: { name?: string; description?: string | null } }) => {
+      const r = await pipelineConceptsApi.update(vars.id, vars.patch)
+      return r.data
+    },
+    onSuccess: () => {
+      message.success('Pipeline 정보를 갱신했습니다.')
+      queryClient.invalidateQueries({ queryKey: ['pipeline-concepts'] })
+      queryClient.invalidateQueries({ queryKey: ['pipeline-concept-detail'] })
+      queryClient.invalidateQueries({ queryKey: ['pipeline-version-detail'] })
+    },
+    onError: (err: unknown) => {
+      const msg =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+        ?? (err as Error)?.message
+        ?? '알 수 없는 오류'
+      message.error(`수정 실패: ${msg}`)
+    },
+  })
+
+  // PipelineVersion description inline 편집. is_active 와 같은 endpoint 를 공유.
+  const updateVersionDescription = useMutation({
+    mutationFn: async (vars: { versionId: string; description: string }) => {
+      const r = await pipelineVersionsApi.update(vars.versionId, {
+        description: vars.description,
+      })
+      return r.data
+    },
+    onSuccess: () => {
+      message.success('버전 설명을 갱신했습니다.')
+      queryClient.invalidateQueries({ queryKey: ['pipeline-concepts'] })
+      queryClient.invalidateQueries({ queryKey: ['pipeline-concept-detail'] })
+      queryClient.invalidateQueries({ queryKey: ['pipeline-version-detail'] })
+    },
+    onError: (err: unknown) => {
+      const msg =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+        ?? (err as Error)?.message
+        ?? '알 수 없는 오류'
+      message.error(`수정 실패: ${msg}`)
     },
   })
 
@@ -641,6 +686,19 @@ export function PipelineListPage() {
                           toggleVersionActive.mutate({ versionId, nextValue })
                         }
                         versionTogglePending={toggleVersionActive.isPending}
+                        onConceptNameChange={(id, name) =>
+                          updateConcept.mutate({ id, patch: { name } })
+                        }
+                        onConceptDescriptionChange={(id, description) =>
+                          updateConcept.mutate({
+                            id,
+                            patch: { description: description.trim() ? description : null },
+                          })
+                        }
+                        onVersionDescriptionChange={(versionId, description) =>
+                          updateVersionDescription.mutate({ versionId, description })
+                        }
+                        versionDescriptionPending={updateVersionDescription.isPending}
                       />
                     )
                   },
@@ -687,6 +745,8 @@ interface VersionRowProps {
   onRunClick: () => void
   onToggleActive: (nextValue: boolean) => void
   togglePending: boolean
+  onDescriptionChange: (versionId: string, description: string) => void
+  descriptionPending: boolean
 }
 
 function VersionRow({
@@ -699,10 +759,14 @@ function VersionRow({
   onRunClick,
   onToggleActive,
   togglePending,
+  onDescriptionChange,
+  descriptionPending,
 }: VersionRowProps) {
   const taskCount = detail?.config?.tasks
     ? Object.keys(detail.config.tasks as Record<string, unknown>).length
     : null
+  // 항상 summary.description 을 SSOT 로. detail 이 fetch 되어도 같은 값.
+  const descriptionValue = summary.description ?? ''
   return (
     <div
       style={{
@@ -728,6 +792,15 @@ function VersionRow({
           <Text type="secondary" style={{ fontSize: 11 }}>
             {dayjs(summary.created_at).format('YY-MM-DD HH:mm')}
           </Text>
+          {summary.description && !expanded && (
+            <Text
+              type="secondary"
+              style={{ fontSize: 11, fontStyle: 'italic' }}
+              ellipsis={{ tooltip: summary.description }}
+            >
+              — {summary.description}
+            </Text>
+          )}
         </Space>
         <Space size={6} onClick={(e) => e.stopPropagation()}>
           <Button
@@ -755,19 +828,45 @@ function VersionRow({
         </Space>
       </Space>
       {expanded && (
-        <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed #eee' }}>
-          {detailLoading && <Text type="secondary">로딩…</Text>}
-          {detail && (
-            <Space direction="vertical" size={4} style={{ width: '100%' }}>
+        <div
+          style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed #eee' }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <Space direction="vertical" size={6} style={{ width: '100%' }}>
+            <div>
+              <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 2 }}>
+                버전 설명 (이 버전에서 무엇을 바꿨는가)
+              </Text>
+              <Paragraph
+                style={{ marginBottom: 0, fontSize: 12 }}
+                editable={{
+                  tooltip: '클릭해서 편집',
+                  triggerType: ['icon', 'text'],
+                  onChange: (next: string) => {
+                    if (next === descriptionValue) return
+                    onDescriptionChange(summary.id, next)
+                  },
+                }}
+              >
+                {descriptionValue || '(설명 없음 — 클릭해서 추가)'}
+              </Paragraph>
+              {descriptionPending && (
+                <Text type="secondary" style={{ fontSize: 10 }}>
+                  저장 중…
+                </Text>
+              )}
+            </div>
+            {detailLoading && <Text type="secondary">로딩…</Text>}
+            {detail && (
               <Text type="secondary" style={{ fontSize: 11 }}>
                 노드 수: {taskCount ?? '—'} | schema_version:{' '}
                 {String((detail.config as Record<string, unknown>)?.schema_version ?? '—')}
               </Text>
-              <Text type="secondary" style={{ fontSize: 11 }}>
-                config 본문은 "상세" 버튼으로 풀 페이지에서 확인하세요.
-              </Text>
-            </Space>
-          )}
+            )}
+            <Text type="secondary" style={{ fontSize: 11 }}>
+              config 본문은 "상세" 버튼으로 풀 페이지에서 확인하세요.
+            </Text>
+          </Space>
         </div>
       )}
     </div>
@@ -791,6 +890,10 @@ interface ExpandedConceptContentProps {
   onConceptDetailClick: (concept: PipelineEntityResponse) => void
   onVersionToggleActive: (versionId: string, nextValue: boolean) => void
   versionTogglePending: boolean
+  onConceptNameChange: (id: string, name: string) => void
+  onConceptDescriptionChange: (id: string, description: string) => void
+  onVersionDescriptionChange: (versionId: string, description: string) => void
+  versionDescriptionPending: boolean
 }
 
 function ExpandedConceptContent({
@@ -805,6 +908,10 @@ function ExpandedConceptContent({
   onConceptDetailClick,
   onVersionToggleActive,
   versionTogglePending,
+  onConceptNameChange,
+  onConceptDescriptionChange,
+  onVersionDescriptionChange,
+  versionDescriptionPending,
 }: ExpandedConceptContentProps) {
   if (loading) {
     return <Text type="secondary">로딩 중…</Text>
@@ -815,10 +922,24 @@ function ExpandedConceptContent({
   return (
     <div onClick={(e) => e.stopPropagation()}>
       <Space direction="vertical" size={12} style={{ width: '100%' }}>
-        <Space style={{ width: '100%', justifyContent: 'space-between' }}>
-          <Title level={5} style={{ margin: 0 }}>
-            {conceptDetail.name}
-          </Title>
+        <Space style={{ width: '100%', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <div style={{ flex: 1 }}>
+            <Title
+              level={5}
+              style={{ margin: 0 }}
+              editable={{
+                tooltip: '클릭해서 이름 변경',
+                triggerType: ['icon', 'text'],
+                onChange: (next: string) => {
+                  const trimmed = next.trim()
+                  if (!trimmed || trimmed === conceptDetail.name) return
+                  onConceptNameChange(conceptDetail.id, trimmed)
+                },
+              }}
+            >
+              {conceptDetail.name}
+            </Title>
+          </div>
           <Button
             type="primary"
             size="small"
@@ -831,7 +952,19 @@ function ExpandedConceptContent({
         </Space>
         <Descriptions column={2} size="small" bordered>
           <Descriptions.Item label="설명" span={2}>
-            {conceptDetail.description ?? <Text type="secondary">—</Text>}
+            <Paragraph
+              style={{ margin: 0, fontSize: 13 }}
+              editable={{
+                tooltip: '클릭해서 편집',
+                triggerType: ['icon', 'text'],
+                onChange: (next: string) => {
+                  if (next === (conceptDetail.description ?? '')) return
+                  onConceptDescriptionChange(conceptDetail.id, next)
+                },
+              }}
+            >
+              {conceptDetail.description ?? '(설명 없음 — 클릭해서 추가)'}
+            </Paragraph>
           </Descriptions.Item>
           <Descriptions.Item label="Family">
             <FamilyAssignControl
@@ -881,6 +1014,8 @@ function ExpandedConceptContent({
                 onRunClick={() => onVersionRunClick(v.id)}
                 onToggleActive={(nextValue) => onVersionToggleActive(v.id, nextValue)}
                 togglePending={versionTogglePending}
+                onDescriptionChange={onVersionDescriptionChange}
+                descriptionPending={versionDescriptionPending}
               />
             ))}
           </Space>

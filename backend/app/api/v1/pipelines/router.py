@@ -113,6 +113,7 @@ def _version_summary(version: PipelineVersion) -> PipelineVersionSummary:
     return PipelineVersionSummary(
         id=version.id,
         version=version.version,
+        description=version.description,
         is_active=version.is_active,
         has_automation=getattr(version, "automation", None) is not None,
         created_at=version.created_at,
@@ -203,6 +204,7 @@ def _version_to_response(version: PipelineVersion) -> PipelineVersionResponse:
         family_name=family.name if family else None,
         version=version.version,
         config=version.config,
+        description=version.description,
         task_type=pipeline.task_type if pipeline else "",
         output_split_id=pipeline.output_split_id if pipeline else "",
         output_group_id=output_group.id if output_group else None,
@@ -446,10 +448,12 @@ async def update_pipeline_version(
     payload: PipelineVersionUpdateRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """PipelineVersion 편집 — is_active 토글만. config 는 immutable."""
+    """PipelineVersion 편집 — is_active 토글 + description 갱신. config 는 immutable."""
     service = PipelineService(db)
     version = await service.update_pipeline_version(
-        version_id, is_active=payload.is_active,
+        version_id,
+        is_active=payload.is_active,
+        description=payload.description,
     )
     if version is None:
         raise HTTPException(status_code=404, detail="PipelineVersion 을 찾을 수 없습니다.")
