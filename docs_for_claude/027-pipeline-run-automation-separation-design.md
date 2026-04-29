@@ -943,3 +943,100 @@ FE 측 alias `pipelineEntitiesApi` 는 deprecated 표시만 두고 한시적 유
   configToGraph 호출 흐름은 별도 구현 필요.
 - **핸드오프 028 + 설계서 v7.11 승격 + main 머지** — 본 §13 까지 정리되면 028 신설
   검토.
+
+---
+
+## 14. 후속 — UI 마무리 + PipelineFamily 색상 컬럼 (2026-04-29)
+
+§13 의 "남은 작업 / 다음 후보" 중 사용자 UI 피드백 반영 + Family 풀 UX + Family 색상
+컬럼 추가까지 완료. v7.12 schema 변경 1건 (Alembic 033 `PipelineFamily.color` 추가)
+포함.
+
+### 14-1. PipelineVersion 상세 페이지 다듬기
+
+§13-7 의 readonly DAG 풀 페이지가 사용자 UI 스모크에서 6건의 작은 이슈 발견 → 모두
+수정.
+
+| 이슈 | 원인 | 수정 |
+|---|---|---|
+| JSON 보기 → 클립보드 복사 시 `Cannot read properties of undefined (reading 'writeText')` | HTTP + 사설 IP 환경 (172.23.10.19) 은 secure context 가 아니라 `navigator.clipboard` 가 undefined | `frontend/src/utils/clipboard.ts` 신설 — textarea + `document.execCommand('copy')` fallback. 헤더의 중복 "JSON 복사" 버튼은 제거 (drawer 안 복사로 단일화) |
+| DAG 가 빈 박스로만 표시 | `useNodeData(nodeId)` 가 zustand `pipelineEditorStore.nodeDataMap` 을 구독하는데 detail 페이지가 store 에 puts 하지 않아 모든 NodeComponent 가 null 데이터 → ReactFlow dimension 측정 실패 → 노드 영구 `visibility:hidden` | graph 빌드 후 `usePipelineEditorStore.setState({ nodeDataMap: graph.nodeDataMap })` bulk put. unmount 시 `reset()` 으로 editor 와 격리. |
+| DAG row 가 0px 로 collapse | AppLayout Content 가 `height:100%` 보장 안 해서 flex 체인 collapse | DAG row 에 명시 `height: 600` + DAG container `minHeight: 0` |
+| `coco_det_test_all_train` 은 그룹명 정상, `hardhat_cls_test_all_train` 은 group_id 가 그대로 노출 | `dataLoadDefinition` 의 `availableGroups` 필터가 URL `?taskType=` 기준 (기본 DETECTION). detail URL 에는 param 이 없어 classification 그룹들이 매칭에서 제외됨 | versionDetail 받자마자 `setSearchParams({ taskType: versionDetail.task_type }, { replace: true })` 자동 보정 |
+| 길거나 가려진 노드 보기 어려움 | `nodesDraggable=false` 라 위치 이동 불가 | `useNodesState` / `useEdgesState` 로 로컬 state, `nodesDraggable=true` 로 드래그 허용 (위치만 — 연결/삭제는 여전히 차단) |
+| DataLoad / Save 노드의 Select / textarea 클릭 시 값이 변경되어 보이는 사용자 혼란 | readonly 모드인데 input 들이 그대로 살아있음 | `.pipeline-version-readonly-dag .react-flow__node .ant-select / input / textarea` 에 `pointer-events: none` CSS. ReactFlow 의 zoom / fitView / pan / 노드 selection / 드래그 는 그대로 |
+
+### 14-2. Pipeline 목록 — 인라인 expand + 버전 운영 보강
+
+| 변화 | 구현 |
+|---|---|
+| 행 클릭 시 우측 drawer (음영) → **그 행 아래 인라인 expand** | AntD `Table.expandable.expandedRowRender`. 한 번에 한 concept 만 펼쳐지도록 `expandedRowKeys` controlled. `expandedRowClassName` 으로 좌측 3px 파란 border 만 (배경색은 사용자 피드백으로 제거) |
+| expand 안 versions 세로 목록의 각 version 에 **비활성/복원** 버튼 | `pipelineVersionsApi.update(id, {is_active})` 호출. 성공 시 concept-list / concept-detail / version-detail 캐시 invalidate |
+| concept 메타에 **"최신 활성 버전"** 표시 | 백엔드 `_pipeline_to_response` 의 `latest_version` (versions 중 is_active 인 가장 최신) 을 v* Tag 로 노출 |
+
+### 14-3. PipelineFamily 풀 UI
+
+§13 의 백엔드 Family CRUD 위에 사용자 가시 UI 신설.
+
+**신규 컴포넌트**:
+- `FamilyManagementModal` — Family CRUD (생성 / inline 수정 / 삭제 with Popconfirm).
+  삭제 시 묶여있던 Pipeline 들은 backend 의 `ON DELETE SET NULL` 로 자동 미분류 전환.
+- `FamilyAssignControl` — Pipeline 의 family 변경 Select dropdown ('미분류' + 각
+  family). ExpandedConceptContent 의 Family 필드 + 행 Actions 의 "Family 이동"
+  Popover 양쪽에서 사용.
+- `FamilyHeadingPopover` — Family 그룹 heading 의 색 Tag 클릭 시 펼쳐지는 Popover.
+  보기 모드 (이름 / 설명 / pipeline 수) ↔ 수정 모드 (이름 / 설명 / 색상) 토글.
+
+**PipelineListPage 통합**:
+- 툴바에 "Family 관리" 버튼 + 다중 체크박스 family 필터 Dropdown ("전체 선택/해제" /
+  "필터 해제" / 미분류 단일 체크박스 / 각 family Checkbox.Group, OR 결합).
+- 목록을 family 별로 **그룹핑** — family heading + 그룹별 Table. family 정렬은
+  name ASC, **미분류 그룹은 항상 마지막**. 첫 그룹 Table 만 헤더 표시.
+- 행 Actions 에 **"Family 이동" Popover** 버튼 — expand 펼치지 않고 family 전환.
+
+**Backend 다중 family 필터**:
+- `list_pipelines(family_id: list[str] | None, family_unfiled: bool)` — 둘 다 OR
+  결합. 둘 다 비어있으면 필터 미적용. Router `family_id: list[str] | None = Query(None)`.
+
+**Backend 사이드 fix (필수)**:
+- `pipeline_service.list_families` / `create_family` 의 `selectinload(PipelineFamily
+  .pipelines)` 추가 — `_family_to_response` 의 family.pipelines lazy 접근 시
+  MissingGreenlet 방지.
+
+### 14-4. PipelineFamily.color (Alembic 033)
+
+**배경**: family 가 늘어날수록 이름만으로 빠르게 구분 어려움. family 별 색상으로 시각 구분.
+
+**스키마**:
+- `pipeline_families.color VARCHAR(7) NOT NULL` (`#RRGGBB`). 마이그레이션이 기존 행에
+  랜덤 hex 백필 후 NOT NULL 전환.
+- ORM `PipelineFamily.color`. service `_random_family_color()` 헬퍼 (각 채널 80~200
+  mid-tone). `create_family(color=None)` 미지정 시 자동 할당, `update_family(color=None)`
+  변경 가능.
+- Pydantic request schemas 에 `^#[0-9a-fA-F]{6}$` 패턴 검증.
+
+**FE**:
+- `FamilyHeadingPopover` 보기 모드: 14×14 색 swatch + 이름. 수정 모드: AntD ColorPicker
+  (12색 추천 preset + 자유 선택, disabledAlpha). 트리거 Tag background 도 family.color.
+- `FamilyManagementModal` 첫 컬럼이 색 swatch (보기 시 20×20, 편집 시 ColorPicker).
+- 다중 체크박스 family 필터 Checkbox 라벨 앞에 12×12 색 사각형 (폰트 변경 없음).
+
+### 14-5. 남은 작업
+
+- **JSON import UI 통합** — `unresolveVersionRefsToSplitRefs` 헬퍼만 추가됨. 에디터의
+  "JSON 불러오기" 가 PipelineRun JSON 자동 감지 → 백엔드 lookup → 변환된 config 로
+  import 흐름은 별도 구현 필요.
+- **§12-1 저장/실행 분리 UX** — `POST /pipelines/concepts` (또는 `/versions`) 신설 +
+  에디터 "실행" → "저장" 라벨 변경 + `_get_or_create_concept_and_version` 임시 shim
+  제거.
+- **§12-2 #1 파이프라인명 입력 UI** — 에디터 헤더에 name 필드 추가.
+- **§9-8 Automation 메뉴 실 API 재연결** — 026 mock fixture → pipelineVersionsApi /
+  pipelineAutomationsApi 어댑터. version 단위 격하 반영 필요.
+- **핸드오프 028 + 설계서 v7.13 승격 + main 머지** — 위 작업 후 본 브랜치 종결.
+
+### 14-6. 검증
+
+- backend pytest 446/446
+- FE TypeScript 신규 0
+- Alembic 033 upgrade 후 pipeline_families.color 백필 확인 (기존 2건 모두 mid-tone hex
+  자동 할당)

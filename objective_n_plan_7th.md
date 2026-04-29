@@ -1,9 +1,9 @@
 # 데이터 관리 & 학습 자동화 플랫폼 — 7차 설계서
 
-> **작업지시서 v7.11** | Pipeline 자체 3계층 (Family + concept + version) 분리 + source format v3
-> 기준일: 2026-04-28
+> **작업지시서 v7.12** | UI 마무리 + PipelineFamily.color 컬럼 (v7.11 위에 누적)
+> 기준일: 2026-04-29
 > 이전 설계서: `docs_history/objective_n_plan_6th.md`
-> 진행 중 핸드오프: `docs_for_claude/027-pipeline-run-automation-separation-design.md` (§13 v7.11 후속 작업)
+> 진행 중 핸드오프: `docs_for_claude/027-pipeline-run-automation-separation-design.md` (§13 v7.11 / §14 v7.12)
 > 직전 핸드오프 (main 머지 완료): `docs_history/handoffs/025-dataset-three-tier-separation-handoff.md`
 > 노드 SDK 규약: `docs/pipeline-node-sdk-guide.md` (2026-04-15 재작성본)
 
@@ -258,6 +258,37 @@ upgrade/downgrade roundtrip 무손실. 신규 엔드포인트 smoke 통과.
   JSON 자동 감지 → 백엔드 lookup → 변환 흐름은 별도 구현 필요
 - 핸드오프 028 + main 머지
 
+**v7.12 (2026-04-29, UI 마무리 + PipelineFamily.color).**
+v7.11 의 남은 사용자 UI 피드백 흡수 + Family 풀 UX + Family 색상 컬럼 추가. 핸드오프
+027 §14 에 상세. schema 변경 1건 — Alembic 033 (`pipeline_families.color VARCHAR(7) NOT NULL`).
+
+**핵심 변화**:
+- **PipelineVersion 상세 다듬기** — clipboard secure-context fallback / DAG 빈 박스
+  fix (zustand store 에 nodeDataMap bulk put) / DAG row height 명시 / classification
+  pipeline 의 dataLoad 그룹명 노출 (taskType URL param 자동 보정) / 노드 위치 드래그
+  허용 (위치만, 연결·삭제 차단) / DataLoad·Save Select·input pointer-events 차단.
+- **Pipeline 목록 인라인 expand** — 우측 drawer 폐기, 행 클릭 시 그 행 아래로 펼쳐짐
+  (`Table.expandable.expandedRowRender`). 좌측 3px 파란 border 로 펼침 강조.
+  expand 안 versions 마다 비활성/복원 버튼 + concept 메타에 "최신 활성 버전" 표시.
+- **PipelineFamily 풀 UI** — `FamilyManagementModal` (CRUD) / `FamilyAssignControl`
+  (Pipeline 의 family 변경 Select) / `FamilyHeadingPopover` (그룹 heading 클릭 → 설명
+  + 색상 ColorPicker 토글). 행 Actions 에 "Family 이동" Popover. 목록을 family 별로
+  그룹핑 (미분류 마지막). 다중 체크박스 family 필터 (OR 결합).
+- **PipelineFamily.color 컬럼** — Alembic 033 + ORM + service 의 랜덤 자동 할당 +
+  ColorPicker 편집 UI + 다중 체크박스 family 필터 / 헤더 Tag / 색 swatch 시각 노출.
+- **백엔드 다중 family 필터** — `list_pipelines(family_id: list[str], family_unfiled:
+  bool)`. OR 결합. router `family_id` Query 가 list 로 격상.
+
+**검증**: backend pytest 446/446, FE TS 신규 0, Alembic 033 upgrade 후 기존 family 들
+mid-tone hex 자동 백필 확인. 브랜치: `feature/pipeline-family-and-version`.
+
+**남은 후속 작업 (v7.12 → v7.13)**:
+- §9-8 Automation 메뉴 실 API 재연결 (가장 큰 작업 — version 단위 어댑터)
+- §12-1 저장/실행 분리 UX (`POST /pipelines/concepts` 정식 + 임시 shim 제거)
+- §12-2 #1 에디터 파이프라인명 입력
+- JSON import UI 통합 (`unresolveVersionRefsToSplitRefs` 활용)
+- 핸드오프 028 + main 머지
+
 ---
 
 ## 1. 로드맵 위치
@@ -305,7 +336,7 @@ PipelineFamily (느슨한 폴더 — 자유 이동, NULL OK)
 - **DatasetVersion** — 실제 데이터 버전 단위. `split_id FK, version, storage_uri, annotation_files, status, metadata, ...`. 유니크: `(split_id, version)`, `version = "{major}.{minor}"`.
 
 **Pipeline 측** (v7.11 신규 — 027 §13):
-- **PipelineFamily** (v7.11 신규) — 사용자 즐겨찾기 폴더. `name (UNIQUE), description, created_at, updated_at`. 강제 구조 아님. Pipeline 이 family 간 자유 이동. Pipeline.family_id NULL = "미분류".
+- **PipelineFamily** (v7.11 신규, v7.12 — `color` 추가) — 사용자 즐겨찾기 폴더. `name (UNIQUE), description, color VARCHAR(7) (#RRGGBB, 자동 할당 + 사용자 편집 가능), created_at, updated_at`. 강제 구조 아님. Pipeline 이 family 간 자유 이동. Pipeline.family_id NULL = "미분류".
 - **Pipeline** (v7.11 — 의미 격하: "정적 개념 정체성") — `family_id FK NULL, name (전역 UNIQUE), description, output_split_id FK, task_type, is_active, created_at, updated_at`. version / config 컬럼 **없음** (PipelineVersion 으로 분리). output_split / task_type 은 개념 레벨 고정 — 변경 시 다른 Pipeline 이 됨.
 - **PipelineVersion** (v7.11 신규 — 의미 격상: 기존 Pipeline.config 의 version 인스턴스) — `pipeline_id FK NOT NULL CASCADE, version, config (JSONB, immutable), is_active, created_at, updated_at`. 유니크: `(pipeline_id, version)`. 다른 Pipeline 으로 이동 불가.
 - **PipelineRun** (v7.10 — `PipelineExecution` rename, v7.11 — FK 격하) — 동적 immutable run. `pipeline_version_id FK NOT NULL` (이전 pipeline_id 에서 한 단 격하), `automation_id FK NULL, output_dataset_id FK, transform_config (resolved 스냅샷), resolved_input_versions ({split_id: version}), trigger_kind, automation_*` ...
@@ -829,6 +860,7 @@ Automation / Detection 미구현 2종 / Step 2 진입 (item 16 ~ 22) 중심. 아
 15-c. ~~Dataset 3계층 분리~~ ✅ **완료 (2026-04-23 · v7.9)** — Alembic `030_dataset_three_tier_split` 로 `dataset_splits` 신규 + `datasets` → `dataset_versions` rename + 89 versions 무손실 이행. `DatasetVersion.split_slot` relationship + `split`/`group`/`group_id` association_proxy 로 기존 호출 경로 호환 유지. 이벤트 리스너 / 서비스 / 라우터 / Celery / FE 전수 조정. 실데이터 파이프라인 `fafbd6ad-c66a-4f1f-a7c2-9c9a9f5da60a` 정상 완주. 브랜치: `feature/change-dataset-db-schema`. 상세 §2-2 + 핸드오프 025.
 15-d. ~~Pipeline / PipelineRun / PipelineAutomation 3 엔티티 분리 + schema_version=2~~ ✅ **완료 (2026-04-28 · v7.10)** — Alembic 031 + ORM 신규 + 서비스 / 라우터 / FE 전면 재배선. v1 호환 코드 전수 제거 (450 줄 감소). DataLoad 노드는 `(group, split)` 까지만, version 은 실행 시점 Version Resolver Modal. PipelineListPage / VersionResolverModal / CreatePipelineButton 신규. 결정 / 진행 상황: `docs_for_claude/027-pipeline-run-automation-separation-design.md` §12.
 15-e. ~~Pipeline Family + Version 3계층 + source format v3~~ ✅ **완료 (2026-04-28 · v7.11)** — Alembic 032 + PipelineFamily / Pipeline (concept) / PipelineVersion 분리. source 토큰을 `source:<type>:<id>` (dataset_split / dataset_version) 로 격상해 Pipeline 측 spec 과 PipelineRun 측 resolved 의 의미 충돌 해소. PipelineListPage 행 클릭 drawer + version 세로 목록, PipelineVersionDetailPage 신규 (readonly DAG + JSON 복사). 결정 / 진행 상황: `docs_for_claude/027-pipeline-run-automation-separation-design.md` §13.
+15-f. ~~UI 마무리 + PipelineFamily.color~~ ✅ **완료 (2026-04-29 · v7.12)** — PipelineVersion 상세 페이지 6건 fix (clipboard fallback / nodeDataMap zustand bulk put / DAG row height / taskType URL 보정 / 노드 드래그 / DataLoad·Save pointer-events 차단), Pipeline 목록 인라인 expand + version 비활성 토글 + 최신 활성 버전 표시, PipelineFamily 풀 UI (CRUD modal / 행 Family 이동 / 그룹핑 / 다중 체크박스 필터), Alembic 033 의 `pipeline_families.color` 컬럼 + 랜덤 자동 할당 + ColorPicker 편집. 결정 / 진행 상황: `docs_for_claude/027-pipeline-run-automation-separation-design.md` §14.
 16. **Automation 실구현** — chaining 분석기 / polling+triggering 스캐너 / `last_seen_input_versions` 갱신 등 자동 실행 로직. 026 mock fixture → 실 endpoint 재연결 (§9-8) 후 진입. 참조: `docs_for_claude/023-automation-mockup-tech-note.md` §9.
 17. **미구현 Detection manipulator 2종** — `det_change_compression` / `det_shuffle_image_ids`
 17. **미구현 Detection manipulator 2종** — `det_change_compression` / `det_shuffle_image_ids`
@@ -997,6 +1029,10 @@ append, extra 최초/보존 분기, list 입력 거부, deep copy 격리).
 | `src/pages/PipelineListPage.tsx` | Pipeline (concept) 목록 + 행 클릭 drawer + 버전 세로 목록 + 인라인 expand |
 | `src/pages/PipelineVersionDetailPage.tsx` | PipelineVersion 풀 페이지 — readonly DAG + 사이드 메타 + 실행 이력 + JSON 복사·보기 |
 | `src/components/pipeline/VersionResolverModal.tsx` | PipelineVersion 단위 실행 제출 (split → version 드롭다운) |
+| `src/components/pipeline/FamilyManagementModal.tsx` | PipelineFamily CRUD (생성·수정·삭제, 색 swatch 표시) |
+| `src/components/pipeline/FamilyAssignControl.tsx` | Pipeline 의 family 변경 Select (미분류 + 각 family) |
+| `src/components/pipeline/FamilyHeadingPopover.tsx` | Family 그룹 heading 클릭 popover — 보기 ↔ 수정 (이름·설명·색상 ColorPicker) |
+| `src/utils/clipboard.ts` | navigator.clipboard fallback (HTTP + 비localhost 환경 보호) |
 | `src/components/pipeline/PropertiesPanel.tsx` | `definition.PropertiesComponent` 위임 |
 | `src/components/pipeline/NodePalette.tsx` | `buildPaletteItems` 소비 |
 | `src/stores/pipelineEditorStore.ts` | `nodeDataMap` / `distributeIssuesToNodes` |
