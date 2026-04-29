@@ -32,12 +32,17 @@ import {
   graphToPipelineConfig,
   graphToPartialPipelineConfig,
   pipelineConfigToGraph,
-  extractSourceDatasetIdsFromConfig,
+  unresolveVersionRefsToSplitRefs,
+  parseSourceRef,
   buildNodeTypesFromRegistry,
 } from '@/pipeline-sdk'
 import type { DatasetDisplayInfo } from '@/pipeline-sdk'
-import { pipelineConceptsApi, pipelinesApi, manipulatorsApi } from '@/api/pipeline'
-import { datasetsApi, datasetGroupsApi } from '@/api/dataset'
+import {
+  pipelineConceptsApi,
+  pipelinesApi,
+  manipulatorsApi,
+  datasetsForPipelineApi,
+} from '@/api/pipeline'
 import { MERGE_OPERATORS } from '@/pipeline-sdk/definitions/mergeDefinition'
 import type {
   PipelineConfig,
@@ -245,14 +250,14 @@ function PipelineEditorContent() {
   }, [])
 
   const handleLoadJson = useCallback(async () => {
-    let config: PipelineConfig
+    let parsedConfig: PipelineConfig
     try {
-      config = JSON.parse(jsonLoadInput)
+      parsedConfig = JSON.parse(jsonLoadInput)
     } catch {
       setJsonLoadError('유효하지 않은 JSON 형식입니다.')
       return
     }
-    if (!config.name || !config.output || !config.tasks) {
+    if (!parsedConfig.name || !parsedConfig.output || !parsedConfig.tasks) {
       setJsonLoadError('PipelineConfig 형식이 아닙니다. name, output, tasks 필드가 필요합니다.')
       return
     }
@@ -261,52 +266,85 @@ function PipelineEditorContent() {
     setJsonLoadError(null)
 
     try {
-      // manipulator 메타 조회
-      const manipulatorResponse = await manipulatorsApi.list({ status: 'ACTIVE' })
+      // manipulator 메타 + 데이터셋 그룹(+ datasets[]) 일괄 조회.
+      // listGroups 응답의 group.datasets[] 가 split_id / version 을 모두 들고 있어,
+      // dataset_split / dataset_version 두 토큰 모두 한 번의 호출로 해석할 수 있다.
+      const [manipulatorResponse, groupsResponse] = await Promise.all([
+        manipulatorsApi.list({ status: 'ACTIVE' }),
+        datasetsForPipelineApi.listGroups({ page_size: 200 }),
+      ])
       const manipulatorMap: Record<string, Manipulator> = {}
       for (const manipulator of manipulatorResponse.data.items) {
         manipulatorMap[manipulator.name] = manipulator
       }
 
-      // 등록되지 않은 operator가 있어도 placeholder 노드로 복원되므로 에러로 막지 않음.
-      // 사용자에게 경고만 표시.
+      // 그룹 datasets 를 한 번 훑어 split_id → 표시정보 / version_id → split_id 두 인덱스 구축.
+      const splitIdToDisplay: Record<string, DatasetDisplayInfo> = {}
+      const versionIdToSplitId: Record<string, string> = {}
+      for (const group of groupsResponse.data.items) {
+        for (const ds of group.datasets ?? []) {
+          // 같은 split 의 어느 version 이든 group/split 표시는 동일 — 첫 발견만 기록.
+          if (!splitIdToDisplay[ds.split_id]) {
+            splitIdToDisplay[ds.split_id] = {
+              datasetId: ds.id,
+              groupId: group.id,
+              groupName: group.name,
+              split: ds.split,
+              version: ds.version,
+            }
+          }
+          versionIdToSplitId[ds.id] = ds.split_id
+        }
+      }
+
+      // schema_version 체크 — 상위 버전이면 경고만 (best-effort 복원).
+      if (typeof parsedConfig.schema_version === 'number' && parsedConfig.schema_version > 3) {
+        message.warning(
+          `이 config 는 더 최신 버전 (v${parsedConfig.schema_version}) 에서 만들어졌습니다. 일부 항목이 누락될 수 있습니다.`,
+        )
+      }
+
+      // PipelineRun.transform_config 케이스: source:dataset_version:<id> → source:dataset_split:<id>
+      // 환원. Pipeline.config 케이스는 이미 dataset_split 만 들고 있어 토큰 변경 없음.
+      const { config: rewrittenConfig, missingVersionIds } = unresolveVersionRefsToSplitRefs(
+        parsedConfig,
+        versionIdToSplitId,
+      )
+
+      // 등록되지 않은 operator (placeholder 복원).
       const unknownOperators: string[] = []
-      for (const task of Object.values(config.tasks)) {
+      for (const task of Object.values(rewrittenConfig.tasks)) {
         if (!MERGE_OPERATORS.has(task.operator) && !manipulatorMap[task.operator]) {
           unknownOperators.push(task.operator)
         }
       }
 
-      // 소스 dataset 표시 정보 조회
-      const sourceDatasetIds = extractSourceDatasetIdsFromConfig(config)
+      // 환원 후 inputs 의 split_id 들이 현재 DB 에 있는지 확인.
+      // matchFromConfig 가 datasetDisplayMap[splitId] 로 그룹/Split 라벨을 채우므로
+      // 누락된 split_id 는 노드 라벨이 source:... 로 표시되고 저장 검증에서 차단된다.
+      const referencedSplitIds = new Set<string>()
+      for (const task of Object.values(rewrittenConfig.tasks)) {
+        for (const input of task.inputs) {
+          const refParsed = parseSourceRef(input)
+          if (refParsed) referencedSplitIds.add(refParsed.id)
+        }
+      }
+      if (rewrittenConfig.passthrough_source_split_id) {
+        referencedSplitIds.add(rewrittenConfig.passthrough_source_split_id)
+      }
+      const missingSplitIds: string[] = []
       const datasetDisplayMap: Record<string, DatasetDisplayInfo> = {}
-      for (const datasetId of sourceDatasetIds) {
-        try {
-          const datasetResponse = await datasetsApi.get(datasetId)
-          const dataset = datasetResponse.data
-          const groupResponse = await datasetGroupsApi.get(dataset.group_id)
-          const group = groupResponse.data
-          datasetDisplayMap[datasetId] = {
-            datasetId,
-            groupId: dataset.group_id,
-            groupName: group.name,
-            split: dataset.split,
-            version: dataset.version,
-          }
-        } catch {
-          console.warn(`데이터셋 조회 실패 (삭제되었을 수 있음): ${datasetId}`)
+      for (const splitId of referencedSplitIds) {
+        const display = splitIdToDisplay[splitId]
+        if (display) {
+          datasetDisplayMap[splitId] = display
+        } else {
+          missingSplitIds.push(splitId)
         }
       }
 
-      // schema_version 체크 — 상위 버전이면 경고만 (best-effort 복원)
-      if (typeof config.schema_version === 'number' && config.schema_version > 1) {
-        message.warning(
-          `이 config는 더 최신 버전(v${config.schema_version})에서 만들어졌습니다. 일부 항목이 누락될 수 있습니다.`,
-        )
-      }
-
       const { nodes: restoredNodes, edges: restoredEdges, nodeDataMap: restoredNodeDataMap } =
-        pipelineConfigToGraph(config, manipulatorMap, datasetDisplayMap)
+        pipelineConfigToGraph(rewrittenConfig, manipulatorMap, datasetDisplayMap)
 
       reset()
       setNodes(restoredNodes)
@@ -316,12 +354,47 @@ function PipelineEditorContent() {
       }
 
       setIsJsonLoadModalOpen(false)
-      if (unknownOperators.length > 0) {
+
+      // 안내 메시지 — missing 이 있으면 모달, 없으면 unknown / success 메시지.
+      const hasMissing =
+        missingVersionIds.length > 0 || missingSplitIds.length > 0
+      if (hasMissing) {
+        const summarize = (ids: string[]) =>
+          ids.slice(0, 3).map((id) => id.slice(0, 8)).join(', ')
+            + (ids.length > 3 ? ` 외 ${ids.length - 3}건` : '')
+        const fragments: string[] = []
+        if (missingVersionIds.length > 0) {
+          fragments.push(
+            `dataset_version ${missingVersionIds.length}건 (${summarize(missingVersionIds)}) 의 부모 split 을 현재 DB 에서 찾지 못했습니다.`,
+          )
+        }
+        if (missingSplitIds.length > 0) {
+          fragments.push(
+            `dataset_split ${missingSplitIds.length}건 (${summarize(missingSplitIds)}) 이 현재 DB 에 없습니다.`,
+          )
+        }
+        Modal.warning({
+          title: '소스 데이터셋 일부를 해석하지 못했습니다',
+          content: (
+            <div>
+              <div style={{ marginBottom: 8 }}>
+                데이터셋이 삭제되었거나 다른 DB 환경의 export 일 수 있습니다.
+                해당 노드는 source ID 그대로 표시되며 저장 검증에서 차단됩니다.
+              </div>
+              {fragments.map((line, idx) => (
+                <div key={idx} style={{ fontSize: 12 }}>• {line}</div>
+              ))}
+            </div>
+          ),
+        })
+      } else if (unknownOperators.length > 0) {
         message.warning(
-          `등록되지 않은 operator ${unknownOperators.length}개는 Placeholder 노드로 복원되었습니다. 실행하려면 해당 노드를 교체하세요.`,
+          `등록되지 않은 operator ${unknownOperators.length}개는 Placeholder 노드로 복원되었습니다. 저장하려면 해당 노드를 교체하세요.`,
         )
       } else {
-        message.success(`파이프라인 복원 완료 (노드 ${restoredNodes.length}개, 엣지 ${restoredEdges.length}개)`)
+        message.success(
+          `파이프라인 복원 완료 (노드 ${restoredNodes.length}개, 엣지 ${restoredEdges.length}개)`,
+        )
       }
     } catch (err) {
       setJsonLoadError(`복원 중 오류 발생: ${(err as Error).message}`)

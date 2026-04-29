@@ -18,8 +18,10 @@ export {
 export {
   pipelineConfigToGraph,
   extractSourceDatasetIdsFromConfig,
+  unresolveVersionRefsToSplitRefs,
 } from './engine/configToGraph'
 export type { DatasetDisplayInfo } from './engine/configToGraph'
+export { parseSourceRef, buildSplitSourceRef, buildVersionSourceRef } from './sourceFormat'
 export { validateGraphStructure } from './engine/clientValidation'
 export { distributeIssuesToNodes } from './engine/issueMapping'
 export { showDisabledModal } from './definitions/operatorDefinition'
