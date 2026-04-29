@@ -303,7 +303,7 @@ mid-tone hex 자동 백필 확인. 브랜치: `feature/pipeline-family-and-versi
 
 ---
 
-## 2. 현재 구현 상태 (2026-04-13 baseline)
+## 2. 현재 구현 상태 (2026-04-29 v7.12 baseline)
 
 ### 2-1. 백엔드
 
@@ -861,24 +861,28 @@ Automation / Detection 미구현 2종 / Step 2 진입 (item 16 ~ 22) 중심. 아
 15-d. ~~Pipeline / PipelineRun / PipelineAutomation 3 엔티티 분리 + schema_version=2~~ ✅ **완료 (2026-04-28 · v7.10)** — Alembic 031 + ORM 신규 + 서비스 / 라우터 / FE 전면 재배선. v1 호환 코드 전수 제거 (450 줄 감소). DataLoad 노드는 `(group, split)` 까지만, version 은 실행 시점 Version Resolver Modal. PipelineListPage / VersionResolverModal / CreatePipelineButton 신규. 결정 / 진행 상황: `docs_for_claude/027-pipeline-run-automation-separation-design.md` §12.
 15-e. ~~Pipeline Family + Version 3계층 + source format v3~~ ✅ **완료 (2026-04-28 · v7.11)** — Alembic 032 + PipelineFamily / Pipeline (concept) / PipelineVersion 분리. source 토큰을 `source:<type>:<id>` (dataset_split / dataset_version) 로 격상해 Pipeline 측 spec 과 PipelineRun 측 resolved 의 의미 충돌 해소. PipelineListPage 행 클릭 drawer + version 세로 목록, PipelineVersionDetailPage 신규 (readonly DAG + JSON 복사). 결정 / 진행 상황: `docs_for_claude/027-pipeline-run-automation-separation-design.md` §13.
 15-f. ~~UI 마무리 + PipelineFamily.color~~ ✅ **완료 (2026-04-29 · v7.12)** — PipelineVersion 상세 페이지 6건 fix (clipboard fallback / nodeDataMap zustand bulk put / DAG row height / taskType URL 보정 / 노드 드래그 / DataLoad·Save pointer-events 차단), Pipeline 목록 인라인 expand + version 비활성 토글 + 최신 활성 버전 표시, PipelineFamily 풀 UI (CRUD modal / 행 Family 이동 / 그룹핑 / 다중 체크박스 필터), Alembic 033 의 `pipeline_families.color` 컬럼 + 랜덤 자동 할당 + ColorPicker 편집. 결정 / 진행 상황: `docs_for_claude/027-pipeline-run-automation-separation-design.md` §14.
-16. **Automation 실구현** — chaining 분석기 / polling+triggering 스캐너 / `last_seen_input_versions` 갱신 등 자동 실행 로직. 026 mock fixture → 실 endpoint 재연결 (§9-8) 후 진입. 참조: `docs_for_claude/023-automation-mockup-tech-note.md` §9.
-17. **미구현 Detection manipulator 2종** — `det_change_compression` / `det_shuffle_image_ids`
-17. **미구현 Detection manipulator 2종** — `det_change_compression` / `det_shuffle_image_ids`
-18. **버전 정책 운영 검증** — automation과 함께
-19. **Phase 3** — TrainingExecutor/GPUResourceManager 인터페이스, 알림 골격, GNB/Manipulator/시스템 상태 페이지, 전체 UX 정리
-20. **Step 2** 진입 — DockerTrainingExecutor, nvidia-smi 기반 GPUResourceManager, MLflow, Prometheus+DCGM, SMTP 알림
+16. **Automation 실 API 재연결 (§9-8) + Automation 실구현** — 단계 분리:
+    - 16-a. 026 mock fixture → `pipelineVersionsApi` / `pipelineAutomationsApi` 어댑터. version 단위로 격하된 자료구조 반영. AutomationPage / AutomationHistoryPage / AutomationPipelineDetailPage 3 페이지 재배선. (선행)
+    - 16-b. chaining 분석기 / polling+triggering 스캐너 / `last_seen_input_versions` 갱신 등 자동 실행 로직 본구현. 참조: `docs_for_claude/023-automation-mockup-tech-note.md` §9.
+17. **§12-1 저장/실행 분리 UX** — 에디터 "실행" → "저장" 라벨 변경, `POST /pipelines/concepts` (또는 `/pipelines/versions`) 정식 엔드포인트 신설, `_get_or_create_concept_and_version` 임시 shim 제거. 워크플로우의 멘탈 모델을 명확하게 정리.
+18. **§12-2 #1 파이프라인명 입력 UI** — 에디터 헤더에 name 입력 필드 추가. 현재는 `{group}_{split}` 자동 생성.
+19. **JSON import UI 통합** — `unresolveVersionRefsToSplitRefs` 헬퍼는 추가됨. 에디터의 JSON 불러오기 모달이 PipelineRun JSON 자동 감지 → 백엔드 lookup → 변환된 config 로 configToGraph 호출 흐름 미연결.
+20. **미구현 Detection manipulator 2종** — `det_change_compression` / `det_shuffle_image_ids`.
+21. **버전 정책 운영 검증** — automation과 함께
+22. **Phase 3** — TrainingExecutor/GPUResourceManager 인터페이스, 알림 골격, GNB/Manipulator/시스템 상태 페이지, 전체 UX 정리
+23. **Step 2** 진입 — DockerTrainingExecutor, nvidia-smi 기반 GPUResourceManager, MLflow, Prometheus+DCGM, SMTP 알림
     - ⚠️ multi-label head 학습 시 unknown 을 loss mask 로 배제: §2-12 `null` 규약으로 head-level 가능. per-class 필요 시 옵션 A/B 확장
     - ⚠️ head 별 `loss_per_head: dict[str, Literal["softmax", "bce", "bce_ovr"]]` 실장 (§6-2 결정)
-21. **Step 3 이후** — S3StorageClient, KubernetesTrainingExecutor, Helm, Argo/Kubeflow, Volcano, KEDA, MinIO
-22. **Step 4** — Label Studio, Synthetic Data, Auto Labeling, Offline Testing, Auto Deploy, 데이터 자동 수집
+24. **Step 3 이후** — S3StorageClient, KubernetesTrainingExecutor, Helm, Argo/Kubeflow, Volcano, KEDA, MinIO
+25. **Step 4** — Label Studio, Synthetic Data, Auto Labeling, Offline Testing, Auto Deploy, 데이터 자동 수집
     - ⚠️ auto-labeling 의 per-class unknown 시나리오는 현 head-level `null` 로 부분 해결 (head 전체 승격). 완전 해결은 옵션 A/B 확장 필요
-23. **Step 5** — Generative Model MLOps
+26. **Step 5** — Generative Model MLOps
 
 **후속 사용성 개선 TODO (우선순위 낮음 · v7.8 에서 식별)**
 
-24. **Group 명 변경 기능** — REST `PATCH /dataset-groups/{id}` (name 필드 수정) + 스토리지 경로 `mv` + 해당 그룹 Dataset 행의 `storage_uri` 갱신. SSOT 단일 원칙(§2-8) 을 따르며 사용자가 기존 이름을 유지·교체하고 싶은 경우를 흡수. 규모는 작음 (폴더 mv + DB UPDATE 소량).
-25. **RAW 등록 시 schema 불일치 → 기존 그룹 자동 rename 제안 UX** — 신규 등록 schema 가 기존 동명 그룹과 다르면 "기존 그룹을 `<name>_deprecated_<YYMMDD>_<HHMM>` 로 rename 하고 새 그룹으로 등록할까요?" 모달. `_deprecated_*` 는 네이밍일 뿐 시스템 의미 없음 — 그대로 사용 가능한 데이터셋. Group 명 변경 기능(24) 위에 얹는 UI.
-26. **`Dataset.metadata.class_info` 축소 리팩토링** — `heads` 에서 스키마 구조 필드(`name` / `multi_label` / `class_mapping`) 를 제거하고 `per_head_class_counts` 등 per-dataset 통계만 남기는 리팩토링. group.head_schema + 통계 조합으로 뷰어 렌더. 범위가 BE 생성 경로 2곳 + FE 타입·뷰어 2곳 + Alembic data migration 까지 묶이므로 별도 세션. v7.8 에서는 SSOT 시맨틱만 명시하고 현 중복 구조를 유지했다(§2-8).
+27. **Group 명 변경 기능** — REST `PATCH /dataset-groups/{id}` (name 필드 수정) + 스토리지 경로 `mv` + 해당 그룹 Dataset 행의 `storage_uri` 갱신. SSOT 단일 원칙(§2-8) 을 따르며 사용자가 기존 이름을 유지·교체하고 싶은 경우를 흡수. 규모는 작음 (폴더 mv + DB UPDATE 소량).
+28. **RAW 등록 시 schema 불일치 → 기존 그룹 자동 rename 제안 UX** — 신규 등록 schema 가 기존 동명 그룹과 다르면 "기존 그룹을 `<name>_deprecated_<YYMMDD>_<HHMM>` 로 rename 하고 새 그룹으로 등록할까요?" 모달. `_deprecated_*` 는 네이밍일 뿐 시스템 의미 없음 — 그대로 사용 가능한 데이터셋. Group 명 변경 기능(27) 위에 얹는 UI.
+29. **`Dataset.metadata.class_info` 축소 리팩토링** — `heads` 에서 스키마 구조 필드(`name` / `multi_label` / `class_mapping`) 를 제거하고 `per_head_class_counts` 등 per-dataset 통계만 남기는 리팩토링. group.head_schema + 통계 조합으로 뷰어 렌더. 범위가 BE 생성 경로 2곳 + FE 타입·뷰어 2곳 + Alembic data migration 까지 묶이므로 별도 세션. v7.8 에서는 SSOT 시맨틱만 명시하고 현 중복 구조를 유지했다(§2-8).
 
 ---
 
@@ -1006,6 +1010,10 @@ append, extra 최초/보존 분기, list 입력 거부, deep copy 격리).
 | `app/api/v1/dataset_groups/router.py` | `POST /register-classification` 엔드포인트 |
 | `app/models/all_models.py` | 전체 ORM 모델 단일 파일 (`DatasetGroup.head_schema` JSONB 포함) |
 | `migrations/versions/009_add_head_schema.py` | head_schema 컬럼 추가 마이그레이션 |
+| `migrations/versions/030_dataset_three_tier_split.py` | DatasetSplit 신규 + Dataset → DatasetVersion rename (v7.9) |
+| `migrations/versions/031_split_pipeline_entities.py` | Pipeline / PipelineRun / PipelineAutomation 3 엔티티 분리 (v7.10) |
+| `migrations/versions/032_pipeline_family_and_version_split.py` | PipelineFamily / Pipeline (concept) / PipelineVersion 분리 + source format v3 (v7.11) |
+| `migrations/versions/033_pipeline_family_color.py` | PipelineFamily.color VARCHAR(7) — 자동 랜덤 + ColorPicker 편집 (v7.12) |
 
 ### 6-3. frontend/ — SDK 경로 중심
 
