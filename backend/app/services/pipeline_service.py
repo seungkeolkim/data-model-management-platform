@@ -1555,9 +1555,11 @@ class PipelineService:
     # ═════════════════════════════════════════════════════════════════════════
 
     async def list_families(self) -> list[PipelineFamily]:
-        """모든 Family. 정렬: name ASC."""
+        """모든 Family. 정렬: name ASC. pipelines 선로드 (응답의 pipeline_count 산출용)."""
         result = await self.db.execute(
-            select(PipelineFamily).order_by(PipelineFamily.name.asc())
+            select(PipelineFamily)
+            .options(selectinload(PipelineFamily.pipelines))
+            .order_by(PipelineFamily.name.asc())
         )
         return list(result.scalars().all())
 
@@ -1579,7 +1581,14 @@ class PipelineService:
         )
         self.db.add(family)
         await self.db.flush()
-        return family
+        # 응답 직렬화 시 family.pipelines 접근으로 MissingGreenlet 나지 않도록 선로드.
+        # 신규 family 라 빈 리스트지만 lazy 트리거를 막아야 한다.
+        result = await self.db.execute(
+            select(PipelineFamily)
+            .options(selectinload(PipelineFamily.pipelines))
+            .where(PipelineFamily.id == family.id)
+        )
+        return result.scalars().first() or family
 
     async def update_family(
         self,

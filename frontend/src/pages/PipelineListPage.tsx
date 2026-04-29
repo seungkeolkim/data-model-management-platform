@@ -24,6 +24,8 @@ import {
   Tooltip,
   Descriptions,
   Empty,
+  Select,
+  Popover,
 } from 'antd'
 import {
   PlayCircleOutlined,
@@ -39,6 +41,7 @@ import { useNavigate } from 'react-router-dom'
 import {
   pipelineConceptsApi,
   pipelineVersionsApi,
+  pipelineFamiliesApi,
 } from '@/api/pipeline'
 import type {
   PipelineEntityResponse,
@@ -48,6 +51,10 @@ import type {
 } from '@/types/pipeline'
 import { VersionResolverModal } from '@/components/pipeline/VersionResolverModal'
 import { CreatePipelineButton } from '@/components/pipeline/CreatePipelineButton'
+import { FamilyManagementModal } from '@/components/pipeline/FamilyManagementModal'
+import { FamilyAssignControl } from '@/components/pipeline/FamilyAssignControl'
+import { FamilyHeadingPopover } from '@/components/pipeline/FamilyHeadingPopover'
+import { ApartmentOutlined } from '@ant-design/icons'
 
 const { Title, Text } = Typography
 
@@ -56,6 +63,9 @@ export function PipelineListPage() {
   const navigate = useNavigate()
   const [includeInactive, setIncludeInactive] = useState(false)
   const [nameFilter, setNameFilter] = useState('')
+  // family 필터 — 'all' (전체) | 'unfiled' (미분류) | family_id
+  const [familyFilter, setFamilyFilter] = useState<string>('all')
+  const [familyModalOpen, setFamilyModalOpen] = useState(false)
 
   // 행 인라인 expand 상태 — 한 번에 한 concept 만 펼침
   const [expandedConceptId, setExpandedConceptId] = useState<string | null>(null)
@@ -66,15 +76,26 @@ export function PipelineListPage() {
   const [resolverOpen, setResolverOpen] = useState(false)
 
   const listQuery = useQuery({
-    queryKey: ['pipeline-concepts', { includeInactive, nameFilter }],
+    queryKey: ['pipeline-concepts', { includeInactive, nameFilter, familyFilter }],
     queryFn: () =>
       pipelineConceptsApi
         .list({
           include_inactive: includeInactive,
           name_filter: nameFilter || undefined,
+          family_id: familyFilter !== 'all' && familyFilter !== 'unfiled'
+            ? familyFilter
+            : undefined,
+          family_unfiled: familyFilter === 'unfiled' || undefined,
           limit: 100,
         })
         .then((r) => r.data),
+  })
+
+  // 헤더 family 필터용 — modal 과 캐시 공유
+  const familiesQuery = useQuery({
+    queryKey: ['pipeline-families'],
+    queryFn: () => pipelineFamiliesApi.list().then((r) => r.data),
+    staleTime: 30_000,
   })
 
   // 펼친 concept 의 상세 (versions 포함)
@@ -98,6 +119,42 @@ export function PipelineListPage() {
   })
 
   const totalFallback = useMemo(() => listQuery.data?.total ?? 0, [listQuery.data])
+
+  /**
+   * Pipeline 목록을 family 별로 그룹핑.
+   * - family_id 가 같은 것끼리 묶음
+   * - family 정렬: name ASC
+   * - "미분류" (family_id=NULL) 그룹은 항상 마지막
+   */
+  interface PipelineGroup {
+    familyId: string | null
+    familyName: string
+    items: PipelineListItem[]
+  }
+  const groupedItems: PipelineGroup[] = useMemo(() => {
+    const items = listQuery.data?.items ?? []
+    const map = new Map<string | null, PipelineGroup>()
+    for (const item of items) {
+      const key = item.family_id
+      const existing = map.get(key)
+      if (existing) {
+        existing.items.push(item)
+      } else {
+        map.set(key, {
+          familyId: key,
+          familyName: item.family_name ?? '미분류',
+          items: [item],
+        })
+      }
+    }
+    const sorted = Array.from(map.values()).sort((a, b) => {
+      // 미분류 (NULL) 는 항상 마지막
+      if (a.familyId === null) return 1
+      if (b.familyId === null) return -1
+      return a.familyName.localeCompare(b.familyName, 'ko')
+    })
+    return sorted
+  }, [listQuery.data])
 
   const togglePipelineActive = useMutation({
     mutationFn: async (vars: { id: string; nextValue: boolean }) => {
@@ -279,7 +336,7 @@ export function PipelineListPage() {
     {
       title: 'Actions',
       key: 'actions',
-      width: 280,
+      width: 410,
       render: (_v, row) => (
         <Space size={6} onClick={(e) => e.stopPropagation()}>
           <Tooltip title={row.is_active ? '실행 전 input version 선택' : '비활성 Pipeline 은 실행 불가'}>
@@ -310,6 +367,29 @@ export function PipelineListPage() {
               상세 보기
             </Button>
           </Tooltip>
+          <Popover
+            trigger="click"
+            placement="bottomRight"
+            content={
+              <div style={{ minWidth: 200 }}>
+                <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 6 }}>
+                  Family 이동
+                </Text>
+                <FamilyAssignControl
+                  pipelineId={row.id}
+                  currentFamilyId={row.family_id}
+                  size="middle"
+                  style={{ width: '100%' }}
+                />
+              </div>
+            }
+          >
+            <Tooltip title="이 Pipeline 의 family 를 변경">
+              <Button size="small" icon={<ApartmentOutlined />}>
+                Family 이동
+              </Button>
+            </Tooltip>
+          </Popover>
           <Tooltip title={row.is_active ? '비활성으로 전환 — 새 run 제출 차단' : '활성으로 복원'}>
             <Button
               size="small"
@@ -346,6 +426,26 @@ export function PipelineListPage() {
               style={{ width: 220 }}
               onSearch={(value) => setNameFilter(value)}
             />
+            <Select
+              size="middle"
+              value={familyFilter}
+              style={{ minWidth: 160 }}
+              onChange={setFamilyFilter}
+              options={[
+                { value: 'all', label: '전체 family' },
+                { value: 'unfiled', label: '미분류만' },
+                ...(familiesQuery.data ?? []).map((f) => ({
+                  value: f.id,
+                  label: `Family: ${f.name}`,
+                })),
+              ]}
+            />
+            <Button
+              icon={<ApartmentOutlined />}
+              onClick={() => setFamilyModalOpen(true)}
+            >
+              Family 관리
+            </Button>
             <Space size={4}>
               <Text style={{ fontSize: 12 }}>비활성 포함</Text>
               <Switch
@@ -371,52 +471,91 @@ export function PipelineListPage() {
           description="Pipeline = 개념 정체성. 같은 Pipeline 안에 여러 version 이 누적되며, 실행 시점에 input version 을 선택합니다."
           style={{ marginBottom: 0 }}
         />
-        <Table<PipelineListItem>
-          rowKey="id"
-          loading={listQuery.isLoading}
-          dataSource={listQuery.data?.items ?? []}
-          columns={columns}
-          pagination={false}
-          size="middle"
-          rowClassName={(row) => (row.is_active ? '' : 'inactive-row')}
-          expandable={{
-            expandedRowKeys: expandedConceptId ? [expandedConceptId] : [],
-            expandedRowClassName: () => 'pipeline-concept-expanded-row',
-            // 한 번에 한 행만 펼치도록 onExpand 에서 직접 컨트롤
-            onExpand: (expanded, record) => {
-              setExpandedConceptId(expanded ? record.id : null)
-              setExpandedVersionId(null)
-            },
-            expandedRowRender: (record) => {
-              const isCurrent = expandedConceptId === record.id
-              return (
-                <ExpandedConceptContent
-                  conceptDetail={isCurrent ? conceptDetailQuery.data ?? null : null}
-                  loading={isCurrent && conceptDetailQuery.isLoading}
-                  expandedVersionId={expandedVersionId}
-                  setExpandedVersionId={setExpandedVersionId}
-                  versionDetail={versionDetailQuery.data ?? null}
-                  versionDetailLoading={versionDetailQuery.isLoading}
-                  onVersionDetailClick={goToVersionDetail}
-                  onVersionRunClick={openResolverForVersion}
-                  onConceptDetailClick={goToLatestActiveDetail}
-                  onVersionToggleActive={(versionId, nextValue) =>
-                    toggleVersionActive.mutate({ versionId, nextValue })
-                  }
-                  versionTogglePending={toggleVersionActive.isPending}
-                />
-              )
-            },
-          }}
-          onRow={(row) => ({
-            onClick: () => {
-              const next = expandedConceptId === row.id ? null : row.id
-              setExpandedConceptId(next)
-              setExpandedVersionId(null)
-            },
-            style: { cursor: 'pointer' },
-          })}
-        />
+        {listQuery.isLoading && (
+          <Table<PipelineListItem>
+            rowKey="id"
+            loading
+            columns={columns}
+            dataSource={[]}
+            pagination={false}
+            size="middle"
+          />
+        )}
+        {!listQuery.isLoading && groupedItems.length === 0 && (
+          <Empty description="조건에 맞는 Pipeline 이 없습니다." />
+        )}
+        {!listQuery.isLoading &&
+          groupedItems.map((group) => (
+            <div key={group.familyId ?? '__unfiled__'}>
+              <Space style={{ marginBottom: 6 }} size={6}>
+                {group.familyId ? (
+                  (() => {
+                    const familyMeta = (familiesQuery.data ?? []).find(
+                      (f) => f.id === group.familyId,
+                    )
+                    return familyMeta ? (
+                      <FamilyHeadingPopover family={familyMeta} />
+                    ) : (
+                      <Tag color="gold" style={{ margin: 0, fontSize: 12 }}>
+                        <ApartmentOutlined /> {group.familyName}
+                      </Tag>
+                    )
+                  })()
+                ) : (
+                  <Tag style={{ margin: 0, fontSize: 12 }}>미분류</Tag>
+                )}
+                <Text type="secondary" style={{ fontSize: 11 }}>
+                  {group.items.length}개 Pipeline
+                </Text>
+              </Space>
+              <Table<PipelineListItem>
+                rowKey="id"
+                dataSource={group.items}
+                columns={columns}
+                pagination={false}
+                size="middle"
+                showHeader={group === groupedItems[0]}
+                rowClassName={(row) => (row.is_active ? '' : 'inactive-row')}
+                expandable={{
+                  expandedRowKeys: expandedConceptId ? [expandedConceptId] : [],
+                  expandedRowClassName: () => 'pipeline-concept-expanded-row',
+                  onExpand: (expanded, record) => {
+                    setExpandedConceptId(expanded ? record.id : null)
+                    setExpandedVersionId(null)
+                  },
+                  expandedRowRender: (record) => {
+                    const isCurrent = expandedConceptId === record.id
+                    return (
+                      <ExpandedConceptContent
+                        conceptDetail={isCurrent ? conceptDetailQuery.data ?? null : null}
+                        loading={isCurrent && conceptDetailQuery.isLoading}
+                        expandedVersionId={expandedVersionId}
+                        setExpandedVersionId={setExpandedVersionId}
+                        versionDetail={versionDetailQuery.data ?? null}
+                        versionDetailLoading={versionDetailQuery.isLoading}
+                        onVersionDetailClick={goToVersionDetail}
+                        onVersionRunClick={openResolverForVersion}
+                        onConceptDetailClick={goToLatestActiveDetail}
+                        onVersionToggleActive={(versionId, nextValue) =>
+                          toggleVersionActive.mutate({ versionId, nextValue })
+                        }
+                        versionTogglePending={toggleVersionActive.isPending}
+                      />
+                    )
+                  },
+                }}
+                onRow={(row) => ({
+                  onClick: () => {
+                    const next = expandedConceptId === row.id ? null : row.id
+                    setExpandedConceptId(next)
+                    setExpandedVersionId(null)
+                  },
+                  style: { cursor: 'pointer' },
+                })}
+                style={{ marginBottom: 16 }}
+              />
+            </div>
+          ))}
       </Space>
 
       <VersionResolverModal
@@ -426,6 +565,11 @@ export function PipelineListPage() {
         onSubmitted={(runId) => {
           message.success(`파이프라인 실행 제출 완료 (run_id=${runId.slice(0, 8)}...)`)
         }}
+      />
+
+      <FamilyManagementModal
+        open={familyModalOpen}
+        onClose={() => setFamilyModalOpen(false)}
       />
     </div>
   )
@@ -589,7 +733,10 @@ function ExpandedConceptContent({
             {conceptDetail.description ?? <Text type="secondary">—</Text>}
           </Descriptions.Item>
           <Descriptions.Item label="Family">
-            {conceptDetail.family_name ?? <Text type="secondary">미분류</Text>}
+            <FamilyAssignControl
+              pipelineId={conceptDetail.id}
+              currentFamilyId={conceptDetail.family_id}
+            />
           </Descriptions.Item>
           <Descriptions.Item label="Task">{conceptDetail.task_type}</Descriptions.Item>
           <Descriptions.Item label="Output">
