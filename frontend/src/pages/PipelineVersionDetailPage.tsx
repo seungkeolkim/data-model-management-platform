@@ -9,7 +9,7 @@
  *   - "JSON 복사" — version.config 그대로 (v3 dataset_split 포맷).
  */
 import { useEffect, useMemo, useState } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Typography,
   Tag,
@@ -72,6 +72,7 @@ const nodeTypes = buildNodeTypesFromRegistry()
 function PipelineVersionDetailContent() {
   const { versionId } = useParams<{ versionId: string }>()
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [resolverOpen, setResolverOpen] = useState(false)
   const [jsonDrawerOpen, setJsonDrawerOpen] = useState(false)
 
@@ -161,6 +162,19 @@ function PipelineVersionDetailContent() {
   // 별도 state 로 sync 할 필요 없음 — 직접 graph?.nodes / graph?.edges 사용.
   const graphNodes = graph?.nodes ?? []
   const graphEdges = graph?.edges ?? []
+
+  // dataLoadDefinition 이 URL `?taskType=` 으로 호환 그룹 필터링 (DETECTION 기본).
+  // CLASSIFICATION pipeline 의 경우 taskType param 이 없으면 그룹 Select 매칭이 실패해
+  // 노드에 group_id 가 그대로 표시되는 문제. versionDetail 받자마자 자동 보정.
+  useEffect(() => {
+    if (!versionDetail) return
+    const expected = versionDetail.task_type
+    if (expected && searchParams.get('taskType') !== expected) {
+      const next = new URLSearchParams(searchParams)
+      next.set('taskType', expected)
+      setSearchParams(next, { replace: true })
+    }
+  }, [versionDetail, searchParams, setSearchParams])
 
   // SDK NodeComponent 들이 useNodeData(nodeId) 로 zustand store 에서 nodeData 를 가져온다.
   // detail 페이지는 readonly 이지만, store 에 nodeData 를 넣지 않으면 모든 NodeComponent
