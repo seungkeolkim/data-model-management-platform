@@ -121,6 +121,30 @@ export function PipelineListPage() {
     },
   })
 
+  const toggleVersionActive = useMutation({
+    mutationFn: async (vars: { versionId: string; nextValue: boolean }) => {
+      const r = await pipelineVersionsApi.update(vars.versionId, { is_active: vars.nextValue })
+      return r.data
+    },
+    onSuccess: (_data, vars) => {
+      message.success(
+        vars.nextValue
+          ? '버전을 활성화했습니다.'
+          : '버전을 비활성화했습니다. 자동화가 있으면 error 상태가 됩니다.',
+      )
+      queryClient.invalidateQueries({ queryKey: ['pipeline-concepts'] })
+      queryClient.invalidateQueries({ queryKey: ['pipeline-concept-detail'] })
+      queryClient.invalidateQueries({ queryKey: ['pipeline-version-detail'] })
+    },
+    onError: (err: unknown) => {
+      const msg =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+        ?? (err as Error)?.message
+        ?? '알 수 없는 오류'
+      message.error(`처리 실패: ${msg}`)
+    },
+  })
+
   const openResolverForLatestVersion = async (row: PipelineListItem) => {
     // 목록 행에는 latest_version 문자열만 있고 id 가 없음.
     // concept 상세를 가져와 latest active version id 를 추출 후 version 상세 fetch.
@@ -376,6 +400,10 @@ export function PipelineListPage() {
                   onVersionDetailClick={goToVersionDetail}
                   onVersionRunClick={openResolverForVersion}
                   onConceptDetailClick={goToLatestActiveDetail}
+                  onVersionToggleActive={(versionId, nextValue) =>
+                    toggleVersionActive.mutate({ versionId, nextValue })
+                  }
+                  versionTogglePending={toggleVersionActive.isPending}
                 />
               )
             },
@@ -412,6 +440,8 @@ interface VersionRowProps {
   onToggle: () => void
   onDetailClick: () => void
   onRunClick: () => void
+  onToggleActive: (nextValue: boolean) => void
+  togglePending: boolean
 }
 
 function VersionRow({
@@ -422,6 +452,8 @@ function VersionRow({
   onToggle,
   onDetailClick,
   onRunClick,
+  onToggleActive,
+  togglePending,
 }: VersionRowProps) {
   const taskCount = detail?.config?.tasks
     ? Object.keys(detail.config.tasks as Record<string, unknown>).length
@@ -465,6 +497,16 @@ function VersionRow({
           <Button size="small" icon={<EyeOutlined />} onClick={onDetailClick}>
             상세
           </Button>
+          <Tooltip title={summary.is_active ? '비활성으로 전환 — 새 run 제출 차단' : '활성으로 복원'}>
+            <Button
+              size="small"
+              icon={<EditOutlined />}
+              loading={togglePending}
+              onClick={() => onToggleActive(!summary.is_active)}
+            >
+              {summary.is_active ? '비활성' : '복원'}
+            </Button>
+          </Tooltip>
         </Space>
       </Space>
       {expanded && (
@@ -502,6 +544,8 @@ interface ExpandedConceptContentProps {
   onVersionDetailClick: (versionId: string) => void
   onVersionRunClick: (versionId: string) => void
   onConceptDetailClick: (concept: PipelineEntityResponse) => void
+  onVersionToggleActive: (versionId: string, nextValue: boolean) => void
+  versionTogglePending: boolean
 }
 
 function ExpandedConceptContent({
@@ -514,6 +558,8 @@ function ExpandedConceptContent({
   onVersionDetailClick,
   onVersionRunClick,
   onConceptDetailClick,
+  onVersionToggleActive,
+  versionTogglePending,
 }: ExpandedConceptContentProps) {
   if (loading) {
     return <Text type="secondary">로딩 중…</Text>
@@ -552,6 +598,15 @@ function ExpandedConceptContent({
           <Descriptions.Item label="활성">
             {conceptDetail.is_active ? <Tag color="green">active</Tag> : <Tag>비활성</Tag>}
           </Descriptions.Item>
+          <Descriptions.Item label="최신 활성 버전" span={2}>
+            {conceptDetail.latest_version ? (
+              <Tag color="blue" style={{ margin: 0 }}>
+                v{conceptDetail.latest_version.version}
+              </Tag>
+            ) : (
+              <Text type="secondary">활성 version 없음</Text>
+            )}
+          </Descriptions.Item>
         </Descriptions>
 
         <div>
@@ -576,6 +631,8 @@ function ExpandedConceptContent({
                 }
                 onDetailClick={() => onVersionDetailClick(v.id)}
                 onRunClick={() => onVersionRunClick(v.id)}
+                onToggleActive={(nextValue) => onVersionToggleActive(v.id, nextValue)}
+                togglePending={versionTogglePending}
               />
             ))}
           </Space>
