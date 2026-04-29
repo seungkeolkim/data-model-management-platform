@@ -1287,7 +1287,7 @@ class PipelineService:
         include_inactive: bool = False,
         name_filter: str | None = None,
         task_type_filter: list[str] | None = None,
-        family_id: str | None = None,
+        family_id: list[str] | None = None,
         family_unfiled: bool = False,
         limit: int = 50,
         offset: int = 0,
@@ -1295,11 +1295,13 @@ class PipelineService:
         """
         Pipeline (concept) 목록. 각 행은 versions / family / output_split 선로드.
 
-        family_id / family_unfiled 필터:
-            - family_id 지정 → 해당 family 의 Pipeline 만
-            - family_unfiled=True → family_id IS NULL 인 미분류만
-            - 둘 다 미지정 → 전체
+        family_id / family_unfiled 다중 필터 (OR 결합):
+            - family_id list 지정 → 해당 family 들 중 하나에 속하는 Pipeline
+            - family_unfiled=True → family_id IS NULL 인 미분류 Pipeline 포함
+            - 둘 다 비어있으면 → 필터 미적용 (전체 표시)
         """
+        from sqlalchemy import or_
+
         filters = []
         if not include_inactive:
             filters.append(Pipeline.is_active == True)  # noqa: E712
@@ -1307,10 +1309,13 @@ class PipelineService:
             filters.append(Pipeline.name.ilike(f"%{name_filter}%"))
         if task_type_filter:
             filters.append(Pipeline.task_type.in_(task_type_filter))
-        if family_id is not None:
-            filters.append(Pipeline.family_id == family_id)
-        elif family_unfiled:
-            filters.append(Pipeline.family_id.is_(None))
+        if family_id or family_unfiled:
+            family_or_clauses = []
+            if family_id:
+                family_or_clauses.append(Pipeline.family_id.in_(family_id))
+            if family_unfiled:
+                family_or_clauses.append(Pipeline.family_id.is_(None))
+            filters.append(or_(*family_or_clauses))
 
         base = select(Pipeline)
         for flt in filters:

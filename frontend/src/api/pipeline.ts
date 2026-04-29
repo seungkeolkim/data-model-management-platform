@@ -121,7 +121,7 @@ export const pipelineConceptsApi = {
     include_inactive?: boolean
     name_filter?: string
     task_type?: string[]
-    family_id?: string
+    family_id?: string[]
     family_unfiled?: boolean
     limit?: number
     offset?: number

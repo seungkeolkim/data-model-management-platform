@@ -26,6 +26,9 @@ import {
   Empty,
   Select,
   Popover,
+  Dropdown,
+  Checkbox,
+  Divider,
 } from 'antd'
 import {
   PlayCircleOutlined,
@@ -63,8 +66,10 @@ export function PipelineListPage() {
   const navigate = useNavigate()
   const [includeInactive, setIncludeInactive] = useState(false)
   const [nameFilter, setNameFilter] = useState('')
-  // family 필터 — 'all' (전체) | 'unfiled' (미분류) | family_id
-  const [familyFilter, setFamilyFilter] = useState<string>('all')
+  // family 다중 체크박스 필터 — 선택된 family_ids 와 미분류 포함 여부.
+  // 둘 다 비어있으면 (default) 전체 표시 (필터 미적용).
+  const [selectedFamilyIds, setSelectedFamilyIds] = useState<string[]>([])
+  const [includeUnfiled, setIncludeUnfiled] = useState(false)
   const [familyModalOpen, setFamilyModalOpen] = useState(false)
 
   // 행 인라인 expand 상태 — 한 번에 한 concept 만 펼침
@@ -76,16 +81,17 @@ export function PipelineListPage() {
   const [resolverOpen, setResolverOpen] = useState(false)
 
   const listQuery = useQuery({
-    queryKey: ['pipeline-concepts', { includeInactive, nameFilter, familyFilter }],
+    queryKey: [
+      'pipeline-concepts',
+      { includeInactive, nameFilter, selectedFamilyIds, includeUnfiled },
+    ],
     queryFn: () =>
       pipelineConceptsApi
         .list({
           include_inactive: includeInactive,
           name_filter: nameFilter || undefined,
-          family_id: familyFilter !== 'all' && familyFilter !== 'unfiled'
-            ? familyFilter
-            : undefined,
-          family_unfiled: familyFilter === 'unfiled' || undefined,
+          family_id: selectedFamilyIds.length > 0 ? selectedFamilyIds : undefined,
+          family_unfiled: includeUnfiled || undefined,
           limit: 100,
         })
         .then((r) => r.data),
@@ -426,20 +432,103 @@ export function PipelineListPage() {
               style={{ width: 220 }}
               onSearch={(value) => setNameFilter(value)}
             />
-            <Select
-              size="middle"
-              value={familyFilter}
-              style={{ minWidth: 160 }}
-              onChange={setFamilyFilter}
-              options={[
-                { value: 'all', label: '전체 family' },
-                { value: 'unfiled', label: '미분류만' },
-                ...(familiesQuery.data ?? []).map((f) => ({
-                  value: f.id,
-                  label: `Family: ${f.name}`,
-                })),
-              ]}
-            />
+            <Dropdown
+              trigger={['click']}
+              dropdownRender={() => {
+                const families = familiesQuery.data ?? []
+                const allChecked =
+                  includeUnfiled
+                  && families.length > 0
+                  && families.every((f) => selectedFamilyIds.includes(f.id))
+                return (
+                  <div
+                    style={{
+                      background: '#fff',
+                      border: '1px solid #f0f0f0',
+                      borderRadius: 6,
+                      padding: 12,
+                      minWidth: 240,
+                      boxShadow: '0 6px 16px rgba(0,0,0,0.08)',
+                      maxHeight: 360,
+                      overflowY: 'auto',
+                    }}
+                  >
+                    <Space direction="vertical" size={6} style={{ width: '100%' }}>
+                      <Space size={6}>
+                        <Button
+                          size="small"
+                          onClick={() => {
+                            if (allChecked) {
+                              setSelectedFamilyIds([])
+                              setIncludeUnfiled(false)
+                            } else {
+                              setSelectedFamilyIds(families.map((f) => f.id))
+                              setIncludeUnfiled(true)
+                            }
+                          }}
+                        >
+                          {allChecked ? '전체 해제' : '전체 선택'}
+                        </Button>
+                        <Button
+                          size="small"
+                          disabled={selectedFamilyIds.length === 0 && !includeUnfiled}
+                          onClick={() => {
+                            setSelectedFamilyIds([])
+                            setIncludeUnfiled(false)
+                          }}
+                        >
+                          필터 해제
+                        </Button>
+                      </Space>
+                      <Divider style={{ margin: '4px 0' }} />
+                      <Checkbox
+                        checked={includeUnfiled}
+                        onChange={(e) => setIncludeUnfiled(e.target.checked)}
+                      >
+                        <Text type="secondary">미분류</Text>
+                      </Checkbox>
+                      <Divider style={{ margin: '4px 0' }} />
+                      <Checkbox.Group
+                        value={selectedFamilyIds}
+                        onChange={(vals) =>
+                          setSelectedFamilyIds(vals as string[])
+                        }
+                        style={{ width: '100%' }}
+                      >
+                        <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                          {families.length === 0 && (
+                            <Text type="secondary" style={{ fontSize: 12 }}>
+                              생성된 family 가 없습니다.
+                            </Text>
+                          )}
+                          {families.map((f) => (
+                            <Checkbox
+                              key={f.id}
+                              value={f.id}
+                              style={{ whiteSpace: 'nowrap' }}
+                            >
+                              {f.name}
+                            </Checkbox>
+                          ))}
+                        </Space>
+                      </Checkbox.Group>
+                    </Space>
+                  </div>
+                )
+              }}
+            >
+              <Button>
+                Family 필터{' '}
+                {selectedFamilyIds.length + (includeUnfiled ? 1 : 0) > 0 && (
+                  <Tag
+                    color="blue"
+                    style={{ margin: 0, marginLeft: 4 }}
+                  >
+                    {selectedFamilyIds.length + (includeUnfiled ? 1 : 0)}
+                  </Tag>
+                )}
+              </Button>
+            </Dropdown>
             <Button
               icon={<ApartmentOutlined />}
               onClick={() => setFamilyModalOpen(true)}
