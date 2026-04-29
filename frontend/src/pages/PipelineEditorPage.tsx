@@ -6,7 +6,7 @@
  */
 
 import { useCallback, useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   ReactFlow,
   Background,
@@ -24,7 +24,6 @@ import koKR from 'antd/locale/ko_KR'
 import NodePalette from '@/components/pipeline/NodePalette'
 import EditorToolbar from '@/components/pipeline/EditorToolbar'
 import PropertiesPanel from '@/components/pipeline/PropertiesPanel'
-import ExecutionSubmittedModal from '@/components/pipeline/ExecutionStatusModal'
 import PipelineJsonPreview from '@/components/pipeline/PipelineJsonPreview'
 
 import { usePipelineEditorStore } from '@/stores/pipelineEditorStore'
@@ -37,7 +36,7 @@ import {
   buildNodeTypesFromRegistry,
 } from '@/pipeline-sdk'
 import type { DatasetDisplayInfo } from '@/pipeline-sdk'
-import { pipelinesApi, manipulatorsApi } from '@/api/pipeline'
+import { pipelineConceptsApi, pipelinesApi, manipulatorsApi } from '@/api/pipeline'
 import { datasetsApi, datasetGroupsApi } from '@/api/dataset'
 import { MERGE_OPERATORS } from '@/pipeline-sdk/definitions/mergeDefinition'
 import type {
@@ -61,11 +60,12 @@ function generateNodeId(): string {
 function PipelineEditorContent() {
   const [searchParams] = useSearchParams()
   const taskType = searchParams.get('taskType') ?? 'DETECTION'
+  const navigate = useNavigate()
 
   const [nodes, setNodes, onNodesChange] = useNodesState<PipelineNode>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<PipelineEdge>([])
   const [isValidating, setIsValidating] = useState(false)
-  const [isExecuting, setIsExecuting] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
   const [jsonPreviewContent, setJsonPreviewContent] = useState('')
   const [jsonPreviewError, setJsonPreviewError] = useState<string | null>(null)
   const [isJsonLoadModalOpen, setIsJsonLoadModalOpen] = useState(false)
@@ -82,7 +82,6 @@ function PipelineEditorContent() {
     setValidationResult,
     applyValidationToNodes,
     clearValidation,
-    setExecutionId,
     reset,
   } = usePipelineEditorStore()
 
@@ -181,7 +180,7 @@ function PipelineEditorContent() {
       setValidationResult(result)
       applyValidationToNodes(result.issues)
       if (result.is_valid) {
-        message.success('검증 통과! 실행할 수 있습니다.')
+        message.success('검증 통과! 저장할 수 있습니다.')
       } else {
         message.warning(`오류 ${result.error_count}개, 경고 ${result.warning_count}개`)
       }
@@ -193,7 +192,7 @@ function PipelineEditorContent() {
     }
   }, [nodes, edges, nodeDataMap, clearValidation, setValidationResult, applyValidationToNodes])
 
-  const handleExecute = useCallback(async () => {
+  const handleSave = useCallback(async () => {
     clearValidation()
     const clientErrors = validateGraphStructure(nodes, edges, nodeDataMap)
     if (clientErrors.length > 0) {
@@ -207,28 +206,31 @@ function PipelineEditorContent() {
       message.error((err as Error).message)
       return
     }
-    setIsExecuting(true)
+    setIsSaving(true)
     try {
       const validateResponse = await pipelinesApi.validate(config)
       const validateResult = validateResponse.data
       setValidationResult(validateResult)
       applyValidationToNodes(validateResult.issues)
       if (!validateResult.is_valid) {
-        message.error(`검증 실패 (오류 ${validateResult.error_count}개). 실행할 수 없습니다.`)
-        setIsExecuting(false)
+        message.error(`검증 실패 (오류 ${validateResult.error_count}개). 저장할 수 없습니다.`)
+        setIsSaving(false)
         return
       }
-      const executeResponse = await pipelinesApi.execute(config)
-      const { execution_id } = executeResponse.data
-      setExecutionId(execution_id)
-      message.info('파이프라인 실행이 제출되었습니다.')
+      const saveResponse = await pipelineConceptsApi.save(config)
+      const saveResult = saveResponse.data
+      message.success(saveResult.message)
+      // 저장 후 파이프라인 목록으로 — 행 우측 "실행" 버튼으로 Version Resolver 진입.
+      navigate('/pipelines')
     } catch (err) {
-      message.error('실행 API 호출 실패')
-      console.error('Execute API error:', err)
+      const detail =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      message.error(detail ? `저장 실패: ${detail}` : '저장 API 호출 실패')
+      console.error('Save API error:', err)
     } finally {
-      setIsExecuting(false)
+      setIsSaving(false)
     }
-  }, [nodes, edges, nodeDataMap, clearValidation, setValidationResult, applyValidationToNodes, setExecutionId])
+  }, [nodes, edges, nodeDataMap, clearValidation, setValidationResult, applyValidationToNodes, navigate])
 
   const handleClearCanvas = useCallback(() => {
     setNodes([])
@@ -332,11 +334,11 @@ function PipelineEditorContent() {
     <div style={{ width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column' }}>
       <EditorToolbar
         onValidate={handleValidate}
-        onExecute={handleExecute}
+        onSave={handleSave}
         onClearCanvas={handleClearCanvas}
         onLoadJson={handleOpenJsonLoadModal}
         isValidating={isValidating}
-        isExecuting={isExecuting}
+        isSaving={isSaving}
         taskType={taskType}
       />
 
@@ -368,8 +370,6 @@ function PipelineEditorContent() {
 
         <PropertiesPanel />
       </div>
-
-      <ExecutionSubmittedModal />
 
       <Modal
         title="PipelineConfig JSON 불러오기"

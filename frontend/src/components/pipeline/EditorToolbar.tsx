@@ -1,14 +1,17 @@
 /**
  * EditorToolbar — 에디터 상단 툴바
  *
- * [뒤로가기] [검증] [실행] [JSON 프리뷰] 버튼을 제공한다.
+ * [뒤로가기] [검증] [저장] [JSON 프리뷰] 버튼을 제공한다.
+ *
+ * §12-1 저장/실행 분리: "실행" 은 더 이상 에디터에서 트리거하지 않는다.
+ * 저장 후 파이프라인 목록의 행 우측 "실행" 버튼으로 Version Resolver Modal 에 진입.
  */
 
 import { Button, Space, Typography, Tooltip, Badge, Tag } from 'antd'
 import {
   ArrowLeftOutlined,
   CheckCircleOutlined,
-  PlayCircleOutlined,
+  SaveOutlined,
   CodeOutlined,
   DeleteOutlined,
   ImportOutlined,
@@ -28,21 +31,21 @@ const TASK_TYPE_LABEL: Record<string, string> = {
 
 interface EditorToolbarProps {
   onValidate: () => void
-  onExecute: () => void
+  onSave: () => void
   onClearCanvas: () => void
   onLoadJson: () => void
   isValidating: boolean
-  isExecuting: boolean
+  isSaving: boolean
   taskType: string
 }
 
 export default function EditorToolbar({
   onValidate,
-  onExecute,
+  onSave,
   onClearCanvas,
   onLoadJson,
   isValidating,
-  isExecuting,
+  isSaving,
   taskType,
 }: EditorToolbarProps) {
   const navigate = useNavigate()
@@ -123,14 +126,16 @@ export default function EditorToolbar({
           검증
         </Button>
 
-        <Button
-          type="primary"
-          icon={<PlayCircleOutlined />}
-          onClick={onExecute}
-          loading={isExecuting}
-        >
-          실행
-        </Button>
+        <Tooltip title="Pipeline (concept) + 새 PipelineVersion 으로 저장. 실행은 목록 페이지에서.">
+          <Button
+            type="primary"
+            icon={<SaveOutlined />}
+            onClick={onSave}
+            loading={isSaving}
+          >
+            저장
+          </Button>
+        </Tooltip>
 
         <Tooltip title="캔버스 초기화">
           <Button

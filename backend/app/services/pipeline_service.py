@@ -34,7 +34,7 @@ from app.models.all_models import (
     PipelineRun,
     PipelineVersion,
 )
-from app.schemas.pipeline import PipelineSubmitResponse
+from app.schemas.pipeline import PipelineSaveResponse, PipelineSubmitResponse
 from lib.pipeline.config import (
     SOURCE_TYPE_SPLIT,
     SOURCE_TYPE_VERSION,
@@ -591,33 +591,36 @@ class PipelineService:
             )
 
     # -------------------------------------------------------------------------
-    # 파이프라인 제출
+    # 파이프라인 저장 (§12-1 저장/실행 분리)
     # -------------------------------------------------------------------------
 
-    async def submit_pipeline(self, config: PipelineConfig) -> PipelineSubmitResponse:
+    async def save_pipeline_from_config(
+        self, config: PipelineConfig,
+    ) -> PipelineSaveResponse:
         """
-        파이프라인 실행을 제출한다.
+        에디터 config 를 Pipeline (concept) + PipelineVersion 으로 저장.
 
-        1. DatasetGroup 조회 또는 생성 (config.name + config.output.dataset_type)
-        2. Dataset 생성 (status=PENDING)
-        3. PipelineRun 생성 (status=PENDING)
-        4. Celery 태스크 디스패치
-        5. PipelineSubmitResponse 반환
+        설계서 §12-1 "저장/실행 분리" 의 정식 진입점. 실행은 분리된 흐름:
+          - 목록 행 우측 "실행" 버튼 → Version Resolver Modal
+          - `POST /pipelines/versions/{id}/runs`
 
-        Args:
-            config: DAG 기반 파이프라인 설정 (Pydantic 모델)
-
-        Returns:
-            PipelineSubmitResponse (execution_id, celery_task_id, message)
+        저장 단계의 책임:
+          1. 출력 DatasetGroup 조회/생성 (없으면 신규 — §12-7 빈 그룹 노출 OK)
+          2. 출력 DatasetSplit 슬롯 조회/생성 (정적 슬롯)
+          3. Pipeline (concept) + PipelineVersion 조회/생성:
+             - 동일 name 의 concept 가 없으면 신규 + version "1.0"
+             - 있으면 최신 version 의 config 와 비교 — 동일하면 재사용, 다르면
+               major++ 신규 version
+        DatasetVersion / PipelineRun 은 만들지 않는다 (실행 시점 책임).
         """
         dataset_type = config.output.dataset_type.upper()
         annotation_format = config.output.annotation_format.upper()
         split = config.output.split.upper()
 
-        # ── 소스 데이터셋 그룹들의 task_types 교집합 계산 ──
+        # ── 소스 task_types 교집합 ──
         source_task_types = await self._intersect_source_task_types(config)
 
-        # ── DatasetGroup 조회 또는 생성 ──
+        # ── 출력 DatasetGroup 조회/생성 (§12-7) ──
         group = await self._find_or_create_dataset_group(
             name=config.name,
             dataset_type=dataset_type,
@@ -625,97 +628,50 @@ class PipelineService:
             task_types=source_task_types,
         )
 
-        # ── Split 슬롯 선조회/생성 → 버전 자동 생성 (v7.9 3계층 분리) ──
+        # ── 출력 DatasetSplit 슬롯 조회/생성 (정적 슬롯) ──
         split_slot = await self._get_or_create_split(group.id, split)
-        version = await self._next_version(split_slot.id)
-        logger.info(
-            "파이프라인 출력 버전 결정",
-            group_name=group.name, split=split, version=version,
+
+        # ── Pipeline (concept) + PipelineVersion 저장 ──
+        pipeline_task_type = source_task_types[0] if source_task_types else "DETECTION"
+        pipeline, version_obj, is_new_concept, is_new_version = (
+            await self._save_concept_and_version(
+                config=config,
+                output_split_id=split_slot.id,
+                task_type=pipeline_task_type,
+                split=split,
+            )
         )
 
-        # ── storage_uri 사전 생성 ──
-        storage_uri = self.storage.build_dataset_uri(
-            dataset_type=dataset_type,
-            name=config.name,
-            split=split,
-            version=version,
-        )
-
-        # ── DatasetVersion 생성 (status=PENDING) ──
-        dataset = DatasetVersion(
-            id=str(uuid.uuid4()),
-            split_id=split_slot.id,
-            version=version,
-            annotation_format=annotation_format,
-            storage_uri=storage_uri,
-            status="PENDING",
-        )
-        self.db.add(dataset)
-        await self.db.flush()
-        logger.info("출력 Dataset 생성", dataset_id=dataset.id, storage_uri=storage_uri)
-
-        # ── Pipeline (concept) + PipelineVersion 자동 get-or-create (v7.11) ──
-        # TODO §12-1 "저장/실행 분리" UX 도입 시 이 경로는 "실행" 전용이 되고
-        # 개념/버전 생성은 별도 "저장" 엔드포인트로 분리된다.
-        pipeline_task_type = (source_task_types[0] if source_task_types else "DETECTION")
-        pipeline_version = await self._get_or_create_concept_and_version(
-            config=config,
-            output_split_id=split_slot.id,
-            task_type=pipeline_task_type,
-            split=split,
-        )
-
-        # ── resolved_input_versions 추출 (현재 시점의 input 버전 스냅샷, 기본 = 최신) ──
-        resolved_input_versions = await self._extract_resolved_input_versions(config)
-
-        # ── config 를 실행용 resolved config 으로 치환 (§9-5) ──
-        # source:<split_id> → source:<dataset_version_id>. Celery executor 는 dataset_version_id
-        # 단위로 데이터를 로드하므로 submit 시점에 한 번 치환. transform_config 스냅샷에도
-        # 동일 resolved 저장 (027 §2-2 "실행 시점 최종 config 스냅샷").
-        config_dict_raw = config.model_dump()
-        split_to_dataset = await self._resolve_versions_to_dataset_ids(
-            resolved_input_versions
-        )
-        resolved_config_dict = self._substitute_resolved_versions(
-            config_dict_raw, split_to_dataset,
-        )
-
-        # ── PipelineRun 생성 (v7.11 — pipeline_version_id 단위) ──
-        execution = PipelineRun(
-            id=str(uuid.uuid4()),
-            pipeline_version_id=pipeline_version.id,
-            output_dataset_id=dataset.id,
-            transform_config=resolved_config_dict,
-            resolved_input_versions=resolved_input_versions,
-            trigger_kind="manual_from_editor",
-            status="PENDING",
-        )
-        self.db.add(execution)
-        await self.db.flush()
-
-        # ── Celery 태스크 디스패치 — executor 는 source:<dataset_version_id> 로 해석 ──
-        from app.tasks.pipeline_tasks import run_pipeline
-
-        celery_result = run_pipeline.delay(
-            execution.id,
-            resolved_config_dict,
-        )
-        celery_task_id = celery_result.id
-
-        execution.celery_task_id = celery_task_id
-        await self.db.flush()
+        if is_new_concept:
+            user_message = (
+                f"Pipeline '{pipeline.name}' 을(를) 새로 저장했습니다 "
+                f"(v{version_obj.version})."
+            )
+        elif is_new_version:
+            user_message = (
+                f"기존 Pipeline '{pipeline.name}' 에 새 버전 v{version_obj.version} "
+                "이(가) 추가되었습니다."
+            )
+        else:
+            user_message = (
+                f"동일 config 로 저장된 기존 버전 v{version_obj.version} 을(를) 재사용합니다."
+            )
 
         logger.info(
-            "파이프라인 Celery 태스크 디스패치 완료",
-            execution_id=execution.id,
-            celery_task_id=celery_task_id,
-            schema_version=config.schema_version,
+            "Pipeline 저장 완료",
+            pipeline_id=pipeline.id, pipeline_name=pipeline.name,
+            version_id=version_obj.id, version=version_obj.version,
+            is_new_concept=is_new_concept, is_new_version=is_new_version,
         )
 
-        return PipelineSubmitResponse(
-            execution_id=execution.id,
-            celery_task_id=celery_task_id,
-            message="파이프라인이 제출되었습니다.",
+        return PipelineSaveResponse(
+            pipeline_id=pipeline.id,
+            pipeline_version_id=version_obj.id,
+            pipeline_name=pipeline.name,
+            version=version_obj.version,
+            is_new_concept=is_new_concept,
+            is_new_version=is_new_version,
+            message=user_message,
         )
 
     # -------------------------------------------------------------------------
@@ -1046,24 +1002,26 @@ class PipelineService:
 
         return sorted(intersection)
 
-    async def _get_or_create_concept_and_version(
+    async def _save_concept_and_version(
         self,
         config: PipelineConfig,
         output_split_id: str,
         task_type: str,
         split: str,
-    ) -> "PipelineVersion":
+    ) -> tuple["Pipeline", "PipelineVersion", bool, bool]:
         """
-        submit_pipeline 호환용 — Pipeline (concept) 와 PipelineVersion 을 한 번에
-        get-or-create 한다 (v7.11 임시).
+        Pipeline (concept) 와 PipelineVersion 을 저장 (§12-1 저장/실행 분리의 핵심 헬퍼).
 
         규칙:
-          - 개념명: `{config.name}_{split.lower()}`. 전역 UNIQUE.
+          - 개념명: `{config.name}_{split.lower()}`. 전역 UNIQUE (§12-2).
           - Pipeline 이 없으면 생성 (family_id=NULL, output_split / task_type 고정).
-          - 있으면 최신 version 의 config 와 새 config 를 JSON 평탄 비교 — 같으면 재사용,
-            다르면 major++ 신 version 생성. v1 호환 동작 유지.
+          - 있으면 최신 version 의 config 와 JSON 평탄 비교 — 동일하면 재사용,
+            다르면 major++ 신규 version.
 
-        §12-1 "저장/실행 분리" UX 도입 시 이 함수 제거 예정.
+        Returns:
+            (pipeline, pipeline_version, is_new_concept, is_new_version) 튜플.
+            is_new_concept = True 이면 Pipeline 행이 새로 생성됨.
+            is_new_version = True 이면 PipelineVersion 행이 새로 생성됨.
         """
         import json
 
@@ -1099,10 +1057,10 @@ class PipelineService:
             self.db.add(new_version)
             await self.db.flush()
             logger.info(
-                "Pipeline + Version 자동 생성 (submit 호환)",
+                "Pipeline + Version 신규 저장",
                 pipeline_id=concept.id, version_id=new_version.id, name=base_name,
             )
-            return new_version
+            return concept, new_version, True, True
 
         # 동일 name 이 존재. 최신 version 비교.
         latest_version: PipelineVersion | None = None
@@ -1117,7 +1075,8 @@ class PipelineService:
                 latest_version.config, sort_keys=True, default=str,
             )
             if cached_json == new_config_json:
-                return latest_version
+                # 동일 config — 재사용.
+                return existing_concept, latest_version, False, False
 
         # config 변경 → 새 version (major++)
         next_version_str = self._next_pipeline_version_str(existing_concept.versions)
@@ -1131,11 +1090,11 @@ class PipelineService:
         self.db.add(new_version)
         await self.db.flush()
         logger.info(
-            "Pipeline 신규 Version 자동 생성 (config 변경, submit 호환)",
+            "Pipeline 신규 Version 추가 (config 변경)",
             pipeline_id=existing_concept.id, version_id=new_version.id,
             new_version=next_version_str,
         )
-        return new_version
+        return existing_concept, new_version, False, True
 
     @staticmethod
     def _next_pipeline_version_str(versions: list[PipelineVersion]) -> str:
@@ -1149,35 +1108,6 @@ class PipelineService:
             except (ValueError, IndexError):
                 continue
         return f"{max_major + 1}.0"
-
-    async def _extract_resolved_input_versions(
-        self, config: PipelineConfig,
-    ) -> dict[str, str]:
-        """
-        config 가 참조하는 source split 들의 **현재 최신 READY 버전** 을 `{split_id: version}`
-        으로 반환. submit_pipeline 호환 경로의 기본값 생성용.
-
-        submit_run_from_pipeline 은 사용자가 Version Resolver 에서 선택한
-        resolved_input_versions 를 그대로 받으므로 이 함수를 거치지 않음.
-        """
-        split_ids: set[str] = set(config.get_all_source_split_ids())
-        if not split_ids:
-            return {}
-
-        # 각 split 의 최신 READY 버전 수집
-        result = await self.db.execute(
-            select(DatasetVersion)
-            .where(
-                DatasetVersion.split_id.in_(split_ids),
-                DatasetVersion.status == "READY",
-            )
-            .order_by(DatasetVersion.split_id, DatasetVersion.created_at.desc())
-        )
-        latest: dict[str, str] = {}
-        for dv in result.scalars().all():
-            if dv.split_id not in latest:
-                latest[dv.split_id] = dv.version
-        return latest
 
     def _substitute_resolved_versions(
         self,

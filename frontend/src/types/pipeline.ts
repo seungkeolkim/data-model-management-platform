@@ -83,6 +83,22 @@ export interface PipelineSubmitResponse {
   message: string
 }
 
+/**
+ * `POST /pipelines/concepts` 응답 (§12-1 저장/실행 분리).
+ *
+ * 에디터의 "저장" 결과 — Pipeline (concept) + PipelineVersion 만 만든다.
+ * 실행 (PipelineRun) 은 분리된 흐름에서 별도 dispatch.
+ */
+export interface PipelineSaveResponse {
+  pipeline_id: string
+  pipeline_version_id: string
+  pipeline_name: string
+  version: string
+  is_new_concept: boolean
+  is_new_version: boolean
+  message: string
+}
+
 /** DAG 태스크별 진행 상태 */
 export interface TaskProgressItem {
   status: 'PENDING' | 'RUNNING' | 'DONE' | 'FAILED'

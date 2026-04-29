@@ -37,6 +37,7 @@ from app.schemas.pipeline import (
     PipelineResponse,
     PipelineRunResponse,
     PipelineRunSubmitRequest,
+    PipelineSaveResponse,
     PipelineSubmitResponse,
     PipelineUpdateRequest,
     PipelineValidationIssueResponse,
@@ -303,15 +304,19 @@ async def preview_schema(
     return SchemaPreviewResponse(**preview_dict)
 
 
-@router.post("/execute", response_model=PipelineSubmitResponse, status_code=202)
-async def execute_pipeline(
+@router.post(
+    "/concepts", response_model=PipelineSaveResponse, status_code=201,
+)
+async def save_pipeline_concept(
     config_dict: dict,
     db: AsyncSession = Depends(get_db),
 ):
     """
-    에디터에서 "실행" — config 기반 자동 concept+version+run 생성.
+    에디터에서 "저장" — config 를 Pipeline (concept) + PipelineVersion 으로 저장 (§12-1).
 
-    §12-1 "저장/실행 분리" UX 도입 시 deprecated. 그때까지는 호환 유지.
+    실행 (PipelineRun + Celery dispatch) 은 분리된 흐름:
+      - 목록의 행 우측 "실행" 버튼 → Version Resolver Modal
+      - `POST /pipelines/versions/{id}/runs`
     """
     from pydantic import ValidationError
     try:
@@ -321,7 +326,7 @@ async def execute_pipeline(
         first_msg = issues[0].message if issues else "config 형식이 잘못되었습니다."
         raise HTTPException(status_code=400, detail=first_msg) from exc
     service = PipelineService(db)
-    return await service.submit_pipeline(config)
+    return await service.save_pipeline_from_config(config)
 
 
 # ═════════════════════════════════════════════════════════════════════════════

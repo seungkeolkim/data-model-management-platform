@@ -105,6 +105,25 @@ class PipelineSubmitResponse(BaseModel):
     message: str
 
 
+class PipelineSaveResponse(BaseModel):
+    """
+    Pipeline (concept) + PipelineVersion 저장 응답 (§12-1 저장/실행 분리).
+
+    실제 실행은 별도 — `POST /pipelines/versions/{id}/runs` (Version Resolver Modal).
+    """
+    pipeline_id: str = Field(..., description="저장된 Pipeline (concept) ID")
+    pipeline_version_id: str = Field(..., description="저장된 PipelineVersion ID")
+    pipeline_name: str = Field(..., description="Pipeline (concept) 이름")
+    version: str = Field(..., description="새로 생성/재사용된 version 문자열 (예: '1.0', '2.0')")
+    is_new_concept: bool = Field(
+        ..., description="True 이면 새 Pipeline (concept) 가 생성됨, False 이면 기존 concept 재사용",
+    )
+    is_new_version: bool = Field(
+        ..., description="True 이면 새 PipelineVersion 이 생성됨, False 이면 동일 config 의 기존 version 재사용",
+    )
+    message: str = Field(..., description="사용자 안내 메시지")
+
+
 class PipelineListResponse(BaseModel):
     """파이프라인 실행 이력 목록 응답."""
     items: list[PipelineRunResponse]

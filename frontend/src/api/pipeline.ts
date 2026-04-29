@@ -1,10 +1,10 @@
 /**
- * 파이프라인 API 함수 (v7.11 — feature/pipeline-family-and-version).
+ * 파이프라인 API 함수 (v7.12 — feature/pipeline-family-and-version).
  *
  * 라우트 그룹:
- *   pipelinesApi          — validate / execute / preview-schema (FE 호환 진입점)
+ *   pipelinesApi          — validate / preview-schema (FE 호환 진입점)
  *   pipelineRunsApi       — 실행 이력 / 단건 상태
- *   pipelineConceptsApi   — Pipeline (concept) CRUD + family 이동 + runs 목록
+ *   pipelineConceptsApi   — Pipeline (concept) CRUD + 저장(§12-1) + family 이동 + runs 목록
  *   pipelineVersionsApi   — PipelineVersion 상세 + version 단위 run 제출
  *   pipelineFamiliesApi   — PipelineFamily CRUD
  *   pipelineAutomationsApi — version 단위 automation
@@ -18,6 +18,7 @@ import type {
   PartialPipelineConfig,
   PipelineValidationResponse,
   PipelineSubmitResponse,
+  PipelineSaveResponse,
   PipelineExecutionResponse,
   PipelineListResponse,
   PipelineEntityResponse,
@@ -60,10 +61,6 @@ export interface SchemaPreviewResponse {
 export const pipelinesApi = {
   validate: (config: PipelineConfig) =>
     api.post<PipelineValidationResponse>('/pipelines/validate', config),
-
-  /** 에디터 "실행" — auto concept+version+run 생성 */
-  execute: (config: PipelineConfig) =>
-    api.post<PipelineSubmitResponse>('/pipelines/execute', config),
 
   previewSchema: (config: PartialPipelineConfig, targetRef: string) =>
     api.post<SchemaPreviewResponse>('/pipelines/preview-schema', {
@@ -133,6 +130,13 @@ export const pipelineConceptsApi = {
 
   update: (pipelineId: string, body: PipelineUpdateRequest) =>
     api.patch<PipelineEntityResponse>(`/pipelines/${pipelineId}`, body),
+
+  /**
+   * 에디터 "저장" — Pipeline (concept) + PipelineVersion 저장 (§12-1).
+   * 실행은 분리된 흐름 (`pipelineVersionsApi.submitRun`) 으로.
+   */
+  save: (config: PipelineConfig) =>
+    api.post<PipelineSaveResponse>('/pipelines/concepts', config),
 
   /** 이 concept 의 모든 version 에 걸친 run 이력 */
   listRuns: (pipelineId: string, params?: { page?: number; page_size?: number }) =>
