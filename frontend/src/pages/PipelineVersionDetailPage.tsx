@@ -39,6 +39,8 @@ import {
   Controls,
   ReactFlowProvider,
   useReactFlow,
+  useNodesState,
+  useEdgesState,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import dayjs from 'dayjs'
@@ -321,7 +323,7 @@ function PipelineVersionDetailContent() {
             />
           )}
           {graph && graphNodes.length > 0 && (
-            <ReadonlyDagFlow nodes={graphNodes} edges={graphEdges} />
+            <ReadonlyDagFlow initialNodes={graphNodes} initialEdges={graphEdges} />
           )}
         </div>
 
@@ -420,32 +422,47 @@ function PipelineVersionDetailContent() {
 }
 
 /**
- * ReactFlow readonly 래퍼. nodes 가 비동기로 채워지면 그 시점에 fitView() 를 한 번 더
- * 강제 호출해야 자동 줌이 정상 적용된다 (ReactFlow 기본 fitView prop 은 mount 시 1회만).
+ * ReactFlow readonly 래퍼. 노드 드래그(위치 이동) 만 허용하고 그 외 편집은 차단:
+ *   - nodesDraggable: true  → 사용자가 가려진 노드를 옮길 수 있음
+ *   - nodesConnectable: false / deleteKeyCode: null → 연결 추가·삭제 불가
+ *   - 노드 body 의 Select/input/textarea 는 pointer-events:none 으로 클릭 차단
+ *
+ * graph 변경 시 useNodesState 의 setNodes 로 초기 nodes/edges 주입. 이후 드래그가
+ * onNodesChange 를 통해 position 만 갱신. fitView 는 mount 직후 한 번 강제 호출.
  */
 function ReadonlyDagFlow({
-  nodes,
-  edges,
+  initialNodes,
+  initialEdges,
 }: {
-  nodes: PipelineNode[]
-  edges: PipelineEdge[]
+  initialNodes: PipelineNode[]
+  initialEdges: PipelineEdge[]
 }) {
   const { fitView } = useReactFlow()
+  const [nodes, setNodes, onNodesChange] = useNodesState<PipelineNode>(initialNodes)
+  const [edges, setEdges, onEdgesChange] = useEdgesState<PipelineEdge>(initialEdges)
+
+  // graph 교체 (예: 다른 version 으로 전환) 시 nodes / edges 재주입.
+  // 사용자가 드래그한 위치는 graph 변경 시 자동 layout 으로 리셋 — 의도된 동작.
   useEffect(() => {
-    if (nodes.length === 0) return
-    // 다음 paint 에 fitView — DOM 측정이 끝난 후 호출
+    setNodes(initialNodes)
+  }, [initialNodes, setNodes])
+  useEffect(() => {
+    setEdges(initialEdges)
+  }, [initialEdges, setEdges])
+
+  useEffect(() => {
+    if (initialNodes.length === 0) return
     const id = window.requestAnimationFrame(() => {
       fitView({ padding: 0.1, duration: 200 })
     })
     return () => window.cancelAnimationFrame(id)
-  }, [nodes.length, fitView])
+  }, [initialNodes, fitView])
 
   return (
     <div className="pipeline-version-readonly-dag" style={{ width: '100%', height: '100%' }}>
       {/*
-        readonly DAG — 노드 body 안의 Select / input / button 만 비활성화 (pointer-events).
-        ReactFlow 의 zoom / fitView / 노드 selection / pan 은 그대로 유지하기 위해
-        `.react-flow__node` 하위에만 적용. Save 노드의 textarea 도 포함.
+        readonly DAG — 노드 body 안의 Select / input / textarea 클릭 차단.
+        ReactFlow 의 drag / zoom / pan / 노드 selection 은 그대로.
       */}
       <style>{`
         .pipeline-version-readonly-dag .react-flow__node .ant-select,
@@ -462,9 +479,11 @@ function ReadonlyDagFlow({
       <ReactFlow
         nodes={nodes}
         edges={edges}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
         nodeTypes={nodeTypes}
         fitView
-        nodesDraggable={false}
+        nodesDraggable={true}
         nodesConnectable={false}
         elementsSelectable={true}
         edgesFocusable={false}
