@@ -25,10 +25,11 @@ Step 1의 세부적인 작업:
 - 4차 설계: `docs_history/objective_n_plan_4th.md`
 - 5차 설계: `docs_history/objective_n_plan_5th.md`
 - 6차 설계: `docs_history/objective_n_plan_6th.md`
-- **7차 설계 (현행, v7.12)**: `objective_n_plan_7th.md`
+- **7차 설계 (현행, v7.13)**: `objective_n_plan_7th.md`
 - 통합 핸드오프
   - 진행 중 automation 목업: `docs_for_claude/026-automation-mockup-completion-handoff.md`
   - Pipeline 3엔티티 분리 + Family/Version 3계층 + source format v3 + UI 마무리 + Family.color: `docs_for_claude/027-pipeline-run-automation-separation-design.md` (§12 = v7.10, §13 = v7.11, §14 = v7.12)
+  - 저장/실행 분리 + 모달 두 모드 + 회색지대 차단 + JSON import 통합 + 이름·설명·버전 메모 + 실행 이력 강화 + 출력 필터: `docs_for_claude/028-pipeline-save-flow-and-list-ux-handoff.md` (v7.13)
   - automation 기술 검토 (참조 원문): `docs_for_claude/023-automation-mockup-tech-note.md`
   - 설계서 v7.9 baseline 핸드오프 (아카이브): `docs_history/handoffs/025-dataset-three-tier-separation-handoff.md`
   - 001~025 는 `docs_history/handoffs/`; 진행 중 문서만 `docs_for_claude/`
