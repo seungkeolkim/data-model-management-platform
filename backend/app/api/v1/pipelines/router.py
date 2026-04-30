@@ -59,7 +59,12 @@ router = APIRouter()
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _build_run_response(run: PipelineRun) -> PipelineRunResponse:
-    """PipelineRun ORM → PipelineRunResponse. output_dataset 선로드 전제."""
+    """PipelineRun ORM → PipelineRunResponse.
+
+    선로드 전제 (router 의 모든 호출 경로에서 selectinload 로 미리 채워짐):
+        - run.output_dataset → split_slot → group
+        - run.pipeline_version → pipeline
+    """
     pipeline_image_url = None
     output_dataset = run.output_dataset
     if output_dataset and output_dataset.storage_uri:
@@ -70,11 +75,30 @@ def _build_run_response(run: PipelineRun) -> PipelineRunResponse:
                 f"{output_dataset.storage_uri}/pipeline.png"
             )
 
+    # output (DatasetVersion → DatasetSplit → DatasetGroup) 평탄화
     output_dataset_version = None
     output_dataset_group_id = None
+    output_dataset_group_name = None
+    output_dataset_split = None
     if output_dataset:
         output_dataset_version = output_dataset.version
         output_dataset_group_id = output_dataset.group_id
+        split_slot = getattr(output_dataset, "split_slot", None)
+        if split_slot is not None:
+            output_dataset_split = split_slot.split
+            group = getattr(split_slot, "group", None)
+            if group is not None:
+                output_dataset_group_name = group.name
+
+    # PipelineVersion → Pipeline (concept) 평탄화
+    pipeline_name = None
+    pipeline_version_str = None
+    pipeline_version = getattr(run, "pipeline_version", None)
+    if pipeline_version is not None:
+        pipeline_version_str = pipeline_version.version
+        pipeline = getattr(pipeline_version, "pipeline", None)
+        if pipeline is not None:
+            pipeline_name = pipeline.name
 
     return PipelineRunResponse(
         id=run.id,
@@ -88,8 +112,12 @@ def _build_run_response(run: PipelineRun) -> PipelineRunResponse:
         celery_task_id=run.celery_task_id,
         task_progress=run.task_progress,
         pipeline_image_url=pipeline_image_url,
+        pipeline_name=pipeline_name,
+        pipeline_version=pipeline_version_str,
         output_dataset_version=output_dataset_version,
         output_dataset_group_id=output_dataset_group_id,
+        output_dataset_group_name=output_dataset_group_name,
+        output_dataset_split=output_dataset_split,
         started_at=run.started_at,
         finished_at=run.finished_at,
         created_at=run.created_at,
@@ -335,15 +363,45 @@ async def save_pipeline_concept(
 # PipelineRun (실행 이력) — `/runs`
 # ═════════════════════════════════════════════════════════════════════════════
 
+_RUN_SORT_KEYS = {
+    "created_at",
+    "status",
+    "started_at",
+    "finished_at",
+    "pipeline_name",
+    "pipeline_version",
+    "output_dataset_group_name",
+    "output_dataset_split",
+    "output_dataset_version",
+}
+
+
 @router.get("/runs", response_model=PipelineListResponse)
 async def list_pipeline_runs(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
+    sort_by: str = Query(
+        "created_at",
+        description=(
+            "정렬 컬럼 — created_at | status | started_at | finished_at | "
+            "pipeline_name | pipeline_version | output_dataset_group_name | "
+            "output_dataset_split | output_dataset_version"
+        ),
+    ),
+    sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     db: AsyncSession = Depends(get_db),
 ):
-    """전체 PipelineRun 이력 목록 (최신순)."""
+    """전체 PipelineRun 이력 목록. 기본 정렬: created_at desc."""
+    if sort_by not in _RUN_SORT_KEYS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"sort_by 가 허용된 값이 아닙니다. 허용: {sorted(_RUN_SORT_KEYS)}",
+        )
     service = PipelineService(db)
-    items, total = await service.list_executions(page=page, page_size=page_size)
+    items, total = await service.list_executions(
+        page=page, page_size=page_size,
+        sort_by=sort_by, sort_order=sort_order,
+    )
     return PipelineListResponse(
         items=[_build_run_response(item) for item in items],
         total=total,

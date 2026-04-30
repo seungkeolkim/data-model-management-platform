@@ -125,8 +125,17 @@ export interface PipelineExecutionResponse {
   celery_task_id: string | null
   task_progress: Record<string, TaskProgressItem> | null
   pipeline_image_url: string | null
-  output_dataset_version: string | null
+  /** 이 run 을 만든 Pipeline (concept) 의 name (없으면 null — legacy run). */
+  pipeline_name: string | null
+  /** 이 run 을 만든 PipelineVersion 의 version 문자열 (예: "1.0"). */
+  pipeline_version: string | null
   output_dataset_group_id: string | null
+  /** output 의 모 DatasetGroup name. */
+  output_dataset_group_name: string | null
+  /** output DatasetSplit 의 split 문자열 (TRAIN/VAL/TEST/NONE). */
+  output_dataset_split: string | null
+  /** output DatasetVersion 의 version 문자열 (예: "2.0"). */
+  output_dataset_version: string | null
   started_at: string | null
   finished_at: string | null
   created_at: string

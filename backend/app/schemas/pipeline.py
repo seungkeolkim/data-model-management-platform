@@ -65,8 +65,30 @@ class PipelineRunResponse(BaseModel):
     celery_task_id: str | None
     task_progress: dict[str, Any] | None = None
     pipeline_image_url: str | None = None
-    output_dataset_version: str | None = None
+    # 실행 이력 목록에서 사람이 읽기 좋은 라벨로 노출하기 위한 평탄화 필드들 (v7.13).
+    # ORM 의 PipelineRun → pipeline_version → pipeline / output_dataset → split_slot → group
+    # 체인을 selectinload 로 미리 끌어와 router 가 채운다.
+    pipeline_name: str | None = Field(
+        default=None,
+        description="이 run 을 만든 Pipeline (concept) 의 name",
+    )
+    pipeline_version: str | None = Field(
+        default=None,
+        description="이 run 을 만든 PipelineVersion 의 version 문자열 (예: '1.0')",
+    )
     output_dataset_group_id: str | None = None
+    output_dataset_group_name: str | None = Field(
+        default=None,
+        description="output 의 모 DatasetGroup name",
+    )
+    output_dataset_split: str | None = Field(
+        default=None,
+        description="output DatasetSplit 의 split 문자열 (TRAIN/VAL/TEST/NONE)",
+    )
+    output_dataset_version: str | None = Field(
+        default=None,
+        description="output DatasetVersion 의 version 문자열 (예: '2.0')",
+    )
     started_at: datetime | None
     finished_at: datetime | None
     created_at: datetime

@@ -73,7 +73,12 @@ export const pipelinesApi = {
     api.get<PipelineExecutionResponse>(`/pipelines/runs/${runId}`),
 
   /** @deprecated v7.11 — pipelineRunsApi.list 사용 */
-  list: (params?: { page?: number; page_size?: number }) =>
+  list: (params?: {
+    page?: number
+    page_size?: number
+    sort_by?: string
+    sort_order?: 'asc' | 'desc'
+  }) =>
     api.get<PipelineListResponse>('/pipelines/runs', { params }),
 }
 
@@ -82,7 +87,12 @@ export const pipelinesApi = {
 // =============================================================================
 
 export const pipelineRunsApi = {
-  list: (params?: { page?: number; page_size?: number }) =>
+  list: (params?: {
+    page?: number
+    page_size?: number
+    sort_by?: string
+    sort_order?: 'asc' | 'desc'
+  }) =>
     api.get<PipelineListResponse>('/pipelines/runs', { params }),
 
   get: (runId: string) =>

@@ -679,12 +679,15 @@ class PipelineService:
     # -------------------------------------------------------------------------
 
     async def get_execution_status(self, execution_id: str) -> PipelineRun | None:
-        """PipelineRun 단건 조회 (output_dataset eager load)."""
+        """PipelineRun 단건 조회 (output_dataset + group + pipeline_version 선로드)."""
         result = await self.db.execute(
             select(PipelineRun)
             .options(
                 selectinload(PipelineRun.output_dataset)
                 .selectinload(DatasetVersion.split_slot)
+                .selectinload(DatasetSplit.group),
+                selectinload(PipelineRun.pipeline_version)
+                .selectinload(PipelineVersion.pipeline),
             )
             .where(PipelineRun.id == execution_id)
         )
@@ -698,20 +701,88 @@ class PipelineService:
         self,
         page: int = 1,
         page_size: int = 20,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
     ) -> tuple[list[PipelineRun], int]:
-        """PipelineRun 목록 조회 (페이지네이션, 최신순, output_dataset eager load)."""
-        base_query = select(PipelineRun)
+        """PipelineRun 목록 조회 — 페이지네이션 + 사용자 지정 정렬.
 
-        count_query = select(func.count()).select_from(base_query.subquery())
-        total = await self.db.scalar(count_query) or 0
+        지원 sort_by 키:
+            created_at / started_at / finished_at / status — PipelineRun 자체 컬럼
+            pipeline_name / pipeline_version              — Pipeline / PipelineVersion join
+            output_dataset_group_name / output_dataset_split / output_dataset_version
+                                                          — DatasetGroup / Split / Version join
+
+        join 이 필요한 키는 outerjoin (LEFT JOIN) 으로 묶어 정렬한다 — 누락된 row 도 NULL
+        로 끝에 모이도록.
+        """
+        # ── 정렬 표현식 + 필요한 join 결정 ──
+        sort_order_normalized = sort_order.lower() if sort_order else "desc"
+        is_desc = sort_order_normalized != "asc"
+
+        sort_expr = None
+        join_kind: str | None = None  # "pipeline" 또는 "output" 또는 None
+        if sort_by == "status":
+            sort_expr = PipelineRun.status
+        elif sort_by == "started_at":
+            sort_expr = PipelineRun.started_at
+        elif sort_by == "finished_at":
+            sort_expr = PipelineRun.finished_at
+        elif sort_by == "pipeline_name":
+            sort_expr = Pipeline.name
+            join_kind = "pipeline"
+        elif sort_by == "pipeline_version":
+            sort_expr = PipelineVersion.version
+            join_kind = "pipeline"
+        elif sort_by == "output_dataset_group_name":
+            sort_expr = DatasetGroup.name
+            join_kind = "output"
+        elif sort_by == "output_dataset_split":
+            sort_expr = DatasetSplit.split
+            join_kind = "output"
+        elif sort_by == "output_dataset_version":
+            sort_expr = DatasetVersion.version
+            join_kind = "output"
+        else:
+            # 기본값 + 알 수 없는 키는 created_at 으로 fallback
+            sort_expr = PipelineRun.created_at
+
+        base_query = select(PipelineRun)
+        if join_kind == "pipeline":
+            base_query = base_query.outerjoin(
+                PipelineVersion,
+                PipelineRun.pipeline_version_id == PipelineVersion.id,
+            ).outerjoin(
+                Pipeline, PipelineVersion.pipeline_id == Pipeline.id,
+            )
+        elif join_kind == "output":
+            base_query = base_query.outerjoin(
+                DatasetVersion,
+                PipelineRun.output_dataset_id == DatasetVersion.id,
+            ).outerjoin(
+                DatasetSplit, DatasetVersion.split_id == DatasetSplit.id,
+            ).outerjoin(
+                DatasetGroup, DatasetSplit.group_id == DatasetGroup.id,
+            )
+
+        # count 는 join 영향 없이 PipelineRun.id 기반으로 안정적으로 산출
+        total = await self.db.scalar(select(func.count(PipelineRun.id))) or 0
+
+        # 1순위 = 사용자 정렬 컬럼, 2순위 = 동일 값 안정화용 created_at desc
+        primary_clause = sort_expr.desc() if is_desc else sort_expr.asc()
+        order_clauses = [primary_clause]
+        if sort_by != "created_at":
+            order_clauses.append(PipelineRun.created_at.desc())
 
         list_query = (
             base_query
             .options(
                 selectinload(PipelineRun.output_dataset)
                 .selectinload(DatasetVersion.split_slot)
+                .selectinload(DatasetSplit.group),
+                selectinload(PipelineRun.pipeline_version)
+                .selectinload(PipelineVersion.pipeline),
             )
-            .order_by(PipelineRun.created_at.desc())
+            .order_by(*order_clauses)
             .offset((page - 1) * page_size)
             .limit(page_size)
         )
@@ -1402,7 +1473,8 @@ class PipelineService:
                 selectinload(PipelineRun.output_dataset)
                 .selectinload(DatasetVersion.split_slot)
                 .selectinload(DatasetSplit.group),
-                selectinload(PipelineRun.pipeline_version),
+                selectinload(PipelineRun.pipeline_version)
+                .selectinload(PipelineVersion.pipeline),
             )
             .order_by(PipelineRun.created_at.desc())
             .limit(limit)
@@ -1430,7 +1502,9 @@ class PipelineService:
             .options(
                 selectinload(PipelineRun.output_dataset)
                 .selectinload(DatasetVersion.split_slot)
-                .selectinload(DatasetSplit.group)
+                .selectinload(DatasetSplit.group),
+                selectinload(PipelineRun.pipeline_version)
+                .selectinload(PipelineVersion.pipeline),
             )
             .order_by(PipelineRun.created_at.desc())
             .limit(limit)
