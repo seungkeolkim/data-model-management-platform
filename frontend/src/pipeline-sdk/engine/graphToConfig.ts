@@ -10,8 +10,13 @@ import { getNodeDefinition } from '../registry'
 import type { AnyNodeData, NodeKind } from '../types'
 import type { PipelineNode } from '@/types/pipeline'
 
-/** 현재 SDK가 생성하는 PipelineConfig의 schema_version */
-export const CURRENT_SCHEMA_VERSION = 1
+/**
+ * 현재 SDK 가 생성하는 PipelineConfig 의 schema_version.
+ * v7.11 — 3 으로 승격: source 토큰에 type 차원 명시 (`source:dataset_split:<id>`).
+ * 이 변경으로 PipelineRun.transform_config 의 `source:dataset_version:<id>` 와
+ * Pipeline 측 토큰이 명확히 구분된다.
+ */
+export const CURRENT_SCHEMA_VERSION = 3
 
 export function graphToPipelineConfig(
   nodes: PipelineNode[],
@@ -51,9 +56,22 @@ export function graphToPipelineConfig(
     throw new Error('Save 노드가 없습니다.')
   }
   // tasks 가 비어있어도 허용 — Load→Save 직결(passthrough) 모드.
-  // 이 경우 Save 노드가 passthrough_source_dataset_id 를 root 에 기여해야 한다.
-  if (Object.keys(tasks).length === 0 && !rootParts.passthrough_source_dataset_id) {
+  // v7.10: Save 노드가 passthrough_source_split_id 를 root 에 기여.
+  const rootWithPassthrough = rootParts as Partial<PipelineConfig> & {
+    passthrough_source_split_id?: string | null
+  }
+  if (Object.keys(tasks).length === 0 && !rootWithPassthrough.passthrough_source_split_id) {
     throw new Error('DataLoad 노드와 Save 노드를 직접 연결하거나 처리 노드를 추가해 주세요.')
+  }
+  // task 의 inputs 가 비어있으면 그래프에서 입력 엣지가 누락된 것 — 사용자에게 명확히 안내.
+  // 이 케이스를 backend 가 받으면 Pydantic min_length=1 검증으로 422 가 떨어져 의미가 흐려짐.
+  for (const [taskKey, taskValue] of Object.entries(tasks)) {
+    if (!taskValue.inputs || taskValue.inputs.length === 0) {
+      throw new Error(
+        `노드 '${taskKey}' 에 입력 연결이 없습니다. ` +
+        `DataLoad 노드 또는 다른 처리 노드와 연결해 주세요.`,
+      )
+    }
   }
 
   return {
@@ -61,8 +79,7 @@ export function graphToPipelineConfig(
     description: rootParts.description,
     output: rootParts.output,
     tasks,
-    passthrough_source_dataset_id: rootParts.passthrough_source_dataset_id ?? null,
-    // schema_version은 백엔드 Pydantic 모델에도 선언되어 있으면 그대로 전달된다.
+    passthrough_source_split_id: rootWithPassthrough.passthrough_source_split_id ?? null,
     schema_version: CURRENT_SCHEMA_VERSION,
   } as PipelineConfig
 }
@@ -140,12 +157,15 @@ export function graphToPartialPipelineConfig(
     }
   }
 
+  const rootPartial = rootParts as Partial<PipelineConfig> & {
+    passthrough_source_split_id?: string | null
+  }
   return {
     name: rootParts.name ?? '<draft>',
     description: rootParts.description,
     output: rootParts.output ?? null,
     tasks,
-    passthrough_source_dataset_id: rootParts.passthrough_source_dataset_id ?? null,
+    passthrough_source_split_id: rootPartial.passthrough_source_split_id ?? null,
     schema_version: CURRENT_SCHEMA_VERSION,
-  }
+  } as PartialPipelineConfig
 }

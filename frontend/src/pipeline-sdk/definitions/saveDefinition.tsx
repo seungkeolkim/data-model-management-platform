@@ -162,14 +162,14 @@ export const saveDefinition: NodeDefinition<'save'> = {
     return errors
   },
 
-  // SaveNode는 task를 발생시키지 않고 PipelineConfig 루트(name/output)만 기여.
-  // Load→Save 직결(incoming edge source 가 dataLoad) 이면 passthrough_source_dataset_id 도 추가한다.
+  // SaveNode 는 task 를 발생시키지 않고 PipelineConfig 루트(name/output)만 기여.
+  // Load→Save 직결(passthrough) 이면 `passthrough_source_split_id` 를 root 에 추가.
   toConfigContribution(data, ctx) {
-    let passthroughSourceId: string | undefined
+    let passthroughSplitId: string | undefined
     if (ctx.incomingEdges.length === 1) {
       const sourceData = ctx.getNodeData(ctx.incomingEdges[0].source)
-      if (sourceData?.type === 'dataLoad' && sourceData.datasetId) {
-        passthroughSourceId = sourceData.datasetId
+      if (sourceData?.type === 'dataLoad' && sourceData.splitId) {
+        passthroughSplitId = sourceData.splitId
       }
     }
     return {
@@ -181,7 +181,7 @@ export const saveDefinition: NodeDefinition<'save'> = {
           annotation_format: data.annotationFormat || null,
           split: data.split,
         },
-        ...(passthroughSourceId ? { passthrough_source_dataset_id: passthroughSourceId } : {}),
+        ...(passthroughSplitId ? { passthrough_source_split_id: passthroughSplitId } : {}),
       },
     }
   },

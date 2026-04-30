@@ -26,6 +26,7 @@ import { NodeShell } from '../components/NodeShell'
 import DynamicParamForm from '@/components/pipeline/DynamicParamForm'
 import { manipulatorsApi } from '@/api/pipeline'
 import type { NodeDefinition } from '../types'
+import { buildSplitSourceRef } from '../sourceFormat'
 import type { MergeNodeData } from '@/types/pipeline'
 import type { Manipulator } from '@/types/dataset'
 
@@ -255,17 +256,22 @@ export const mergeDefinition: NodeDefinition<'merge'> = {
   },
 }
 
-/** 들어오는 엣지로부터 PipelineConfig TaskConfig.inputs 토큰 배열을 구성. */
+/**
+ * 들어오는 엣지로부터 PipelineConfig TaskConfig.inputs 토큰 배열을 구성.
+ * DataLoad 노드 → `source:dataset_split:<split_id>` (v3), operator/merge/placeholder → `task_<nodeId>`.
+ */
 function buildInputsFromIncoming(ctx: {
   incomingEdges: { source: string }[]
-  getNodeData: (id: string) => { type?: string; datasetId?: string | null } | undefined
+  getNodeData: (id: string) =>
+    | { type?: string; splitId?: string | null }
+    | undefined
 }): string[] {
   const inputs: string[] = []
   for (const edge of ctx.incomingEdges) {
     const source = ctx.getNodeData(edge.source)
     if (!source) continue
-    if (source.type === 'dataLoad' && source.datasetId) {
-      inputs.push(`source:${source.datasetId}`)
+    if (source.type === 'dataLoad' && source.splitId) {
+      inputs.push(buildSplitSourceRef(source.splitId))
     } else if (source.type === 'operator' || source.type === 'merge' || source.type === 'placeholder') {
       inputs.push(`task_${edge.source}`)
     }

@@ -127,6 +127,9 @@ export interface DatasetMetadata {
 export interface DatasetSummary {
   id: string
   split: Split
+  // v7.10 (027 §4-1) — DatasetSplit (정적 슬롯) ID. Pipeline.output_split_id /
+  // config 의 source:<split_id> 참조와 일치.
+  split_id: string
   version: string
   status: DatasetStatus
   image_count: number | null

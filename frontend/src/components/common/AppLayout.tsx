@@ -23,11 +23,25 @@ const menuItems = [
     label: '데이터셋',
     path: '/datasets',
   },
+  // v7.10 §9-7 재배선: 데이터 변형 메뉴 = 파이프라인 목록 + 실행 이력 2 하위.
   {
     key: 'pipelines',
     icon: <BranchesOutlined />,
     label: '데이터 변형',
-    path: '/pipelines',
+    children: [
+      {
+        key: 'pipelines-list',
+        icon: <BranchesOutlined />,
+        label: '파이프라인 목록',
+        path: '/pipelines',
+      },
+      {
+        key: 'pipelines-runs',
+        icon: <BranchesOutlined />,
+        label: '실행 이력',
+        path: '/pipelines/runs',
+      },
+    ],
   },
   {
     key: 'automation',
@@ -75,11 +89,14 @@ export default function AppLayout() {
   // 사이드바 접힘 상태. 토글 버튼으로 전환한다.
   const [siderCollapsed, setSiderCollapsed] = useState(false)
 
-  // 현재 경로로 선택된 메뉴 키 결정
+  // 현재 경로로 선택된 메뉴 키 결정.
+  // /pipelines 서브 경로는 /pipelines/runs 먼저 검사 (더 구체적인 매치를 우선).
   const selectedKey = location.pathname.startsWith('/datasets')
     ? 'datasets'
+    : location.pathname.startsWith('/pipelines/runs')
+    ? 'pipelines-runs'
     : location.pathname.startsWith('/pipelines')
-    ? 'pipelines'
+    ? 'pipelines-list'
     : location.pathname.startsWith('/automation')
     ? 'automation'
     : location.pathname.startsWith('/training')

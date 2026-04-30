@@ -1,10 +1,11 @@
 # 데이터 관리 & 학습 자동화 플랫폼 — 7차 설계서
 
-> **작업지시서 v7.9** | Dataset 3계층 분리 — DatasetGroup → DatasetSplit → DatasetVersion
-> 기준일: 2026-04-23
+> **작업지시서 v7.13** | 저장/실행 분리 + 모달 두 모드 + 회색지대 차단 + JSON import 통합 + 이름·설명·버전 메모 + 실행 이력 강화 + 출력 필터 (v7.12 위에 누적)
+> 기준일: 2026-04-30
 > 이전 설계서: `docs_history/objective_n_plan_6th.md`
-> 현행 핸드오프: `docs_history/handoffs/025-dataset-three-tier-separation-handoff.md`
-> 직전 핸드오프: `docs_history/handoffs/024-head-schema-ssot-enforcement-handoff.md` (main 머지 완료)
+> 진행 중 핸드오프: `docs_for_claude/028-pipeline-save-flow-and-list-ux-handoff.md` (v7.13)
+> 직전 핸드오프 (027 의 §13 v7.11 / §14 v7.12): `docs_for_claude/027-pipeline-run-automation-separation-design.md`
+> 직전 main 머지 완료 핸드오프: `docs_history/handoffs/025-dataset-three-tier-separation-handoff.md`
 > 노드 SDK 규약: `docs/pipeline-node-sdk-guide.md` (2026-04-15 재작성본)
 
 6차 설계서의 §7-1 최우선 액션(노드 SDK화 + 가이드)이 완료되어 baseline에 편입됐다.
@@ -121,6 +122,261 @@ upgrade → downgrade → upgrade 왕복 성공. 실데이터 파이프라인 `f
 설계가 FK 무결성 하에 자연스럽게 가능해졌다. 다음 챕터는 자동화 목업 브랜치 재생성
 (`feature/pipeline-automation-mockup`) 에서 023 §6 스코프로 착수.
 
+**v7.10 (2026-04-28, Pipeline / PipelineRun / PipelineAutomation 3 엔티티 분리 +
+schema_version=2 전환).** 핸드오프 027 의 9 단계 중 §9-1 ~ §9-7 완료 + §9-8 일부 / 사용자
+UI 스모크 누적 fix + v1 legacy 호환 코드 전수 제거. 026 자동화 목업의 "Pipeline = Automation
+엔트리" 단일 모델의 한계를 해소하고, "split 까지 고정 / version 은 run-time 해석" (2 안) 으로
+전환. 진행 중 핸드오프: `docs_for_claude/027-pipeline-run-automation-separation-design.md`.
+
+**핵심 결정 (027 §12 확정)**:
+- **3 엔티티 분리** — `Pipeline` (정적 템플릿, config immutable) / `PipelineRun` (동적
+  immutable run, 기존 `PipelineExecution` rename) / `PipelineAutomation` (Pipeline 과
+  1:0..1 runner 등록, partial unique index 로 active 1개 제약)
+- **2 안 채택** — Pipeline 은 `output_split_id` FK 까지만 고정. DatasetVersion 은 run 제출
+  시 Version Resolver Modal 에서 선택 (기본 = 최신). `input_split_id` 는 §12-9 결정으로
+  top-level FK 두지 않고 `config.tasks[*].inputs` 의 `source:<split_id>` 가 유일 진리
+  ("싱글은 FK, 복수는 JSONB" 원칙)
+- **schema_version=2** — `source:<split_id>` / `passthrough_source_split_id` 기반 spec.
+  v1 (`source:<dataset_version_id>`) 는 v7.10 이후 폐지. 백엔드 submit 단계에서 `_substitute
+  _resolved_versions` 가 `{split_id: version}` → `{split_id: dataset_version_id}` 로 치환해
+  `transform_config` 에 저장. dag_executor 는 dataset_version_id 단위로 동작 (변경 없음)
+- **버전 정책** — `Pipeline.version = "{major}.{minor}"` (예 `"1.0"`). 사용자 명시로만
+  major++. hash 판정 없음, 동일 config 겹쳐도 OK
+- **PipelineAutomation soft delete** (§12-3) — `is_active` + `deleted_at`. partial unique
+  index 덕에 같은 Pipeline 에 새 automation 등록 가능. FK 제약 유지 (과거 run 의
+  `automation_id` 영원히 유효)
+- **저장 시점 vs 실행 시점 검증 분리 의도** (§12-5) — 저장 검증은 version 무관 (split_id
+  존재 + group active 등), 실행 검증은 `resolved_input_versions` 기반. 현재 구현은
+  validate_with_database 가 v2 단일 가정으로 단순화됨
+- **v1 호환 제거** (2026-04-28) — DB 초기화 후 v1 데이터 부재 시점에 사용자 결정. 17 파일,
+  +246/-696 (450 줄 감소). schema_version 분기 자체가 사라짐
+
+**변경 내용 요약** (커밋 누적):
+- **DB / Alembic 031** (`031_split_pipeline_entities`):
+  - `pipelines` / `pipeline_automations` 테이블 신규
+  - `pipeline_executions` → `pipeline_runs` rename + 컬럼 확장 (`pipeline_id` /
+    `automation_id` / `resolved_input_versions` / `trigger_kind` /
+    `automation_trigger_source` / `automation_batch_id` / `pipeline_image_url`)
+  - `config` → `transform_config` 컬럼 rename (027 §2-2 일관성)
+  - `pipelines.config` JSONB GIN 인덱스는 미생성 (성능 이슈 발생 시 한 줄로 추가, §12-9 주석 참조)
+- **ORM** — `Pipeline` / `PipelineAutomation` 신규, `PipelineExecution` → `PipelineRun`
+  rename + `DatasetVersion.pipeline_runs` relationship + `pipeline_run_id` property
+- **서비스 레이어** — `pipeline_service` 의 Pipeline CRUD (`create_pipeline` /
+  `list_pipelines` / `get_pipeline` / `update_pipeline` / `submit_run_from_pipeline` 등),
+  `pipeline_automation_service` 신규 (`upsert_automation` / `soft_delete` /
+  `reassign_pipeline` / `trigger_manual_rerun`)
+- **API 신규** (`/api/v1/pipelines` 하위) — `GET/PATCH /entities`, `GET/POST /entities/{id}/runs`,
+  `GET/PUT /entities/{id}/automation`, `DELETE /automations/{id}`,
+  `POST /automations/{id}/reassign|rerun`. Pydantic 422 → friendly issue 변환
+- **FE** — `pipeline-sdk/definitions/dataLoadDefinition` 의 version Select 제거
+  (`(group, split)` 까지만), `mergeDefinition.buildInputsFromIncoming` 이 splitId 사용,
+  `graphToConfig` 가 schema_version=2 + `passthrough_source_split_id` 생성, `configToGraph`
+  가 v2 복원, `VersionResolverModal` 신규, `PipelineListPage` 신규 (실행 버튼 + 활성/비활성
+  토글), 사이드바 "데이터 변형" 하위 (목록 / 실행 이력) 분리, `CreatePipelineButton` 공통
+  컴포넌트
+- **개념 분리 후 사용자 UI 스모크 통과** — RAW 등록 (det/cls), DAG 노드 (cls_sample_n_images
+  등), 파이프라인 실행 (`e8a54621`, `466382fc` 등), 출력 그룹 task_types 자동 채워짐
+
+**검증.** backend 회귀 446/446. FE pre-existing 11 건 외 신규 0. v1 legacy 데이터 없는 환경
+(DB 초기화 후) 에서 사용자 UI 스모크 통과. 브랜치: `feature/pipeline-run-automation-separation`
+(10+ commits).
+
+**남은 작업 (v7.10 → v7.11 으로 이어질 항목)**:
+- §9-8 Automation 메뉴 실 API 재연결 (026 mock fixture → 실 endpoint, AutomationPage /
+  AutomationHistoryPage / AutomationPipelineDetailPage 3 페이지 재배선)
+- §9-9 핸드오프 028 작성 + 설계서 v7.11 승격 (현재 v7.10 = 본 챕터)
+- §12-1 저장/실행 분리 UX (`POST /pipelines/entities` 신설 + 에디터 "실행" → "저장")
+- §12-2 #1 파이프라인명 입력 UI
+
+**v7.11 (2026-04-28, Pipeline Family + Version 3계층 분리 + source format v3).**
+v7.10 의 Pipeline 단일 엔티티가 "개념 정체성 + 버전 인스턴스" 두 책임을 겸하던 구조를
+다시 한 번 분리하고, 동시에 source 토큰을 v3 (`source:<type>:<id>`) 으로 격상한 챕터.
+027 §13 에 결정 + 구현 상세, 브랜치 `feature/pipeline-family-and-version` (commit `25023ce`,
+26 파일 / +2981/-760).
+
+**핵심 결정** (2026-04-28 사용자 합의):
+- **Pipeline 측 3계층** — `PipelineFamily` (즐겨찾기 폴더, 자유 이동 + NULL 허용 FK) /
+  `Pipeline` (개념 정체성, name 전역 UNIQUE, output_split / task_type 고정) /
+  `PipelineVersion` (config + version 인스턴스, 모 Pipeline 영구 소속, immutable)
+- **Family 의 의미는 폴더링** — DatasetGroup 처럼 강제력 있는 묶음 아님. Pipeline 이
+  family 간 자유롭게 이동 가능. Pipeline.family_id NULL = "미분류"
+- **Pipeline 의 차원** — Dataset 의 Split 같은 병렬 슬롯 차원이 없으므로 (개념 + 시간축)
+  2 차원에 Family 폴더 한 장. PipelineVersion 만 별도 테이블, family_id 는 NULL OK
+- **source format v3** — `source:<UUID>` → `source:<type>:<UUID>`. type ∈
+  `dataset_split` (Pipeline 측 spec) / `dataset_version` (PipelineRun 측 resolved).
+  PipelineRun JSON 복사 → 에디터 import 시 의미 분기가 가능해짐
+- **automation 의 부착점** — PipelineVersion 단위 유지 (v7.10 §3-3 그대로). Family 가
+  추가되어도 변경 없음. `PipelineRun.pipeline_version_id` / `PipelineAutomation.pipeline_version_id`
+- **schema_version 3 으로 bump** — v1 처럼 v2 호환성도 버림. Alembic 032 가 기존
+  토큰을 dataset_split / dataset_version 접두로 일괄 rewrite
+- **API 경로 명시 분리** — `/pipelines` (concept) / `/pipelines/versions/{id}` /
+  `/pipelines/families/*` / `/pipelines/runs` / `/pipelines/automations/*`. 기존
+  `/entities/*` 는 alias 정리
+
+**변경 내용 요약** (commit `25023ce`):
+- **DB / Alembic 032** (`032_pipeline_family_version`):
+  - `pipeline_families` 신설, `pipeline_versions` 신설, `pipelines` 슬림화 (family_id
+    NULL FK + 전역 UNIQUE name + version/config 컬럼 분리 이전)
+  - 데이터 보존 트릭: `pipeline_versions.id` 를 기존 `pipelines.id` 그대로 승계 →
+    자식 FK (pipeline_runs / pipeline_automations) 의 `pipeline_id` 값을 컬럼만 rename
+    하면 의미 자동 전환
+  - `Pipeline.config` / `PipelineRun.transform_config` 둘 다 v3 source 포맷으로 일괄 rewrite +
+    schema_version=3
+  - upgrade → downgrade → upgrade 왕복 검증 (실데이터 pipelines 2 / runs 9 무손실)
+- **ORM** — `PipelineFamily` 신규, `Pipeline` 슬림화, `PipelineVersion` 신규,
+  `PipelineAutomation` / `PipelineRun` 의 FK 가 `pipeline_version_id` 로 격하
+- **lib/pipeline** — `parse_source_ref` 헬퍼 + `SOURCE_TYPE_SPLIT` / `SOURCE_TYPE_VERSION`
+  상수, `TaskConfig.get_source_split_ids` / `get_source_version_ids` 분리, `dag_executor`
+  는 `dataset_version` 만 수용 (split 토큰 받으면 RuntimeError), `schema_preview` 는
+  `dataset_split` 만 수용
+- **서비스** — `_substitute_resolved_versions` 가 split→version 치환 + type flip,
+  `_get_or_create_concept_and_version` (config 동등성 비교 후 major++ 신규 version),
+  Pipeline (concept) / PipelineVersion / Family CRUD, `pipeline_automation_service` 전체
+  pipeline_version_id 단위로 재작성
+- **API** — `/pipelines` / `/pipelines/{id}` / `/pipelines/versions/{id}` /
+  `/pipelines/families` / `/pipelines/runs` / `/pipelines/automations` 재배선
+- **FE pipeline-sdk** — `sourceFormat.ts` 신규 (parseSourceRef + 빌더), `graphToConfig`
+  schema_version=3, `mergeDefinition.buildInputsFromIncoming` v3 emit, `configToGraph`
+  v3 파서 + `unresolveVersionRefsToSplitRefs` 헬퍼 (PipelineRun JSON → 에디터 import 시
+  부모 split 으로 환원, 원본 version 표시 X)
+- **FE pages** — `PipelineListPage` 재작성 (행 클릭 drawer + versions 세로 목록 +
+  인라인 expand), `PipelineVersionDetailPage` 신규 (readonly ReactFlow DAG + 사이드 메타 +
+  하단 run 이력 + JSON 복사·보기 drawer + version 드롭다운으로 family 가시화)
+- **types/api** — `PipelineFamily*` / `PipelineVersion*` 타입 신규, `pipelineConceptsApi` /
+  `pipelineVersionsApi` / `pipelineFamiliesApi` 분리, `pipelineEntitiesApi` deprecated alias
+  한시적 유지
+
+**검증.** backend pytest 446/446 (테스트 v3 포맷 일괄 갱신 + `get_source_dataset_ids` →
+`get_source_split_ids` rename). FE TypeScript 신규 0 (pre-existing 11 외). Alembic
+upgrade/downgrade roundtrip 무손실. 신규 엔드포인트 smoke 통과.
+
+**남은 후속 작업 (v7.11 → v7.12)**:
+- 사용자 UI 스모크 피드백 반영 (사용자 보고: "마음에 드는 부분이 많지만 수정할 게 있다")
+- §9-8 Automation 메뉴 실 API 재연결 — pipeline_version_id 단위로 mock 어댑터 작성
+- §12-1 저장/실행 분리 UX (`POST /pipelines/concepts` + `POST /pipelines/versions` 신설)
+- §12-2 #1 파이프라인명 입력 UI
+- JSON import UI 통합 — `unresolveVersionRefsToSplitRefs` 헬퍼는 추가됐지만 PipelineRun
+  JSON 자동 감지 → 백엔드 lookup → 변환 흐름은 별도 구현 필요
+- 핸드오프 028 + main 머지
+
+**v7.12 (2026-04-29, UI 마무리 + PipelineFamily.color).**
+v7.11 의 남은 사용자 UI 피드백 흡수 + Family 풀 UX + Family 색상 컬럼 추가. 핸드오프
+027 §14 에 상세. schema 변경 1건 — Alembic 033 (`pipeline_families.color VARCHAR(7) NOT NULL`).
+
+**핵심 변화**:
+- **PipelineVersion 상세 다듬기** — clipboard secure-context fallback / DAG 빈 박스
+  fix (zustand store 에 nodeDataMap bulk put) / DAG row height 명시 / classification
+  pipeline 의 dataLoad 그룹명 노출 (taskType URL param 자동 보정) / 노드 위치 드래그
+  허용 (위치만, 연결·삭제 차단) / DataLoad·Save Select·input pointer-events 차단.
+- **Pipeline 목록 인라인 expand** — 우측 drawer 폐기, 행 클릭 시 그 행 아래로 펼쳐짐
+  (`Table.expandable.expandedRowRender`). 좌측 3px 파란 border 로 펼침 강조.
+  expand 안 versions 마다 비활성/복원 버튼 + concept 메타에 "최신 활성 버전" 표시.
+- **PipelineFamily 풀 UI** — `FamilyManagementModal` (CRUD) / `FamilyAssignControl`
+  (Pipeline 의 family 변경 Select) / `FamilyHeadingPopover` (그룹 heading 클릭 → 설명
+  + 색상 ColorPicker 토글). 행 Actions 에 "Family 이동" Popover. 목록을 family 별로
+  그룹핑 (미분류 마지막). 다중 체크박스 family 필터 (OR 결합).
+- **PipelineFamily.color 컬럼** — Alembic 033 + ORM + service 의 랜덤 자동 할당 +
+  ColorPicker 편집 UI + 다중 체크박스 family 필터 / 헤더 Tag / 색 swatch 시각 노출.
+- **백엔드 다중 family 필터** — `list_pipelines(family_id: list[str], family_unfiled:
+  bool)`. OR 결합. router `family_id` Query 가 list 로 격상.
+
+**검증**: backend pytest 446/446, FE TS 신규 0, Alembic 033 upgrade 후 기존 family 들
+mid-tone hex 자동 백필 확인. 브랜치: `feature/pipeline-family-and-version`.
+
+**남은 후속 작업 (v7.12 → v7.13 일부)**: v7.13 에서 §12-1 / §12-2 #1 / JSON
+import 통합 흡수 + 부가 강화 (실행 이력 column overhaul / 출력 필터 / 이름·설명
+inline 편집 / PipelineVersion.description). §9-8 Automation 만 v7.14 후속으로 남음.
+
+**v7.13 (2026-04-30, 저장/실행 분리 + 모달 두 모드 + JSON import 통합 + 실행 이력 강화 + 출력 필터).**
+v7.12 의 "남은 후속 작업" 중 Automation 을 제외한 모든 항목을 흡수하고, 사용자
+스모크 누적 피드백을 받아 Pipeline 측 UX 를 마무리한 챕터. 핸드오프 028 에 상세.
+schema 변경 1건 — Alembic 034 (`pipeline_versions.description TEXT NULL`).
+
+**핵심 결정 + 변화**:
+
+- **§12-1 저장/실행 분리 UX 정식화** — `POST /pipelines/concepts` 정식 신설.
+  에디터 "실행" → "저장" 라벨 변경. `submit_pipeline` 메서드 / `POST /pipelines/execute`
+  엔드포인트 / `_extract_resolved_input_versions` 헬퍼 전수 제거. `_get_or_create_concept_and_version`
+  임시 shim 은 정식 `_save_concept_and_version` 으로 격상 (튜플 반환:
+  pipeline / version / is_new_concept / is_new_version). 실행 (PipelineRun + Celery
+  dispatch) 은 분리된 흐름 — 목록 행 우측 "실행" 버튼 → Version Resolver Modal.
+
+- **§12-2 #1 + 확장 — 저장 모달 (직접 입력 / 기존 선택 두 모드)**. 저장 클릭 →
+  검증 통과 후 모달 오픈, 기본값 = `{config.name}_{split.lower()}` prefilled.
+  Radio 로 모드 전환:
+  - **manual**: Input 직접 입력. 같은 이름 + 같은 출력 (group/split) → 새 버전
+    추가. 같은 이름 + 다른 출력 → backend 가 400 으로 거부.
+  - **select**: 같은 task_type + 같은 output_split_id Pipeline 만 dropdown 후보.
+    선택 시 그 Pipeline 의 새 버전으로 추가. 출력이 같음이 보장돼 회색지대 없음.
+  backend 의 `_save_concept_and_version` 가 동일 name 발견 시
+  `existing_concept.output_split_id != output_split_id` 면 ValueError 로 차단,
+  라우터에서 400 친화 메시지로 변환 — 회색지대 (같은 이름인데 다른 출력) 가
+  구조적으로 막힘.
+
+- **JSON import 통합** — 에디터의 "JSON 불러오기" 가 PipelineRun.transform_config
+  (dataset_version 토큰) 와 Pipeline.config (dataset_split 토큰) 양쪽 JSON 을 모두
+  매끄럽게 import 하도록 재작성. listGroups 한 번 호출로 splitId → 표시정보 /
+  versionId → splitId 두 인덱스를 동시에 구축. `unresolveVersionRefsToSplitRefs`
+  로 dataset_version 토큰을 부모 split 으로 환원 후 configToGraph 호출. datasetDisplayMap
+  키를 split_id 로 통일 (matchFromConfig lookup 일치). 누락 토큰 (현재 DB 에 없는
+  split / 부모 split 미매핑 version) 은 Modal 경고로 명시.
+
+- **이름 · 설명 · 버전 메모 inline 편집** — `Pipeline.name` / `Pipeline.description`
+  / `PipelineVersion.description` (신규 컬럼). PipelineListPage ExpandedConceptContent
+  의 제목 + 설명 / VersionRow 의 description / PipelineVersionDetailPage 사이드
+  패널 모두 `Typography editable` 로 인라인 편집. Alembic 034 가 `pipeline_versions.description`
+  TEXT NULL 추가. `update_pipeline_version` 서비스에 description 매개 변수 (None=미변경,
+  ""=NULL clear).
+
+- **실행 이력 페이지 column overhaul + 정렬 + 가변 폭** —
+  - 컬럼: "파이프라인" 단일 → 파이프라인명 / 버전 / Output 그룹 / Split / 버전
+    5개로 분리. `PipelineRunResponse` 에 `pipeline_name` / `pipeline_version` /
+    `output_dataset_group_name` / `output_dataset_split` 평탄화 필드 추가.
+    `_build_run_response` 가 selectinload 된 관계 (`pipeline_version.pipeline` /
+    `output_dataset.split_slot.group`) 에서 채움. list_executions / list_runs_by_pipeline /
+    list_runs_by_pipeline_version / get_execution_status selectinload 체인 확장.
+  - 서버 측 정렬: `list_executions` 가 `sort_by` / `sort_order` 인자 수용.
+    9개 키 (자체 컬럼 4 + Pipeline join 2 + Output 그룹·split·version join 3).
+    join 필요한 키는 outerjoin 으로 묶어 정렬, count 는 별도 쿼리로 안정화.
+    라우터 화이트리스트 검증.
+  - 가변 폭: `useResizableColumnWidths` 훅 적용. 모든 컬럼 헤더 우측 경계 드래그
+    로 폭 조정. `sorter: true` + `sortOrder` + `handleTableChange` 로 클릭 정렬.
+
+- **컬럼 리사이즈 perf 개선 + §6-3 가이드** — drag 동안 React state 갱신 대신
+  colgroup `<col>` + `<th>` 의 `style.width` 직접 조작, mouseup 에서 onResize 1회
+  sync. AntD split-table (헤더/바디 별 colgroup) 동시 갱신. rAF coalesce.
+  매 frame 마다 `table.style.width = sum + 'px'` 직접 박아 CSS `max-content`
+  동적 합산 비용 회피. drag 종료 후 click → 정렬 토글되는 회귀를 capture 단계
+  swallow 로 차단. floor 0 (사용자 자유 폭 조정). 페이지 측에는 `.ant-table-content > table { width: max-content !important; min-width: 0 !important }`
+  CSS 박아 AntD 기본 `width: 100%` 로 인한 비례 분배 (가장 넓은 컬럼이 잉여
+  절대량을 가장 많이 받아 우측 공백 부풀림 + 줄여도 안 줄어듦) 회피. 이 패턴은
+  설계서 §6-3 으로 정식 규약화.
+
+- **출력 (group, split) 필터** — 이름 검색과 Family 필터 사이 신규 Dropdown.
+  비활성 포함 모든 Pipeline 의 출력 그룹을 후보 행으로 나열. 그룹당 한 행 = group
+  checkbox + TRAIN/VAL/TEST/NONE 4개 고정 split 체크박스. 그룹 checkbox indeterminate
+  지원. state 는 `selectedOutputPairs: Set<\`${group}::${split}\`>`. backend 는
+  `output_split_id: list[str]` IN 필터 (list_pipelines 에 새 추가). 사용자가
+  실재하지 않는 (group, split) 만 선택했을 때는 sentinel UUID 로 빈 결과 강제.
+
+- **Pipeline 목록 — 미분류 최상단 + 빈 family 도 표시** — 직전엔 미분류 마지막 +
+  Pipeline 0개 family 미표시. `groupedItems` 산출 재작성 — familiesQuery 전체
+  기반으로 빈 family 도 점선 박스로 "이 family 에 등록된 Pipeline 이 없습니다"
+  안내. `firstNonEmptyGroupIndex` 로 헤더 표시 위치 보정.
+
+**Alembic 034**: `pipeline_versions.description TEXT NULL`. 백필 없음 (NULL 허용).
+
+**검증**: backend pytest 446/446. FE TS 신규 0건. Alembic 034 왕복 검증.
+브랜치: `feature/pipeline-family-and-version` (commit 누적).
+
+**남은 후속 작업 (v7.13 → v7.14)**:
+- **§9-8 Automation 메뉴 실 API 재연결** — 026 mock fixture → `pipelineVersionsApi` /
+  `pipelineAutomationsApi` 어댑터. version 단위 격하 반영. AutomationPage /
+  AutomationHistoryPage / AutomationPipelineDetailPage 3 페이지 재배선.
+- **chaining 분석기 + polling/triggering 스캐너 + last_seen_input_versions 갱신** —
+  자동 실행 본구현 (참조: 023 §9).
+- 핸드오프 029 + main 머지.
+
 ---
 
 ## 1. 로드맵 위치
@@ -135,7 +391,7 @@ upgrade → downgrade → upgrade 왕복 성공. 실데이터 파이프라인 `f
 
 ---
 
-## 2. 현재 구현 상태 (2026-04-13 baseline)
+## 2. 현재 구현 상태 (2026-04-30 v7.13 baseline)
 
 ### 2-1. 백엔드
 
@@ -144,23 +400,51 @@ upgrade → downgrade → upgrade 왕복 성공. 실데이터 파이프라인 `f
 - 스토리지: `LocalStorageClient` (S3 대비 추상화)
 - `lib/` ↔ `app/` 격리 — `lib/` → `app/` import 금지
 
-### 2-2. 데이터 모델 (v7.9 3계층 분리 반영)
+### 2-2. 데이터 모델 (v7.11 — Pipeline 측 3계층 + source format v3)
 
 ```
-DatasetGroup (정적)
-  └─ DatasetSplit (정적)       — unique(group_id, split)
-     └─ DatasetVersion (동적)   — unique(split_id, version)
+Dataset 측 (v7.9 — 강제 구조)
+DatasetGroup (정적 개념)
+  └─ DatasetSplit (정적 슬롯, TRAIN/VAL/TEST 병렬 축)  — unique(group_id, split)
+     └─ DatasetVersion (시간축 인스턴스)               — unique(split_id, version)
+
+Pipeline 측 (v7.11 — Family + 시간축)
+PipelineFamily (느슨한 폴더 — 자유 이동, NULL OK)
+  └─ Pipeline (정적 개념 — name 전역 UNIQUE, output_split / task_type 고정)
+       ├─ output_split_id FK → DatasetSplit
+       └─ PipelineVersion (시간축 인스턴스, config immutable)
+            ├─ unique(pipeline_id, version)
+            ├─ PipelineRun (동적 immutable, output_dataset_id FK → DatasetVersion)
+            └─ PipelineAutomation (1:0..1, partial unique active)
 ```
 
-- **DatasetGroup** — 그룹 정적 메타 (불변). `name, dataset_type, annotation_format, task_types, head_schema, modality, ...`
-- **DatasetSplit** (v7.9 신규) — `(group_id, split)` 정적 슬롯. `split: TRAIN | VAL | TEST | NONE`. `created_at` 만 (updated_at 없음).
-- **DatasetVersion** (v7.9 — 기존 `Dataset` 을 rename) — 실제 데이터 버전 단위. `split_id FK, version, storage_uri, annotation_files, status, metadata, ...`. 유니크: `(split_id, version)`, `version = "{major}.{minor}"`.
-- 기타 테이블: `DatasetLineage` (parent/child = DatasetVersion), `Manipulator`, `PipelineExecution`, `Objective`.
+**Dataset 측** (v7.9 그대로):
+- **DatasetGroup** — 그룹 정적 메타. `name, dataset_type, annotation_format, task_types, head_schema, modality, ...`
+- **DatasetSplit** — `(group_id, split)` 정적 슬롯. `split: TRAIN | VAL | TEST | NONE`. `created_at` 만 (updated_at 없음).
+- **DatasetVersion** — 실제 데이터 버전 단위. `split_id FK, version, storage_uri, annotation_files, status, metadata, ...`. 유니크: `(split_id, version)`, `version = "{major}.{minor}"`.
+
+**Pipeline 측** (v7.11 신규 — 027 §13):
+- **PipelineFamily** (v7.11 신규, v7.12 — `color` 추가) — 사용자 즐겨찾기 폴더. `name (UNIQUE), description, color VARCHAR(7) (#RRGGBB, 자동 할당 + 사용자 편집 가능), created_at, updated_at`. 강제 구조 아님. Pipeline 이 family 간 자유 이동. Pipeline.family_id NULL = "미분류".
+- **Pipeline** (v7.11 — 의미 격하: "정적 개념 정체성") — `family_id FK NULL, name (전역 UNIQUE), description, output_split_id FK, task_type, is_active, created_at, updated_at`. version / config 컬럼 **없음** (PipelineVersion 으로 분리). output_split / task_type 은 개념 레벨 고정 — 변경 시 다른 Pipeline 이 됨.
+- **PipelineVersion** (v7.11 신규, v7.13 — `description` 추가) — 의미 격상: 기존 Pipeline.config 의 version 인스턴스. `pipeline_id FK NOT NULL CASCADE, version, config (JSONB, immutable), description (TEXT NULL — 사용자가 적는 "이 버전에서 무엇을 바꿨는가" 메모, concept-level description 과 별개), is_active, created_at, updated_at`. 유니크: `(pipeline_id, version)`. 다른 Pipeline 으로 이동 불가.
+- **PipelineRun** (v7.10 — `PipelineExecution` rename, v7.11 — FK 격하) — 동적 immutable run. `pipeline_version_id FK NOT NULL` (이전 pipeline_id 에서 한 단 격하), `automation_id FK NULL, output_dataset_id FK, transform_config (resolved 스냅샷), resolved_input_versions ({split_id: version}), trigger_kind, automation_*` ...
+- **PipelineAutomation** (v7.10 신규, v7.11 — FK 격하) — PipelineVersion 의 runner. `pipeline_version_id FK, status (stopped/active/error), mode (polling/triggering), poll_interval, error_reason, last_seen_input_versions, is_active (soft delete), deleted_at`. partial unique `(pipeline_version_id) WHERE is_active=TRUE` 로 1:0..1 보장. 027 §3-3 "automation 은 특정 version 가리킨다" 그대로.
+- `input_split_id` top-level FK **없음** (027 §12-9 C 채택 유지) — multi-input 케이스 위해 `config.tasks[*].inputs` 의 `source:dataset_split:<split_id>` 가 유일 진리.
+
+**source format v3** (v7.11 — 027 §13-4):
+- `source:dataset_split:<split_id>` — 사용자 spec (PipelineVersion.config 측)
+- `source:dataset_version:<version_id>` — resolved 스냅샷 (PipelineRun.transform_config 측). submit 시점에 `_substitute_resolved_versions` 가 split→version 치환 + type flip
+- `task_<node_id>` — task 간 참조 (변경 없음)
+- dag_executor 는 `dataset_version` 만 수용 (split 토큰을 받으면 RuntimeError). schema_preview 는 `dataset_split` 만 수용
+- schema_version=3. v2 호환 없음 (Alembic 032 마이그레이션이 일괄 rewrite 후 폐지)
+
+**기타 / ORM 편의**:
+- 기타 테이블: `DatasetLineage` (parent/child = DatasetVersion), `Manipulator`, `Objective`.
 - `dataset_type`: RAW / SOURCE / PROCESSED / FUSION (강제 제약은 없음, 그룹 속성)
 - `annotation_files` 는 JSONB. `metadata` (JSONB) 에 `class_info` / EDA 결과 저장.
-- ORM 편의: `DatasetVersion.split_slot` 이 relationship, `split` / `group` / `group_id` 는
-  `association_proxy("split_slot", ...)` 로 투명 노출 — 기존 코드 호환 유지.
+- `DatasetVersion.split_slot` 이 relationship, `split` / `group` / `group_id` 는 `association_proxy("split_slot", ...)` 로 투명 노출.
 - `DatasetGroup.datasets` 는 flat `@property` (모든 splits 의 versions 를 평탄화). 쿼리에는 쓰지 않고 직렬화용.
+- `PipelineVersion.config.passthrough_source_dataset_id` 는 FE 가 보내지 않는 **resolved-only** 필드 — submit 단계에서 backend 가 채워 dag_executor 가 dataset_version_id 단위로 데이터 로드 (executor 호환).
 
 ### 2-3. 파이프라인 (통일포맷 기반)
 
@@ -597,7 +881,7 @@ per-class unknown 이 필수가 되는 시점(Step 4 auto-labeling)에 `labels` 
 
 ## 4. 파이프라인 실행 상세 (변동 없음, §4-2만 갱신)
 
-### 4-2. PipelineConfig 스키마 — `schema_version` 추가
+### 4-2. PipelineConfig 스키마 — `schema_version` 3 (v7.11)
 
 ```jsonc
 {
@@ -607,16 +891,32 @@ per-class unknown 이 필수가 되는 시점(Step 4 auto-labeling)에 `labels` 
   "tasks": {
     "<task_id>": {
       "operator": "<manipulator_name>",
-      "inputs": ["source:<uuid>", "<other_task_id>"],
+      "inputs": [
+        "source:dataset_split:<split_id>",   // 사용자 spec (PipelineVersion.config 측)
+        // 또는 PipelineRun.transform_config 측 (resolved):
+        // "source:dataset_version:<version_id>",
+        "<other_task_id>"
+      ],
       "params": { ... }
     }
   },
-  "schema_version": 1
+  "passthrough_source_split_id": "<split_id>",  // passthrough 모드 (Load→Save 직결, tasks 비어있음)
+  "passthrough_source_dataset_id": null,        // resolved-only — submit 단계에서 backend 가 채움
+  "schema_version": 3
 }
 ```
 
-- `schema_version` 없으면 허용 (하위 호환), 상위 버전이면 복원 시 경고
-- 최종 출력 = sink task 1개만 허용 (`get_terminal_task_name` 검증)
+**source 토큰 type 차원** (v7.11 — 027 §13-4):
+- `source:dataset_split:<split_id>` — 사용자 spec 측. `PipelineVersion.config` 에 저장.
+- `source:dataset_version:<version_id>` — resolved 스냅샷. `PipelineRun.transform_config`
+  에 저장. submit 단계 `_substitute_resolved_versions` 가 split → version 치환 + type flip.
+- `task_<node_id>` — task 간 참조 (변경 없음).
+
+**불변식**:
+- `dag_executor` 는 `dataset_version` 토큰만 받는다 (split 받으면 RuntimeError).
+- `schema_preview` / 저장 시점 검증은 `dataset_split` 만 받는다.
+- 잘못된 v2 잔재 (`source:<UUID>` 평면 형태) 는 `parse_source_ref` 가 ValueError.
+- 최종 출력 = sink task 1개만 허용 (`get_terminal_task_name` 검증).
 
 ---
 
@@ -646,24 +946,35 @@ Automation / Detection 미구현 2종 / Step 2 진입 (item 16 ~ 22) 중심. 아
 15. ~~Classification manipulator 파라미터 label 축약 (UI 가독성)~~ ✅ **완료 (2026-04-20)** — Alembic `028_shorten_cls_param_labels` 로 `cls_add_head.{class_candidates,multi_label}`, `cls_set_head_labels_for_all_images.{set_unknown,classes}`, `cls_filter_by_class.{include_unknown,classes}` 총 6건의 params label 을 축약. DAG 박스에서 노드 가로폭이 길어지던 문제와 우측 속성 패널에서 텍스트가 잘리던 문제 해결. `jsonb_set` 으로 label 필드만 타겟하여 다른 스키마 속성은 불변. 장기 TODO: `DynamicParamForm` 에 `help` / tooltip 필드 정식 추가 시 label 은 짧게 유지하면서 상세 설명 되살리기.
 15-b. ~~DatasetGroup.head_schema SSOT 단일 원칙 강제~~ ✅ **완료 (2026-04-22 · v7.8)** — `preview-schema` task_kind 판정을 `group.task_types` 기반으로 전환, `pipeline_tasks` 의 `group.head_schema` setdefault 초기화, `_diff_head_schema` NEW_HEAD/NEW_CLASS 허용 제거, `pipeline_service._validate_output_schema_compatibility` (신설) 로 파이프라인 출력 schema 불일치 사전 차단, Alembic `029_backfill_group_head_schema` 로 기존 NULL 5건 복원. 상세 §2-8.
 15-c. ~~Dataset 3계층 분리~~ ✅ **완료 (2026-04-23 · v7.9)** — Alembic `030_dataset_three_tier_split` 로 `dataset_splits` 신규 + `datasets` → `dataset_versions` rename + 89 versions 무손실 이행. `DatasetVersion.split_slot` relationship + `split`/`group`/`group_id` association_proxy 로 기존 호출 경로 호환 유지. 이벤트 리스너 / 서비스 / 라우터 / Celery / FE 전수 조정. 실데이터 파이프라인 `fafbd6ad-c66a-4f1f-a7c2-9c9a9f5da60a` 정상 완주. 브랜치: `feature/change-dataset-db-schema`. 상세 §2-2 + 핸드오프 025.
-16. **Automation 실구현** — **v7.9 3계층 분리로 unblocked.** 023 §9 확정 결정 (Pipeline 엔티티 신규 + `automation_*` 컬럼 + chaining 분석기 + polling/triggering + 수동 재실행) 위에서 실구현. 참조: `docs_for_claude/023-automation-mockup-tech-note.md` §9.
-17. **미구현 Detection manipulator 2종** — `det_change_compression` / `det_shuffle_image_ids`
-17. **미구현 Detection manipulator 2종** — `det_change_compression` / `det_shuffle_image_ids`
-18. **버전 정책 운영 검증** — automation과 함께
-19. **Phase 3** — TrainingExecutor/GPUResourceManager 인터페이스, 알림 골격, GNB/Manipulator/시스템 상태 페이지, 전체 UX 정리
-20. **Step 2** 진입 — DockerTrainingExecutor, nvidia-smi 기반 GPUResourceManager, MLflow, Prometheus+DCGM, SMTP 알림
+15-d. ~~Pipeline / PipelineRun / PipelineAutomation 3 엔티티 분리 + schema_version=2~~ ✅ **완료 (2026-04-28 · v7.10)** — Alembic 031 + ORM 신규 + 서비스 / 라우터 / FE 전면 재배선. v1 호환 코드 전수 제거 (450 줄 감소). DataLoad 노드는 `(group, split)` 까지만, version 은 실행 시점 Version Resolver Modal. PipelineListPage / VersionResolverModal / CreatePipelineButton 신규. 결정 / 진행 상황: `docs_for_claude/027-pipeline-run-automation-separation-design.md` §12.
+15-e. ~~Pipeline Family + Version 3계층 + source format v3~~ ✅ **완료 (2026-04-28 · v7.11)** — Alembic 032 + PipelineFamily / Pipeline (concept) / PipelineVersion 분리. source 토큰을 `source:<type>:<id>` (dataset_split / dataset_version) 로 격상해 Pipeline 측 spec 과 PipelineRun 측 resolved 의 의미 충돌 해소. PipelineListPage 행 클릭 drawer + version 세로 목록, PipelineVersionDetailPage 신규 (readonly DAG + JSON 복사). 결정 / 진행 상황: `docs_for_claude/027-pipeline-run-automation-separation-design.md` §13.
+15-f. ~~UI 마무리 + PipelineFamily.color~~ ✅ **완료 (2026-04-29 · v7.12)** — PipelineVersion 상세 페이지 6건 fix (clipboard fallback / nodeDataMap zustand bulk put / DAG row height / taskType URL 보정 / 노드 드래그 / DataLoad·Save pointer-events 차단), Pipeline 목록 인라인 expand + version 비활성 토글 + 최신 활성 버전 표시, PipelineFamily 풀 UI (CRUD modal / 행 Family 이동 / 그룹핑 / 다중 체크박스 필터), Alembic 033 의 `pipeline_families.color` 컬럼 + 랜덤 자동 할당 + ColorPicker 편집. 결정 / 진행 상황: `docs_for_claude/027-pipeline-run-automation-separation-design.md` §14.
+16. **Automation 실 API 재연결 (§9-8) + Automation 실구현** — 단계 분리:
+    - 16-a. 026 mock fixture → `pipelineVersionsApi` / `pipelineAutomationsApi` 어댑터. version 단위로 격하된 자료구조 반영. AutomationPage / AutomationHistoryPage / AutomationPipelineDetailPage 3 페이지 재배선. (선행)
+    - 16-b. chaining 분석기 / polling+triggering 스캐너 / `last_seen_input_versions` 갱신 등 자동 실행 로직 본구현. 참조: `docs_for_claude/023-automation-mockup-tech-note.md` §9.
+17. ~~§12-1 저장/실행 분리 UX~~ ✅ **완료 (2026-04-30 · v7.13)** — `POST /pipelines/concepts` 정식 신설. 에디터 "실행" → "저장" 라벨. `submit_pipeline` / `POST /pipelines/execute` / `_extract_resolved_input_versions` 전수 제거. `_save_concept_and_version` 정식 헬퍼 격상. 결정 / 진행 상황: `docs_for_claude/028-pipeline-save-flow-and-list-ux-handoff.md`.
+18. ~~§12-2 #1 파이프라인명 입력 UI + 확장~~ ✅ **완료 (2026-04-30 · v7.13)** — 저장 모달에서 파이프라인명을 확정. 모달 두 모드 (직접 입력 / 기존 Pipeline 선택). 직접 입력에서 동일 이름 + 다른 출력은 backend 가 400 으로 차단 (회색지대 제거). 기존 선택 모드는 같은 task_type + 같은 output_split_id Pipeline 만 dropdown 으로 노출.
+19. ~~JSON import UI 통합~~ ✅ **완료 (2026-04-30 · v7.13)** — handleLoadJson 재작성. listGroups 한 번 호출로 splitId → 표시정보 / versionId → splitId 두 인덱스 동시 구축. `unresolveVersionRefsToSplitRefs` 로 dataset_version 토큰을 부모 split 으로 환원 후 configToGraph 호출. datasetDisplayMap 키 split_id 통일. 누락 토큰 Modal 경고.
+19-b. ~~Pipeline 이름 · 설명 · 버전 메모 inline 편집 + Alembic 034~~ ✅ **완료 (2026-04-30 · v7.13)** — `pipeline_versions.description` 컬럼 신규. PipelineListPage / PipelineVersionDetailPage 의 제목 / Descriptions / VersionRow 모두 Typography editable 로 인라인 편집.
+19-c. ~~실행 이력 page column overhaul + 정렬 + 가변 폭~~ ✅ **완료 (2026-04-30 · v7.13)** — "파이프라인" 단일 컬럼 → 5개 (파이프라인명/버전/Output 그룹/Split/버전). PipelineRunResponse 평탄화 필드 + selectinload 체인 확장. list_executions 에 sort_by / sort_order 9개 키 (join 키 outerjoin). FE 모든 컬럼 가변 폭 + 헤더 클릭 정렬. 컬럼 리사이즈 perf 개선 (DOM 직접 / split-table 동시 / rAF / table.style.width 직접) + §6-3 정식 규약화.
+19-d. ~~출력 (group, split) 필터~~ ✅ **완료 (2026-04-30 · v7.13)** — Pipeline 목록 헤더에 신규 Dropdown. 그룹당 한 행 (group checkbox + TRAIN/VAL/TEST/NONE 4개 고정 split). selectedOutputPairs Set 기반. backend `output_split_id` IN 필터.
+19-e. ~~Pipeline 목록 — 미분류 최상단 + 빈 family 도 표시~~ ✅ **완료 (2026-04-30 · v7.13)** — groupedItems 산출 재작성. familiesQuery 전체 기반 + 빈 family 점선 박스 안내.
+20. **미구현 Detection manipulator 2종** — `det_change_compression` / `det_shuffle_image_ids`.
+21. **버전 정책 운영 검증** — automation과 함께
+22. **Phase 3** — TrainingExecutor/GPUResourceManager 인터페이스, 알림 골격, GNB/Manipulator/시스템 상태 페이지, 전체 UX 정리
+23. **Step 2** 진입 — DockerTrainingExecutor, nvidia-smi 기반 GPUResourceManager, MLflow, Prometheus+DCGM, SMTP 알림
     - ⚠️ multi-label head 학습 시 unknown 을 loss mask 로 배제: §2-12 `null` 규약으로 head-level 가능. per-class 필요 시 옵션 A/B 확장
     - ⚠️ head 별 `loss_per_head: dict[str, Literal["softmax", "bce", "bce_ovr"]]` 실장 (§6-2 결정)
-21. **Step 3 이후** — S3StorageClient, KubernetesTrainingExecutor, Helm, Argo/Kubeflow, Volcano, KEDA, MinIO
-22. **Step 4** — Label Studio, Synthetic Data, Auto Labeling, Offline Testing, Auto Deploy, 데이터 자동 수집
+24. **Step 3 이후** — S3StorageClient, KubernetesTrainingExecutor, Helm, Argo/Kubeflow, Volcano, KEDA, MinIO
+25. **Step 4** — Label Studio, Synthetic Data, Auto Labeling, Offline Testing, Auto Deploy, 데이터 자동 수집
     - ⚠️ auto-labeling 의 per-class unknown 시나리오는 현 head-level `null` 로 부분 해결 (head 전체 승격). 완전 해결은 옵션 A/B 확장 필요
-23. **Step 5** — Generative Model MLOps
+26. **Step 5** — Generative Model MLOps
 
 **후속 사용성 개선 TODO (우선순위 낮음 · v7.8 에서 식별)**
 
-24. **Group 명 변경 기능** — REST `PATCH /dataset-groups/{id}` (name 필드 수정) + 스토리지 경로 `mv` + 해당 그룹 Dataset 행의 `storage_uri` 갱신. SSOT 단일 원칙(§2-8) 을 따르며 사용자가 기존 이름을 유지·교체하고 싶은 경우를 흡수. 규모는 작음 (폴더 mv + DB UPDATE 소량).
-25. **RAW 등록 시 schema 불일치 → 기존 그룹 자동 rename 제안 UX** — 신규 등록 schema 가 기존 동명 그룹과 다르면 "기존 그룹을 `<name>_deprecated_<YYMMDD>_<HHMM>` 로 rename 하고 새 그룹으로 등록할까요?" 모달. `_deprecated_*` 는 네이밍일 뿐 시스템 의미 없음 — 그대로 사용 가능한 데이터셋. Group 명 변경 기능(24) 위에 얹는 UI.
-26. **`Dataset.metadata.class_info` 축소 리팩토링** — `heads` 에서 스키마 구조 필드(`name` / `multi_label` / `class_mapping`) 를 제거하고 `per_head_class_counts` 등 per-dataset 통계만 남기는 리팩토링. group.head_schema + 통계 조합으로 뷰어 렌더. 범위가 BE 생성 경로 2곳 + FE 타입·뷰어 2곳 + Alembic data migration 까지 묶이므로 별도 세션. v7.8 에서는 SSOT 시맨틱만 명시하고 현 중복 구조를 유지했다(§2-8).
+27. **Group 명 변경 기능** — REST `PATCH /dataset-groups/{id}` (name 필드 수정) + 스토리지 경로 `mv` + 해당 그룹 Dataset 행의 `storage_uri` 갱신. SSOT 단일 원칙(§2-8) 을 따르며 사용자가 기존 이름을 유지·교체하고 싶은 경우를 흡수. 규모는 작음 (폴더 mv + DB UPDATE 소량).
+28. **RAW 등록 시 schema 불일치 → 기존 그룹 자동 rename 제안 UX** — 신규 등록 schema 가 기존 동명 그룹과 다르면 "기존 그룹을 `<name>_deprecated_<YYMMDD>_<HHMM>` 로 rename 하고 새 그룹으로 등록할까요?" 모달. `_deprecated_*` 는 네이밍일 뿐 시스템 의미 없음 — 그대로 사용 가능한 데이터셋. Group 명 변경 기능(27) 위에 얹는 UI.
+29. **`Dataset.metadata.class_info` 축소 리팩토링** — `heads` 에서 스키마 구조 필드(`name` / `multi_label` / `class_mapping`) 를 제거하고 `per_head_class_counts` 등 per-dataset 통계만 남기는 리팩토링. group.head_schema + 통계 조합으로 뷰어 렌더. 범위가 BE 생성 경로 2곳 + FE 타입·뷰어 2곳 + Alembic data migration 까지 묶이므로 별도 세션. v7.8 에서는 SSOT 시맨틱만 명시하고 현 중복 구조를 유지했다(§2-8).
 
 ---
 
@@ -758,6 +1069,72 @@ append, extra 최초/보존 분기, list 입력 거부, deep copy 격리).
 - auto-suggest 결과를 DB 에 영속시킬지, UI 휘발성으로 둘지
 - per-class weight / class imbalance 대응을 loss 별로 어떻게 얹을지 (현 논의 범위 밖)
 
+### 6-3. AntD Table 가변 폭 컬럼 — 리사이즈 성능 / 폭 정합 규약 (확정 · 2026-04-29 · v7.13)
+
+`useResizableColumnWidths` 훅 (frontend/src/components/common/ResizableTableColumns.tsx)
+을 쓰는 모든 페이지가 반드시 따라야 하는 규약. 누락 시 사용자가 가장 자주
+호소하는 두 증상이 같이 나타난다 — "넓은 컬럼이 컨텐츠보다 부풀려져 있다",
+"드래그로 축소가 매끄럽지 않다 / 줄어들지 않는다".
+
+**1. 페이지에 inner table 폭 강제 CSS 를 박아라.**
+
+`scroll: { x: ... }` 가 켜진 AntD Table 은 inner `<table>` 에 `width: 100%` 를
+적용해 컨테이너를 채우고, `table-layout: fixed` 컬럼들에 잉여 폭을 비례
+분배한다. 결과적으로:
+- 가장 넓은 컬럼이 잉여의 최대 절대량을 받아 우측 공백이 부풀려짐
+- col.style.width 를 줄여도 잉여 분배가 즉시 메꿔 시각적으로 안 줄어듦
+- 매 mousemove 마다 11개 (예시) 컬럼의 잉여 분배 재계산 → 무거움
+
+페이지 wrapper 에 클래스 (`pipeline-history-page` / `dataset-list-page` 등) 를
+주고 다음 CSS 를 박는다:
+
+```css
+.<page-class> .ant-table-content > table,
+.<page-class> .ant-table-body > table {
+  width: max-content !important;
+  min-width: 0 !important;
+}
+```
+
+이러면 table 폭은 정확히 컬럼 폭 합 — 잉여는 wrapper 우측 여백으로 흘러간다.
+
+**2. 훅이 자동으로 수행하는 최적화 (페이지에서 추가 작업 불필요).**
+
+(a) **drag 동안 React state 갱신 금지** — 매 mousemove 마다 setState 하면
+    전 행 × 전 열 re-render → 100 행 / 11 열 규모에서 60fps 못 따라감.
+    drag 동안은 colgroup `<col>` 과 `<th>` 의 `style.width` 만 직접 갱신하고,
+    mouseup 시점에 onResize(lastWidth) 1회 호출로 React state 와 sync.
+
+(b) **헤더 / 바디 split-table 동시 갱신** — `scroll: { x }` 켜진 AntD 는
+    같은 `.ant-table-container` 안에 헤더 `<table>` 과 바디 `<table>` 을
+    별도로 그리고 각자 `<colgroup>` 을 갖는다. 핸들이 속한 헤더만 갱신하면
+    바디는 mouseup 까지 정지해 묵직함을 체감. 훅은 container 안의 모든
+    colgroup 의 같은 cellIndex col 을 한 번에 갱신.
+
+(c) **rAF coalesce + table.style.width 직접 박기** — mousemove 가 120Hz+
+    로 fire 돼도 frame 당 1회로 묶고, 매 frame 합을 즉시 계산해
+    `table.style.width = sum + 'px'` 로 박는다. CSS `width: max-content` 의
+    동적 합산 비용 회피. mouseup 에서 inline width 를 비워 페이지 CSS 의
+    `width: max-content !important` 가 다시 적용되도록.
+
+(d) **drag 후 click swallow** — mousedown 후 가로로 끌면 mouseup 이
+    부모 `<th>` 에서 일어나기 쉽고, AntD 의 정렬 핸들러가 그 click 을
+    받아 정렬 토글이 발생. 훅은 실제로 deltaPx ≠ 0 가 한 번이라도
+    있었던 경우에만 capture 단계에서 다음 click 을 1회 차단 + 100ms
+    safety timeout.
+
+**3. 컬럼 최소 폭 floor 는 0.**
+
+훅의 `MINIMUM_COLUMN_WIDTH_PX = 0`. 사용자가 의도한 폭 조정을 가로막지
+않는다. 너무 줄여서 핸들이 안 잡히면 옆 컬럼의 우측 핸들로 회복 가능.
+
+**적용 사례.**
+- `frontend/src/pages/PipelineHistoryPage.tsx`
+- `frontend/src/pages/DatasetListPage.tsx`
+
+이 규약을 따르지 않은 페이지에 사용자가 "느림 / 묵직" 을 보고하면, 거의 확실히
+1번 (inner table 폭 강제 CSS) 누락이 원인이다.
+
 ---
 
 ## 6. 핵심 파일 맵
@@ -766,8 +1143,8 @@ append, extra 최초/보존 분기, list 입력 거부, deep copy 격리).
 
 | 파일 | 역할 |
 |------|------|
-| `lib/pipeline/config.py` | `PipelineConfig` / `TaskConfig` / `OutputConfig` / `schema_version` / topological_order |
-| `lib/pipeline/dag_executor.py` | `PipelineDagExecutor` — DAG 실행 + processing.log |
+| `lib/pipeline/config.py` | `PipelineConfig` / `TaskConfig` / `OutputConfig` / `schema_version=3` / `parse_source_ref` / `SOURCE_TYPE_SPLIT` / `SOURCE_TYPE_VERSION` / topological_order |
+| `lib/pipeline/dag_executor.py` | `PipelineDagExecutor` — DAG 실행 + processing.log. `dataset_version:` 토큰만 수용 |
 | `lib/pipeline/executor.py` | Phase A(annotation) + Phase B(이미지 실체화) |
 | `lib/pipeline/image_executor.py` | 이미지 copy vs transform 분기 |
 | `lib/pipeline/pipeline_validator.py` | 정적 검증 |
@@ -782,14 +1159,20 @@ append, extra 최초/보존 분기, list 입력 거부, deep copy 격리).
 
 | 파일 | 역할 |
 |------|------|
-| `app/api/v1/pipelines/` | 파이프라인 API 라우터 |
-| `app/services/pipeline_service.py` | DB 검증 + 실행 이력 |
+| `app/api/v1/pipelines/` | 파이프라인 API 라우터 — `/pipelines` (concept) / `/versions/{id}` / `/families` / `/runs` / `/automations` |
+| `app/services/pipeline_service.py` | Pipeline (concept) / PipelineVersion / PipelineFamily CRUD + `_substitute_resolved_versions` (split→version + type flip) + `_get_or_create_concept_and_version` |
+| `app/services/pipeline_automation_service.py` | PipelineAutomation 서비스 — `pipeline_version_id` 단위 |
 | `app/tasks/pipeline_tasks.py` | Celery 태스크 |
 | `app/tasks/register_classification_tasks.py` | Classification RAW 등록 Celery task + process.log / metadata 기록 |
 | `app/services/dataset_service.py` | `register_classification_dataset` + `_diff_head_schema` / `_merge_head_schema` |
 | `app/api/v1/dataset_groups/router.py` | `POST /register-classification` 엔드포인트 |
 | `app/models/all_models.py` | 전체 ORM 모델 단일 파일 (`DatasetGroup.head_schema` JSONB 포함) |
 | `migrations/versions/009_add_head_schema.py` | head_schema 컬럼 추가 마이그레이션 |
+| `migrations/versions/030_dataset_three_tier_split.py` | DatasetSplit 신규 + Dataset → DatasetVersion rename (v7.9) |
+| `migrations/versions/031_split_pipeline_entities.py` | Pipeline / PipelineRun / PipelineAutomation 3 엔티티 분리 (v7.10) |
+| `migrations/versions/032_pipeline_family_and_version_split.py` | PipelineFamily / Pipeline (concept) / PipelineVersion 분리 + source format v3 (v7.11) |
+| `migrations/versions/033_pipeline_family_color.py` | PipelineFamily.color VARCHAR(7) — 자동 랜덤 + ColorPicker 편집 (v7.12) |
+| `migrations/versions/034_pipeline_version_description.py` | PipelineVersion.description TEXT NULL — 사용자가 적는 "이 버전에서 무엇을 바꿨는가" 메모 (v7.13) |
 
 ### 6-3. frontend/ — SDK 경로 중심
 
@@ -799,8 +1182,9 @@ append, extra 최초/보존 분기, list 입력 거부, deep copy 격리).
 | `src/pipeline-sdk/registry.ts` | `registerNodeDefinition` / `assertRegistryCompleteness` |
 | `src/pipeline-sdk/bootstrap.ts` | 5종 definition 등록 진입점 |
 | `src/pipeline-sdk/definitions/*Definition.tsx` | 5종 NodeKind 각자 정의 |
-| `src/pipeline-sdk/engine/graphToConfig.ts` | graph → `PipelineConfig` |
-| `src/pipeline-sdk/engine/configToGraph.ts` | `PipelineConfig` → graph (claim 기반 복원) |
+| `src/pipeline-sdk/sourceFormat.ts` | v3 source 토큰 파서/빌더 (`parseSourceRef` / `buildSplitSourceRef` / `buildVersionSourceRef`) |
+| `src/pipeline-sdk/engine/graphToConfig.ts` | graph → `PipelineConfig` (`schema_version=3`) |
+| `src/pipeline-sdk/engine/configToGraph.ts` | `PipelineConfig` → graph + `unresolveVersionRefsToSplitRefs` (Run JSON import 시 부모 split 으로 환원) |
 | `src/pipeline-sdk/engine/clientValidation.ts` | 클라이언트 측 검증 |
 | `src/pipeline-sdk/engine/issueMapping.ts` | 백엔드 issue → 노드 매핑 |
 | `src/pipeline-sdk/hooks/useNodeData.ts` | store 직접 구독 훅 |
@@ -809,6 +1193,13 @@ append, extra 최초/보존 분기, list 입력 거부, deep copy 격리).
 | `src/pipeline-sdk/nodeTypes.ts` | `buildNodeTypesFromRegistry` — React Flow 연결 |
 | `src/pipeline-sdk/styles.ts` | `CATEGORY_STYLE` / `MANIPULATOR_EMOJI` |
 | `src/pages/PipelineEditorPage.tsx` | 에디터 오케스트레이션 (React Flow 배선) |
+| `src/pages/PipelineListPage.tsx` | Pipeline (concept) 목록 + 행 클릭 drawer + 버전 세로 목록 + 인라인 expand |
+| `src/pages/PipelineVersionDetailPage.tsx` | PipelineVersion 풀 페이지 — readonly DAG + 사이드 메타 + 실행 이력 + JSON 복사·보기 |
+| `src/components/pipeline/VersionResolverModal.tsx` | PipelineVersion 단위 실행 제출 (split → version 드롭다운) |
+| `src/components/pipeline/FamilyManagementModal.tsx` | PipelineFamily CRUD (생성·수정·삭제, 색 swatch 표시) |
+| `src/components/pipeline/FamilyAssignControl.tsx` | Pipeline 의 family 변경 Select (미분류 + 각 family) |
+| `src/components/pipeline/FamilyHeadingPopover.tsx` | Family 그룹 heading 클릭 popover — 보기 ↔ 수정 (이름·설명·색상 ColorPicker) |
+| `src/utils/clipboard.ts` | navigator.clipboard fallback (HTTP + 비localhost 환경 보호) |
 | `src/components/pipeline/PropertiesPanel.tsx` | `definition.PropertiesComponent` 위임 |
 | `src/components/pipeline/NodePalette.tsx` | `buildPaletteItems` 소비 |
 | `src/stores/pipelineEditorStore.ts` | `nodeDataMap` / `distributeIssuesToNodes` |

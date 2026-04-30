@@ -26,7 +26,7 @@ from app.models.all_models import (  # noqa: F401
     DatasetVersion,
     DatasetLineage,
     Manipulator,
-    PipelineExecution,
+    PipelineRun,
     Objective,
     Recipe,
     Solution,

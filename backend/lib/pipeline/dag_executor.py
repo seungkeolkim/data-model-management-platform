@@ -28,7 +28,12 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 from lib.manipulators import MANIPULATOR_REGISTRY
-from lib.pipeline.config import PipelineConfig, TaskConfig
+from lib.pipeline.config import (
+    SOURCE_TYPE_VERSION,
+    PipelineConfig,
+    TaskConfig,
+    parse_source_ref,
+)
 from lib.pipeline.image_materializer import ImageMaterializer
 from lib.pipeline.io.coco_io import parse_coco_json, write_coco_json
 from lib.pipeline.io.manifest_io import parse_manifest_dir, write_manifest_dir
@@ -158,8 +163,15 @@ class PipelineDagExecutor:
 
             for ref in task_config.inputs:
                 if ref.startswith("source:"):
-                    # 소스 데이터셋 로드
-                    dataset_id = ref.split(":", 1)[1]
+                    # v3 포맷 — `source:dataset_version:<id>` (executor 단계는 항상 resolved).
+                    # split 단계 토큰은 submit 시점 _substitute_resolved_versions 가 이미 치환했어야 함.
+                    parsed = parse_source_ref(ref)
+                    if parsed is None or parsed[0] != SOURCE_TYPE_VERSION:
+                        raise RuntimeError(
+                            f"executor 가 받은 source 토큰이 dataset_version 이 아닙니다: {ref!r}. "
+                            f"submit 단계 resolved 치환이 누락된 것으로 보입니다."
+                        )
+                    dataset_id = parsed[1]
                     source_meta = self._load_source_meta(dataset_id)
                     all_source_storage_uris.append(source_meta.storage_uri)
                     logger.info(

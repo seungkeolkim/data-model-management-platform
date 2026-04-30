@@ -25,9 +25,6 @@ interface PipelineEditorState {
   // ── 검증 ──
   validationResult: PipelineValidationResponse | null
 
-  // ── 실행 ──
-  executionId: string | null
-
   // ── UI 상태 ──
   selectedNodeId: string | null
   isJsonPreviewOpen: boolean
@@ -41,7 +38,6 @@ interface PipelineEditorState {
   /** 검증 결과의 issues를 파싱하여 각 노드의 validationIssues에 매핑 */
   applyValidationToNodes: (issues: PipelineValidationIssue[]) => void
   clearValidation: () => void
-  setExecutionId: (id: string | null) => void
   toggleJsonPreview: () => void
   /** 에디터 전체 초기화 */
   reset: () => void
@@ -54,7 +50,6 @@ interface PipelineEditorState {
 const initialState = {
   nodeDataMap: {} as Record<string, PipelineNodeData>,
   validationResult: null as PipelineValidationResponse | null,
-  executionId: null as string | null,
   selectedNodeId: null as string | null,
   isJsonPreviewOpen: false,
 }
@@ -63,7 +58,7 @@ const initialState = {
 // 스토어 생성
 // =============================================================================
 
-export const usePipelineEditorStore = create<PipelineEditorState>((set, get) => ({
+export const usePipelineEditorStore = create<PipelineEditorState>((set) => ({
   ...initialState,
 
   setNodeData: (nodeId, data) =>
@@ -116,9 +111,6 @@ export const usePipelineEditorStore = create<PipelineEditorState>((set, get) => 
       }
       return { nodeDataMap: updatedMap, validationResult: null }
     }),
-
-  setExecutionId: (id) =>
-    set({ executionId: id }),
 
   toggleJsonPreview: () =>
     set((state) => ({ isJsonPreviewOpen: !state.isJsonPreviewOpen })),

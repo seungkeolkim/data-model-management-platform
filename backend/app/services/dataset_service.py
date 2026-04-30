@@ -110,12 +110,12 @@ class DatasetGroupService:
             )
             .where(DatasetGroup.deleted_at.is_(None))
             .options(
-                # group.splits → split.versions (활성만) → version.pipeline_executions
+                # group.splits → split.versions (활성만) → version.pipeline_runs
                 selectinload(DatasetGroup.splits)
                 .selectinload(
                     DatasetSplit.versions.and_(DatasetVersion.deleted_at.is_(None))
                 )
-                .selectinload(DatasetVersion.pipeline_executions)
+                .selectinload(DatasetVersion.pipeline_runs)
             )
         )
 
@@ -192,7 +192,7 @@ class DatasetGroupService:
     # -------------------------------------------------------------------------
 
     async def get_group(self, group_id: str) -> DatasetGroup | None:
-        """단건 DatasetGroup 조회 (splits + versions + pipeline_executions 포함). 소프트 삭제된 그룹은 제외."""
+        """단건 DatasetGroup 조회 (splits + versions + pipeline_runs 포함). 소프트 삭제된 그룹은 제외."""
         result = await self.db.execute(
             select(DatasetGroup)
             .where(DatasetGroup.id == group_id, DatasetGroup.deleted_at.is_(None))
@@ -201,7 +201,7 @@ class DatasetGroupService:
                 .selectinload(
                     DatasetSplit.versions.and_(DatasetVersion.deleted_at.is_(None))
                 )
-                .selectinload(DatasetVersion.pipeline_executions)
+                .selectinload(DatasetVersion.pipeline_runs)
             )
         )
         return result.scalar_one_or_none()
@@ -977,7 +977,7 @@ class DatasetGroupService:
 
     async def get_dataset(self, dataset_id: str) -> DatasetVersion | None:
         """단건 DatasetVersion 조회. 소프트 삭제된 데이터셋은 제외.
-        split → group 체인과 pipeline_executions 관계를 함께 로드한다 (v7.9 3계층 분리).
+        split → group 체인과 pipeline_runs 관계를 함께 로드한다 (v7.9 3계층 분리).
         """
         result = await self.db.execute(
             select(DatasetVersion)
@@ -989,7 +989,7 @@ class DatasetGroupService:
                 # split.group 은 association_proxy 로 노출되지만 selectinload 는 실제
                 # relationship 체인 (split → group) 을 따라가야 한다.
                 selectinload(DatasetVersion.split_slot).selectinload(DatasetSplit.group),
-                selectinload(DatasetVersion.pipeline_executions),
+                selectinload(DatasetVersion.pipeline_runs),
             )
         )
         return result.scalar_one_or_none()

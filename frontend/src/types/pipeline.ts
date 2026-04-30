@@ -13,7 +13,12 @@ import type { Node, Edge } from '@xyflow/react'
 
 export interface TaskConfig {
   operator: string
-  inputs: string[]          // "source:<dataset_id>" 또는 "<task_name>"
+  /** v3 포맷:
+   *   - "source:dataset_split:<split_id>"   (Pipeline.config / 사용자 spec)
+   *   - "source:dataset_version:<id>"       (PipelineRun.transform_config / resolved)
+   *   - "task_<node_id>"                    (task 간 참조)
+   */
+  inputs: string[]
   params: Record<string, unknown>
 }
 
@@ -29,15 +34,14 @@ export interface PipelineConfig {
   output: OutputConfig
   tasks: Record<string, TaskConfig>
   /**
-   * Load→Save 직결 모드에서 참조할 소스 Dataset.id.
-   * tasks 가 비어있을 때만 의미가 있다.
+   * Load→Save 직결 모드의 소스 DatasetSplit.id (v7.10 / 027 §4-1).
+   * version 은 실행 시점 Version Resolver Modal 에서 확정된다.
    */
-  passthrough_source_dataset_id?: string | null
-  /**
-   * DAG 스키마 버전. 현재 SDK는 v1을 생성.
-   * 하위 버전 migrator는 도입하지 않음 — 미래 파이프라인 변경 대비 완충용 필드.
-   */
+  passthrough_source_split_id?: string | null
+  /** DAG 스키마 버전. 현재 SDK 는 항상 3 을 생성. */
   schema_version?: number
+  /** PipelineRun.transform_config 측에서 채워지는 resolved 버전. FE spec 단계에선 항상 null. */
+  passthrough_source_dataset_id?: string | null
 }
 
 /**
@@ -51,7 +55,7 @@ export interface PartialPipelineConfig {
   description?: string
   output: OutputConfig | null
   tasks: Record<string, TaskConfig>
-  passthrough_source_dataset_id?: string | null
+  passthrough_source_split_id?: string | null
   schema_version?: number
 }
 
@@ -76,6 +80,22 @@ export interface PipelineValidationResponse {
 export interface PipelineSubmitResponse {
   execution_id: string
   celery_task_id: string | null
+  message: string
+}
+
+/**
+ * `POST /pipelines/concepts` 응답 (§12-1 저장/실행 분리).
+ *
+ * 에디터의 "저장" 결과 — Pipeline (concept) + PipelineVersion 만 만든다.
+ * 실행 (PipelineRun) 은 분리된 흐름에서 별도 dispatch.
+ */
+export interface PipelineSaveResponse {
+  pipeline_id: string
+  pipeline_version_id: string
+  pipeline_name: string
+  version: string
+  is_new_concept: boolean
+  is_new_version: boolean
   message: string
 }
 
@@ -105,8 +125,17 @@ export interface PipelineExecutionResponse {
   celery_task_id: string | null
   task_progress: Record<string, TaskProgressItem> | null
   pipeline_image_url: string | null
-  output_dataset_version: string | null
+  /** 이 run 을 만든 Pipeline (concept) 의 name (없으면 null — legacy run). */
+  pipeline_name: string | null
+  /** 이 run 을 만든 PipelineVersion 의 version 문자열 (예: "1.0"). */
+  pipeline_version: string | null
   output_dataset_group_id: string | null
+  /** output 의 모 DatasetGroup name. */
+  output_dataset_group_name: string | null
+  /** output DatasetSplit 의 split 문자열 (TRAIN/VAL/TEST/NONE). */
+  output_dataset_split: string | null
+  /** output DatasetVersion 의 version 문자열 (예: "2.0"). */
+  output_dataset_version: string | null
   started_at: string | null
   finished_at: string | null
   created_at: string
@@ -118,22 +147,187 @@ export interface PipelineListResponse {
 }
 
 // =============================================================================
+// PipelineFamily / Pipeline (concept) / PipelineVersion (v7.11)
+// =============================================================================
+
+export interface PipelineFamilyResponse {
+  id: string
+  name: string
+  description: string | null
+  /** Family 시각 구분 색 (`#RRGGBB`). */
+  color: string
+  pipeline_count: number
+  created_at: string
+  updated_at: string
+}
+
+export interface PipelineFamilyCreateRequest {
+  name: string
+  description?: string | null
+  /** `#RRGGBB`. 미지정 시 backend 가 랜덤 할당. */
+  color?: string | null
+}
+
+export interface PipelineFamilyUpdateRequest {
+  name?: string | null
+  description?: string | null
+  color?: string | null
+}
+
+export interface PipelineVersionSummary {
+  id: string
+  version: string
+  /** 이 버전에 사용자가 적은 메모 (없으면 null). */
+  description: string | null
+  is_active: boolean
+  has_automation: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface PipelineEntityResponse {
+  id: string
+  family_id: string | null
+  family_name: string | null
+  name: string
+  description: string | null
+  output_split_id: string
+  output_group_id: string | null
+  output_group_name: string | null
+  output_split: string | null
+  task_type: string
+  is_active: boolean
+  versions: PipelineVersionSummary[]
+  latest_version: PipelineVersionSummary | null
+  created_at: string
+  updated_at: string
+}
+
+export interface PipelineListItem {
+  id: string
+  family_id: string | null
+  family_name: string | null
+  name: string
+  description: string | null
+  output_split_id: string
+  output_group_id: string | null
+  output_group_name: string | null
+  output_split: string | null
+  task_type: string
+  is_active: boolean
+  version_count: number
+  latest_version: string | null
+  has_automation: boolean
+  run_count: number
+  last_run_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface PipelineListPageResponse {
+  items: PipelineListItem[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export interface PipelineUpdateRequest {
+  name?: string | null
+  description?: string | null
+  family_id?: string | null
+  unset_family?: boolean
+  is_active?: boolean | null
+}
+
+export interface PipelineVersionResponse {
+  id: string
+  pipeline_id: string
+  pipeline_name: string
+  family_id: string | null
+  family_name: string | null
+  version: string
+  config: Record<string, unknown>
+  /** 이 버전에 사용자가 적은 메모 (없으면 null). */
+  description: string | null
+  task_type: string
+  output_split_id: string
+  output_group_id: string | null
+  output_group_name: string | null
+  output_split: string | null
+  is_active: boolean
+  has_automation: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface PipelineVersionUpdateRequest {
+  is_active?: boolean | null
+  /**
+   * 버전 메모 갱신.
+   * - undefined / null → 미변경
+   * - "" (빈 문자열) → NULL 로 clear
+   * - 그 외 → 그 값으로 갱신
+   */
+  description?: string | null
+}
+
+/** POST /pipelines/versions/{id}/runs 요청 바디 */
+export interface PipelineRunSubmitRequest {
+  resolved_input_versions: Record<string, string>  // {split_id: version}
+}
+
+// =============================================================================
+// PipelineAutomation (v7.11 — version 단위)
+// =============================================================================
+
+export interface PipelineAutomationRealResponse {
+  id: string
+  pipeline_version_id: string
+  pipeline_id: string | null
+  pipeline_name: string | null
+  pipeline_version: string | null
+  status: 'stopped' | 'active' | 'error'
+  mode: 'polling' | 'triggering' | null
+  poll_interval: '10m' | '1h' | '6h' | '24h' | null
+  error_reason: string | null
+  last_seen_input_versions: Record<string, unknown> | null
+  is_active: boolean
+  deleted_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface PipelineAutomationUpsertRequest {
+  status?: 'stopped' | 'active' | 'error'
+  mode?: 'polling' | 'triggering' | null
+  poll_interval?: '10m' | '1h' | '6h' | '24h' | null
+}
+
+export interface PipelineAutomationRerunRequest {
+  mode: 'if_delta' | 'force_latest'
+}
+
+// =============================================================================
 // 노드 데이터 타입 — React Flow node.data에 저장되는 도메인 데이터
 // =============================================================================
 
-/** DataLoad 노드: 데이터셋 그룹 → Split → 버전 3단계 선택 → source:<dataset_id> 참조 생성 */
+/**
+ * DataLoad 노드: 데이터셋 그룹 → Split 2단계 선택 → `source:<split_id>` 참조 생성.
+ *
+ * v7.10 (핸드오프 027 §4-1, §12-1) — schema_version=2 전환으로 version 입력은 제거.
+ * 버전은 실행 시점에 Version Resolver Modal 에서 선택. Pipeline 저장은 `(group, split)`
+ * 까지만 고정.
+ */
 export interface DataLoadNodeData {
   type: 'dataLoad'
   /** 1단계: 선택된 DatasetGroup ID */
   groupId: string | null
   /** 1단계: 그룹명 (표시용) */
   groupName: string
-  /** 2단계: 선택된 Split */
+  /** 2단계: 선택된 Split 문자열 (TRAIN / VAL / TEST / NONE) */
   split: string | null
-  /** 3단계: 선택된 Dataset ID (split × version으로 확정된 최종 ID) */
-  datasetId: string | null
-  /** 3단계: 선택된 버전 문자열 (표시용) */
-  version: string | null
+  /** 2단계: 선택된 DatasetSplit (정적 슬롯) ID — v7.10 `source:<split_id>` 참조용 */
+  splitId: string | null
   /** 표시용 라벨 */
   datasetLabel: string
   /** 검증 이슈 (validate 후 매핑) */

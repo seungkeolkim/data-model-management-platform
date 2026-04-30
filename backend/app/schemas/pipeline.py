@@ -52,7 +52,7 @@ class ManipulatorListResponse(BaseModel):
     total: int
 
 
-class PipelineExecutionResponse(BaseModel):
+class PipelineRunResponse(BaseModel):
     """파이프라인 실행 응답."""
     id: str
     output_dataset_id: str
@@ -65,8 +65,30 @@ class PipelineExecutionResponse(BaseModel):
     celery_task_id: str | None
     task_progress: dict[str, Any] | None = None
     pipeline_image_url: str | None = None
-    output_dataset_version: str | None = None
+    # 실행 이력 목록에서 사람이 읽기 좋은 라벨로 노출하기 위한 평탄화 필드들 (v7.13).
+    # ORM 의 PipelineRun → pipeline_version → pipeline / output_dataset → split_slot → group
+    # 체인을 selectinload 로 미리 끌어와 router 가 채운다.
+    pipeline_name: str | None = Field(
+        default=None,
+        description="이 run 을 만든 Pipeline (concept) 의 name",
+    )
+    pipeline_version: str | None = Field(
+        default=None,
+        description="이 run 을 만든 PipelineVersion 의 version 문자열 (예: '1.0')",
+    )
     output_dataset_group_id: str | None = None
+    output_dataset_group_name: str | None = Field(
+        default=None,
+        description="output 의 모 DatasetGroup name",
+    )
+    output_dataset_split: str | None = Field(
+        default=None,
+        description="output DatasetSplit 의 split 문자열 (TRAIN/VAL/TEST/NONE)",
+    )
+    output_dataset_version: str | None = Field(
+        default=None,
+        description="output DatasetVersion 의 version 문자열 (예: '2.0')",
+    )
     started_at: datetime | None
     finished_at: datetime | None
     created_at: datetime
@@ -105,10 +127,273 @@ class PipelineSubmitResponse(BaseModel):
     message: str
 
 
+class PipelineSaveResponse(BaseModel):
+    """
+    Pipeline (concept) + PipelineVersion 저장 응답 (§12-1 저장/실행 분리).
+
+    실제 실행은 별도 — `POST /pipelines/versions/{id}/runs` (Version Resolver Modal).
+    """
+    pipeline_id: str = Field(..., description="저장된 Pipeline (concept) ID")
+    pipeline_version_id: str = Field(..., description="저장된 PipelineVersion ID")
+    pipeline_name: str = Field(..., description="Pipeline (concept) 이름")
+    version: str = Field(..., description="새로 생성/재사용된 version 문자열 (예: '1.0', '2.0')")
+    is_new_concept: bool = Field(
+        ..., description="True 이면 새 Pipeline (concept) 가 생성됨, False 이면 기존 concept 재사용",
+    )
+    is_new_version: bool = Field(
+        ..., description="True 이면 새 PipelineVersion 이 생성됨, False 이면 동일 config 의 기존 version 재사용",
+    )
+    message: str = Field(..., description="사용자 안내 메시지")
+
+
 class PipelineListResponse(BaseModel):
     """파이프라인 실행 이력 목록 응답."""
-    items: list[PipelineExecutionResponse]
+    items: list[PipelineRunResponse]
     total: int
+
+
+# =============================================================================
+# PipelineFamily / Pipeline (concept) / PipelineVersion 스키마 (v7.11)
+# =============================================================================
+
+class PipelineFamilyResponse(BaseModel):
+    """PipelineFamily 응답 — 즐겨찾기 폴더."""
+    id: str
+    name: str
+    description: str | None
+    color: str = Field(
+        ...,
+        description="Family 시각 구분 색 (`#RRGGBB`)",
+    )
+    pipeline_count: int = Field(
+        default=0,
+        description="이 family 에 묶인 active Pipeline 수",
+    )
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class PipelineFamilyCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    description: str | None = None
+    color: str | None = Field(
+        default=None,
+        pattern=r"^#[0-9a-fA-F]{6}$",
+        description="`#RRGGBB`. 미지정 시 backend 가 랜덤 할당.",
+    )
+
+
+class PipelineFamilyUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = None
+    color: str | None = Field(
+        default=None,
+        pattern=r"^#[0-9a-fA-F]{6}$",
+        description="`#RRGGBB`. 미지정 시 변경 안 함.",
+    )
+
+
+class PipelineVersionSummary(BaseModel):
+    """PipelineVersion 요약 — concept 응답 안에서 versions 목록 행."""
+    id: str
+    version: str
+    description: str | None = Field(
+        default=None,
+        description="이 버전의 사람-작성 메모 (없으면 NULL)",
+    )
+    is_active: bool
+    has_automation: bool = False
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class PipelineResponse(BaseModel):
+    """Pipeline (concept) 응답 — versions 목록 포함."""
+    id: str
+    family_id: str | None
+    family_name: str | None = None
+    name: str
+    description: str | None
+    output_split_id: str
+    output_group_id: str | None = Field(
+        default=None,
+        description="output_split 의 상위 group id",
+    )
+    output_group_name: str | None = None
+    output_split: str | None = Field(
+        default=None,
+        description="TRAIN | VAL | TEST | NONE — DatasetSplit.split 문자열",
+    )
+    task_type: str
+    is_active: bool
+    versions: list[PipelineVersionSummary] = Field(default_factory=list)
+    latest_version: PipelineVersionSummary | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class PipelineListItemResponse(BaseModel):
+    """Pipeline 목록 행 응답 — versions 카운트만, 본문 X."""
+    id: str
+    family_id: str | None
+    family_name: str | None = None
+    name: str
+    description: str | None
+    output_split_id: str
+    output_group_id: str | None = None
+    output_group_name: str | None = None
+    output_split: str | None = None
+    task_type: str
+    is_active: bool
+    version_count: int = Field(default=0, description="누적 PipelineVersion 수")
+    latest_version: str | None = Field(
+        default=None, description="최신 active version 문자열 (없으면 null)",
+    )
+    has_automation: bool = False
+    run_count: int = Field(default=0, description="이 concept 모든 version 의 누적 run 수")
+    last_run_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class PipelineListPageResponse(BaseModel):
+    items: list[PipelineListItemResponse]
+    total: int
+    limit: int
+    offset: int
+
+
+class PipelineUpdateRequest(BaseModel):
+    """
+    Pipeline (concept) 편집 — name / description / family_id / is_active.
+    config 는 immutable, version 단위 책임.
+    """
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = None
+    family_id: str | None = Field(
+        default=None,
+        description="이 Pipeline 을 옮길 family. 명시 시 family 변경",
+    )
+    unset_family: bool = Field(
+        default=False,
+        description="True 이면 family_id 를 NULL 로 (미분류). family_id 와 동시 지정 X",
+    )
+    is_active: bool | None = Field(
+        default=None, description="soft delete 토글. FALSE 로 전환하면 모든 version automation / run 차단",
+    )
+
+
+class PipelineVersionResponse(BaseModel):
+    """PipelineVersion 상세 — config + 모 Pipeline 메타."""
+    id: str
+    pipeline_id: str
+    pipeline_name: str
+    family_id: str | None
+    family_name: str | None = None
+    version: str
+    config: dict[str, Any]
+    description: str | None = Field(
+        default=None,
+        description="이 버전의 사람-작성 메모 (없으면 NULL)",
+    )
+    task_type: str
+    output_split_id: str
+    output_group_id: str | None = None
+    output_group_name: str | None = None
+    output_split: str | None = None
+    is_active: bool
+    has_automation: bool = False
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class PipelineVersionUpdateRequest(BaseModel):
+    """PipelineVersion 편집 — is_active 토글 + description 수정 (config 는 immutable)."""
+    is_active: bool | None = None
+    description: str | None = Field(
+        default=None,
+        description="버전 메모 갱신. None 이면 미변경, 빈 문자열이면 NULL 로 clear",
+    )
+
+
+# =============================================================================
+# PipelineRun 제출 (Version Resolver Modal — 027 §4-3)
+# =============================================================================
+
+class PipelineRunSubmitRequest(BaseModel):
+    """
+    `POST /pipelines/{id}/runs` 요청 바디.
+
+    resolved_input_versions — `{split_id: version}`. 사용자가 각 source split 의
+    version 을 드롭다운에서 선택해 확정. 기본값 (UI 에서 채움) = 각 split 의 최신 version.
+    """
+    resolved_input_versions: dict[str, str] = Field(
+        default_factory=dict,
+        description="{split_id: version} — run 시점 input 해석 맵",
+    )
+
+
+# =============================================================================
+# PipelineAutomation 스키마 (§2-3 + §12-3 soft delete)
+# =============================================================================
+
+class PipelineAutomationResponse(BaseModel):
+    id: str
+    pipeline_version_id: str
+    pipeline_id: str | None = Field(
+        default=None,
+        description="모 Pipeline (concept) id — 조회 편의 (selectinload 시 채움)",
+    )
+    pipeline_name: str | None = None
+    pipeline_version: str | None = None
+    status: str
+    mode: str | None
+    poll_interval: str | None
+    error_reason: str | None
+    last_seen_input_versions: dict[str, Any] | None
+    is_active: bool
+    deleted_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class PipelineAutomationUpsertRequest(BaseModel):
+    """
+    자동화 등록 / 업데이트 요청. `POST /pipelines/{id}/automation` 또는 PATCH.
+
+    Pipeline 당 is_active=TRUE 인 자동화는 최대 1개 (partial unique index 강제).
+    같은 Pipeline 에 다시 POST 하면 기존 active 행을 덮어쓴다.
+    """
+    status: str = Field(default="stopped", description="stopped | active | error")
+    mode: str | None = Field(default=None, description="polling | triggering | NULL")
+    poll_interval: str | None = Field(
+        default=None, description="10m | 1h | 6h | 24h | NULL (polling 외)",
+    )
+
+
+class PipelineAutomationRerunRequest(BaseModel):
+    """
+    수동 재실행 요청 — 026 §5-2a 2-버튼 UX.
+
+    - if_delta: 상류 delta 판정 후 있으면 dispatch, 없으면 SKIPPED_NO_DELTA
+    - force_latest: delta 무시, 각 source split 의 최신 version 으로 항상 dispatch
+    """
+    mode: str = Field(
+        default="if_delta",
+        description="if_delta | force_latest",
+    )
 
 
 # =============================================================================

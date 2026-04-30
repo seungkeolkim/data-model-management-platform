@@ -470,7 +470,22 @@ export default function DatasetListPage() {
   ]
 
   return (
-    <div>
+    <div className="dataset-list-page">
+      {/*
+        AntD 기본 `.ant-table-content > table { width: 100% }` 가 컨테이너를
+        채우면서 `table-layout: fixed` 컬럼들에 잉여 폭을 비례 분배하는 문제 회피.
+        가장 넓은 컬럼 (그룹명 등) 이 잉여를 가장 많이 받아 우측 공백 + 드래그
+        축소가 시각적으로 안 먹는 증상을 만든다. → inner table 폭을 max-content
+        로 고정하고 잉여는 wrapper 우측 여백으로 흘려보낸다.
+        (PipelineHistoryPage 와 동일 처리. 설계서 §6-3 참고)
+      */}
+      <style>{`
+        .dataset-list-page .ant-table-content > table,
+        .dataset-list-page .ant-table-body > table {
+          width: max-content !important;
+          min-width: 0 !important;
+        }
+      `}</style>
       {/* 헤더 */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
         <div>

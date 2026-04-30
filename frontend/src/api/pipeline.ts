@@ -1,8 +1,15 @@
 /**
- * 파이프라인 API 함수
+ * 파이프라인 API 함수 (v7.12 — feature/pipeline-family-and-version).
  *
- * 파이프라인 검증, 실행, 상태 조회, 이력 목록 엔드포인트를 래핑한다.
- * Manipulator 목록 조회도 여기서 re-export (에디터에서 직접 사용).
+ * 라우트 그룹:
+ *   pipelinesApi          — validate / preview-schema (FE 호환 진입점)
+ *   pipelineRunsApi       — 실행 이력 / 단건 상태
+ *   pipelineConceptsApi   — Pipeline (concept) CRUD + 저장(§12-1) + family 이동 + runs 목록
+ *   pipelineVersionsApi   — PipelineVersion 상세 + version 단위 run 제출
+ *   pipelineFamiliesApi   — PipelineFamily CRUD
+ *   pipelineAutomationsApi — version 단위 automation
+ *   manipulatorsApi       — 노드 팔레트
+ *   datasetsForPipelineApi — DataLoad 노드용
  */
 
 import api from './index'
@@ -11,39 +18,32 @@ import type {
   PartialPipelineConfig,
   PipelineValidationResponse,
   PipelineSubmitResponse,
+  PipelineSaveResponse,
   PipelineExecutionResponse,
   PipelineListResponse,
+  PipelineEntityResponse,
+  PipelineFamilyCreateRequest,
+  PipelineFamilyResponse,
+  PipelineFamilyUpdateRequest,
+  PipelineListPageResponse,
+  PipelineUpdateRequest,
+  PipelineRunSubmitRequest,
+  PipelineVersionResponse,
+  PipelineVersionUpdateRequest,
+  PipelineAutomationRealResponse,
+  PipelineAutomationUpsertRequest,
+  PipelineAutomationRerunRequest,
 } from '../types/pipeline'
-import type { Manipulator, DatasetVersion, DatasetGroup, DatasetGroupListResponse } from '../types/dataset'
+import type {
+  Manipulator,
+  DatasetVersion,
+  DatasetGroup,
+  DatasetGroupListResponse,
+} from '../types/dataset'
 
 // =============================================================================
-// Pipeline 실행 관련
+// Validate / Execute / Preview (FE 호환 진입점)
 // =============================================================================
-
-export const pipelinesApi = {
-  /** 파이프라인 설정 검증 (정적 + DB 검증) */
-  validate: (config: PipelineConfig) =>
-    api.post<PipelineValidationResponse>('/pipelines/validate', config),
-
-  /** 파이프라인 비동기 실행 제출 (202 응답) */
-  execute: (config: PipelineConfig) =>
-    api.post<PipelineSubmitResponse>('/pipelines/execute', config),
-
-  /** 특정 실행의 상태 조회 (polling용) */
-  getStatus: (executionId: string) =>
-    api.get<PipelineExecutionResponse>(`/pipelines/${executionId}/status`),
-
-  /** 실행 이력 목록 */
-  list: (params?: { page?: number; page_size?: number }) =>
-    api.get<PipelineListResponse>('/pipelines', { params }),
-
-  /** 특정 노드 시점의 head_schema 프리뷰 (Save 없는 partial config 허용) */
-  previewSchema: (config: PartialPipelineConfig, targetRef: string) =>
-    api.post<SchemaPreviewResponse>('/pipelines/preview-schema', {
-      config,
-      target_ref: targetRef,
-    }),
-}
 
 export interface SchemaPreviewHead {
   name: string
@@ -58,34 +58,198 @@ export interface SchemaPreviewResponse {
   error_message: string | null
 }
 
+export const pipelinesApi = {
+  validate: (config: PipelineConfig) =>
+    api.post<PipelineValidationResponse>('/pipelines/validate', config),
+
+  previewSchema: (config: PartialPipelineConfig, targetRef: string) =>
+    api.post<SchemaPreviewResponse>('/pipelines/preview-schema', {
+      config,
+      target_ref: targetRef,
+    }),
+
+  /** @deprecated v7.11 — pipelineRunsApi.get 사용 */
+  getStatus: (runId: string) =>
+    api.get<PipelineExecutionResponse>(`/pipelines/runs/${runId}`),
+
+  /** @deprecated v7.11 — pipelineRunsApi.list 사용 */
+  list: (params?: {
+    page?: number
+    page_size?: number
+    sort_by?: string
+    sort_order?: 'asc' | 'desc'
+  }) =>
+    api.get<PipelineListResponse>('/pipelines/runs', { params }),
+}
+
 // =============================================================================
-// Manipulator 목록 (에디터 NodePalette용)
+// PipelineRun (실행 이력)
+// =============================================================================
+
+export const pipelineRunsApi = {
+  list: (params?: {
+    page?: number
+    page_size?: number
+    sort_by?: string
+    sort_order?: 'asc' | 'desc'
+  }) =>
+    api.get<PipelineListResponse>('/pipelines/runs', { params }),
+
+  get: (runId: string) =>
+    api.get<PipelineExecutionResponse>(`/pipelines/runs/${runId}`),
+}
+
+// =============================================================================
+// PipelineFamily
+// =============================================================================
+
+export const pipelineFamiliesApi = {
+  list: () => api.get<PipelineFamilyResponse[]>('/pipelines/families'),
+
+  get: (familyId: string) =>
+    api.get<PipelineFamilyResponse>(`/pipelines/families/${familyId}`),
+
+  create: (body: PipelineFamilyCreateRequest) =>
+    api.post<PipelineFamilyResponse>('/pipelines/families', body),
+
+  update: (familyId: string, body: PipelineFamilyUpdateRequest) =>
+    api.patch<PipelineFamilyResponse>(`/pipelines/families/${familyId}`, body),
+
+  delete: (familyId: string) =>
+    api.delete<void>(`/pipelines/families/${familyId}`),
+}
+
+// =============================================================================
+// Pipeline (concept) — 목록 / 상세 / 편집 / runs
+// =============================================================================
+
+export const pipelineConceptsApi = {
+  list: (params?: {
+    include_inactive?: boolean
+    name_filter?: string
+    task_type?: string[]
+    family_id?: string[]
+    family_unfiled?: boolean
+    /** 이 split 들 중 하나를 output 으로 가진 Pipeline 만 (다중 IN). */
+    output_split_id?: string[]
+    limit?: number
+    offset?: number
+  }) =>
+    api.get<PipelineListPageResponse>('/pipelines', { params }),
+
+  get: (pipelineId: string) =>
+    api.get<PipelineEntityResponse>(`/pipelines/${pipelineId}`),
+
+  update: (pipelineId: string, body: PipelineUpdateRequest) =>
+    api.patch<PipelineEntityResponse>(`/pipelines/${pipelineId}`, body),
+
+  /**
+   * 에디터 "저장" — Pipeline (concept) + PipelineVersion 저장 (§12-1).
+   * 실행은 분리된 흐름 (`pipelineVersionsApi.submitRun`) 으로.
+   *
+   * @param conceptName 사용자가 저장 모달에서 입력한 이름. 미지정 시 backend
+   *   가 §12-2 자동 규칙 (`{config.name}_{split.lower()}`) 으로 생성.
+   */
+  save: (config: PipelineConfig, conceptName?: string) =>
+    api.post<PipelineSaveResponse>('/pipelines/concepts', config, {
+      params: conceptName ? { concept_name: conceptName } : undefined,
+    }),
+
+  /** 이 concept 의 모든 version 에 걸친 run 이력 */
+  listRuns: (pipelineId: string, params?: { page?: number; page_size?: number }) =>
+    api.get<PipelineListResponse>(`/pipelines/${pipelineId}/runs`, { params }),
+}
+
+// =============================================================================
+// PipelineVersion — config + 실행
+// =============================================================================
+
+export const pipelineVersionsApi = {
+  get: (versionId: string) =>
+    api.get<PipelineVersionResponse>(`/pipelines/versions/${versionId}`),
+
+  update: (versionId: string, body: PipelineVersionUpdateRequest) =>
+    api.patch<PipelineVersionResponse>(`/pipelines/versions/${versionId}`, body),
+
+  listRuns: (versionId: string, params?: { page?: number; page_size?: number }) =>
+    api.get<PipelineListResponse>(`/pipelines/versions/${versionId}/runs`, { params }),
+
+  /** Version Resolver Modal → run dispatch */
+  submitRun: (versionId: string, body: PipelineRunSubmitRequest) =>
+    api.post<PipelineSubmitResponse>(`/pipelines/versions/${versionId}/runs`, body),
+}
+
+// =============================================================================
+// PipelineAutomation (version 단위)
+// =============================================================================
+
+export const pipelineAutomationsApi = {
+  listActive: () =>
+    api.get<PipelineAutomationRealResponse[]>('/pipelines/automations'),
+
+  getByVersion: (versionId: string) =>
+    api.get<PipelineAutomationRealResponse | null>(
+      `/pipelines/versions/${versionId}/automation`,
+    ),
+
+  upsert: (versionId: string, body: PipelineAutomationUpsertRequest) =>
+    api.put<PipelineAutomationRealResponse>(
+      `/pipelines/versions/${versionId}/automation`, body,
+    ),
+
+  delete: (automationId: string) =>
+    api.delete<PipelineAutomationRealResponse>(
+      `/pipelines/automations/${automationId}`,
+    ),
+
+  reassign: (automationId: string, newPipelineVersionId: string) =>
+    api.post<PipelineAutomationRealResponse>(
+      `/pipelines/automations/${automationId}/reassign`,
+      null,
+      { params: { new_pipeline_version_id: newPipelineVersionId } },
+    ),
+
+  rerun: (automationId: string, body: PipelineAutomationRerunRequest) =>
+    api.post<PipelineSubmitResponse>(
+      `/pipelines/automations/${automationId}/rerun`, body,
+    ),
+}
+
+// =============================================================================
+// Manipulator + Dataset 보조 API (변경 없음)
 // =============================================================================
 
 export const manipulatorsApi = {
-  /** manipulator 목록 조회 (카테고리/스코프/상태 필터) */
   list: (params?: { category?: string; scope?: string; status?: string }) =>
     api.get<{ items: Manipulator[]; total: number }>('/manipulators', { params }),
 
-  /** 단일 manipulator 상세 조회 */
   get: (manipulatorId: string) =>
     api.get<Manipulator>(`/manipulators/${manipulatorId}`),
 }
 
-// =============================================================================
-// Dataset 목록 (DataLoadNode 선택 드롭다운용)
-// =============================================================================
-
 export const datasetsForPipelineApi = {
-  /** READY 상태 데이터셋만 조회 (파이프라인 입력 소스용) */
   listReady: () =>
     api.get<DatasetVersion[]>('/datasets', { params: { status: 'READY' } }),
 
-  /** 삭제되지 않은 DatasetGroup 목록 조회 (task_types 필터 가능) */
   listGroups: (params?: { page?: number; page_size?: number; search?: string }) =>
-    api.get<DatasetGroupListResponse>('/dataset-groups', { params: { ...params, page_size: params?.page_size ?? 200 } }),
+    api.get<DatasetGroupListResponse>('/dataset-groups', {
+      params: { ...params, page_size: params?.page_size ?? 200 },
+    }),
 
-  /** DatasetGroup 상세 조회 (하위 datasets 포함) */
   getGroup: (groupId: string) =>
     api.get<DatasetGroup>(`/dataset-groups/${groupId}`),
+}
+
+// =============================================================================
+// 호환 alias — 기존 이름 사용처가 정리될 때까지 한시적 유지
+// =============================================================================
+
+/** @deprecated v7.11 — pipelineConceptsApi 사용. 호환 유지를 위한 alias. */
+export const pipelineEntitiesApi = {
+  list: pipelineConceptsApi.list,
+  get: pipelineConceptsApi.get,
+  update: pipelineConceptsApi.update,
+  listRuns: pipelineConceptsApi.listRuns,
+  /** @deprecated — pipelineVersionsApi.submitRun 사용 (version 단위 제출) */
+  submitRun: pipelineVersionsApi.submitRun,
 }

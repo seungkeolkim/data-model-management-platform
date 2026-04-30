@@ -57,10 +57,10 @@ async def list_datasets(
         query = query.where(DatasetVersion.status == status.upper())
     # 응답 직렬화에 필요한 관계 선로드:
     #  - split_slot: split 문자열을 association_proxy 로 꺼내기 위함
-    #  - pipeline_executions: DatasetVersion.pipeline_execution_id 프로퍼티 접근용
+    #  - pipeline_runs: DatasetVersion.pipeline_run_id 프로퍼티 접근용
     query = query.options(
         selectinload(DatasetVersion.split_slot),
-        selectinload(DatasetVersion.pipeline_executions),
+        selectinload(DatasetVersion.pipeline_runs),
     )
     query = query.order_by(DatasetVersion.created_at.desc())
     result = await db.execute(query)

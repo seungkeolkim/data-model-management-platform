@@ -88,6 +88,9 @@ class DatasetSummary(BaseModel):
     """DatasetGroup 내 Dataset 요약 (목록 조회용)."""
     id: str
     split: str
+    # v7.10 (핸드오프 027 §4-1) — Pipeline.output_split_id / config 의 source:<split_id>
+    # 참조에 필요. DatasetVersion.split_slot.id 를 association_proxy 로 투명 노출.
+    split_id: str
     version: str
     status: str
     image_count: int | None
@@ -97,7 +100,7 @@ class DatasetSummary(BaseModel):
     annotation_files: list[str] | None
     annotation_meta_file: str | None = None
     metadata: dict[str, Any] | None = Field(default=None, validation_alias="metadata_")
-    pipeline_execution_id: str | None = None
+    pipeline_run_id: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -316,7 +319,7 @@ class DatasetResponse(DatasetBase):
     id: str
     group_id: str
     metadata: dict[str, Any] | None = Field(default=None, validation_alias="metadata_")
-    pipeline_execution_id: str | None = None
+    pipeline_run_id: str | None = None
     created_at: datetime
     updated_at: datetime
 

@@ -4,11 +4,11 @@
 Celery worker에서 실행되며, 동기 DB 세션(psycopg2)을 사용한다.
 
 흐름:
-    1. PipelineExecution 조회 → status=RUNNING
+    1. PipelineRun 조회 → status=RUNNING
     2. Dataset.status=PROCESSING
     3. PipelineDagExecutor.run(config) 실행
-    4. 성공: Dataset READY, PipelineExecution DONE, DatasetLineage 생성
-    5. 실패: Dataset ERROR, PipelineExecution FAILED + error_message
+    4. 성공: Dataset READY, PipelineRun DONE, DatasetLineage 생성
+    5. 실패: Dataset ERROR, PipelineRun FAILED + error_message
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from app.models.all_models import (
     DatasetLineage,
     DatasetSplit,
     DatasetVersion,
-    PipelineExecution,
+    PipelineRun,
 )
 from app.tasks.celery_app import celery_app
 from lib.pipeline.config import PipelineConfig
@@ -105,7 +105,7 @@ def run_pipeline(self, execution_id: str, pipeline_config: dict) -> dict:
     FastAPI 측의 status polling API가 이 상태를 읽어 UI에 반영한다.
 
     Args:
-        execution_id: PipelineExecution.id (UUID 문자열)
+        execution_id: PipelineRun.id (UUID 문자열)
         pipeline_config: PipelineConfig를 dict로 직렬화한 값
 
     Returns:
@@ -130,8 +130,8 @@ def _execute_pipeline(
     run_pipeline 태스크에서 호출된다.
     세션 관리 책임은 호출자(run_pipeline)에 있다.
     """
-    # ── 1. PipelineExecution 조회 + RUNNING 전환 ──
-    execution = db.query(PipelineExecution).filter_by(id=execution_id).one()
+    # ── 1. PipelineRun 조회 + RUNNING 전환 ──
+    execution = db.query(PipelineRun).filter_by(id=execution_id).one()
     execution.status = "RUNNING"
     execution.started_at = datetime.utcnow()
     execution.celery_task_id = celery_task.request.id
@@ -284,7 +284,7 @@ def _execute_pipeline(
                 },
             }
 
-        # ── 5. PipelineExecution 완료 ──
+        # ── 5. PipelineRun 완료 ──
         execution.status = "DONE"
         execution.finished_at = datetime.utcnow()
         execution.current_stage = "completed"
@@ -327,7 +327,7 @@ def _execute_pipeline(
 
         # 에러 상태 기록 (새 트랜잭션)
         try:
-            execution = db.query(PipelineExecution).filter_by(id=execution_id).one()
+            execution = db.query(PipelineRun).filter_by(id=execution_id).one()
             execution.status = "FAILED"
             execution.error_message = str(exc)[:2000]
             execution.finished_at = datetime.utcnow()
