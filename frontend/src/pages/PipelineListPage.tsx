@@ -71,6 +71,10 @@ export function PipelineListPage() {
   const [selectedFamilyIds, setSelectedFamilyIds] = useState<string[]>([])
   const [includeUnfiled, setIncludeUnfiled] = useState(false)
   const [familyModalOpen, setFamilyModalOpen] = useState(false)
+  // 출력 필터 — 그룹당 한 행, 행 안에 group checkbox + 4개 고정 split 체크박스
+  // (TRAIN/VAL/TEST/NONE). 각 (group, split) 페어가 독립 선택 단위.
+  // state 는 `${groupName}::${split}` 형태의 키 집합으로 관리.
+  const [selectedOutputPairs, setSelectedOutputPairs] = useState<Set<string>>(new Set())
 
   // 행 인라인 expand 상태 — 한 번에 한 concept 만 펼침
   const [expandedConceptId, setExpandedConceptId] = useState<string | null>(null)
@@ -80,10 +84,54 @@ export function PipelineListPage() {
   const [resolverVersion, setResolverVersion] = useState<PipelineVersionResponse | null>(null)
   const [resolverOpen, setResolverOpen] = useState(false)
 
+  // 출력 필터 옵션 산출용 — 비활성 포함 모든 Pipeline 의 (group_name, split,
+  // split_id) 분포를 알아야 한다. listQuery 는 다른 필터가 걸린 결과라
+  // 별도 unfiltered 쿼리를 하나 더 둔다.
+  const allOutputPipelinesQuery = useQuery({
+    queryKey: ['pipeline-concepts-all-outputs'],
+    queryFn: () =>
+      pipelineConceptsApi
+        .list({ include_inactive: true, limit: 200 })
+        .then((r) => r.data),
+    staleTime: 30_000,
+  })
+
+  // 출력 그룹 — 비활성 포함 모든 Pipeline 의 distinct output_group_name (정렬: name ASC).
+  const availableOutputGroups = useMemo(() => {
+    const set = new Set<string>()
+    for (const p of allOutputPipelinesQuery.data?.items ?? []) {
+      if (p.output_group_name) set.add(p.output_group_name)
+    }
+    return [...set].sort((a, b) => a.localeCompare(b, 'ko'))
+  }, [allOutputPipelinesQuery.data])
+
+  const isOutputFilterActive = selectedOutputPairs.size > 0
+
+  // 매칭되는 split_id 목록 산출 → backend 에 IN 필터.
+  // 사용자가 (group, split) 페어를 골랐는데 그 조합으로 등록된 Pipeline 이 없으면
+  // result.size === 0 이 됨. 이때 빈 리스트를 그대로 보내면 backend 가 falsy 로
+  // 무시해 전체를 반환해버리므로, 실재 매칭이 없음을 강제하는 sentinel UUID 를
+  // 박아 0건 결과를 유도.
+  const SENTINEL_NO_MATCH_SPLIT_ID = '00000000-0000-0000-0000-000000000000'
+  const outputSplitIdsFilter = useMemo(() => {
+    if (!isOutputFilterActive) return undefined
+    const result = new Set<string>()
+    for (const p of allOutputPipelinesQuery.data?.items ?? []) {
+      const key = `${p.output_group_name ?? ''}::${p.output_split ?? ''}`
+      if (selectedOutputPairs.has(key) && p.output_split_id) {
+        result.add(p.output_split_id)
+      }
+    }
+    return result.size > 0 ? [...result] : [SENTINEL_NO_MATCH_SPLIT_ID]
+  }, [allOutputPipelinesQuery.data, selectedOutputPairs, isOutputFilterActive])
+
   const listQuery = useQuery({
     queryKey: [
       'pipeline-concepts',
-      { includeInactive, nameFilter, selectedFamilyIds, includeUnfiled },
+      {
+        includeInactive, nameFilter, selectedFamilyIds, includeUnfiled,
+        outputSplitIdsFilter,
+      },
     ],
     queryFn: () =>
       pipelineConceptsApi
@@ -92,6 +140,7 @@ export function PipelineListPage() {
           name_filter: nameFilter || undefined,
           family_id: selectedFamilyIds.length > 0 ? selectedFamilyIds : undefined,
           family_unfiled: includeUnfiled || undefined,
+          output_split_id: outputSplitIdsFilter,
           limit: 100,
         })
         .then((r) => r.data),
@@ -507,6 +556,157 @@ export function PipelineListPage() {
               style={{ width: 220 }}
               onSearch={(value) => setNameFilter(value)}
             />
+            <Dropdown
+              trigger={['click']}
+              dropdownRender={() => {
+                const SPLIT_OPTIONS = ['TRAIN', 'VAL', 'TEST', 'NONE'] as const
+                const pairKey = (group: string, split: string) =>
+                  `${group}::${split}`
+                const isPairOn = (group: string, split: string) =>
+                  selectedOutputPairs.has(pairKey(group, split))
+                const togglePair = (group: string, split: string) => {
+                  setSelectedOutputPairs((prev) => {
+                    const next = new Set(prev)
+                    const key = pairKey(group, split)
+                    if (next.has(key)) next.delete(key)
+                    else next.add(key)
+                    return next
+                  })
+                }
+                const groupRowState = (group: string): 'all' | 'partial' | 'none' => {
+                  const count = SPLIT_OPTIONS.filter((s) => isPairOn(group, s)).length
+                  if (count === 0) return 'none'
+                  if (count === SPLIT_OPTIONS.length) return 'all'
+                  return 'partial'
+                }
+                const toggleGroupRow = (group: string) => {
+                  setSelectedOutputPairs((prev) => {
+                    const next = new Set(prev)
+                    const allOn = SPLIT_OPTIONS.every((s) =>
+                      next.has(pairKey(group, s)),
+                    )
+                    if (allOn) {
+                      for (const s of SPLIT_OPTIONS) next.delete(pairKey(group, s))
+                    } else {
+                      for (const s of SPLIT_OPTIONS) next.add(pairKey(group, s))
+                    }
+                    return next
+                  })
+                }
+                const totalPairCount =
+                  availableOutputGroups.length * SPLIT_OPTIONS.length
+                const allPairsChecked =
+                  totalPairCount > 0 && selectedOutputPairs.size === totalPairCount
+                return (
+                  <div
+                    style={{
+                      background: '#fff',
+                      border: '1px solid #f0f0f0',
+                      borderRadius: 6,
+                      padding: 12,
+                      // 그룹명이 잘리지 않게 충분히 넓게.
+                      minWidth: 640,
+                      maxWidth: 880,
+                      boxShadow: '0 6px 16px rgba(0,0,0,0.08)',
+                      maxHeight: 480,
+                      overflowY: 'auto',
+                    }}
+                  >
+                    <Space direction="vertical" size={6} style={{ width: '100%' }}>
+                      <Space size={6}>
+                        <Button
+                          size="small"
+                          onClick={() => {
+                            if (allPairsChecked) {
+                              setSelectedOutputPairs(new Set())
+                            } else {
+                              const next = new Set<string>()
+                              for (const g of availableOutputGroups) {
+                                for (const s of SPLIT_OPTIONS) {
+                                  next.add(pairKey(g, s))
+                                }
+                              }
+                              setSelectedOutputPairs(next)
+                            }
+                          }}
+                        >
+                          {allPairsChecked ? '전체 해제' : '전체 선택'}
+                        </Button>
+                        <Button
+                          size="small"
+                          disabled={!isOutputFilterActive}
+                          onClick={() => setSelectedOutputPairs(new Set())}
+                        >
+                          필터 해제
+                        </Button>
+                      </Space>
+                      <Divider style={{ margin: '4px 0' }} />
+                      {availableOutputGroups.length === 0 && (
+                        <Text type="secondary" style={{ fontSize: 12 }}>
+                          출력 그룹이 없습니다.
+                        </Text>
+                      )}
+                      {availableOutputGroups.map((group) => {
+                        const state = groupRowState(group)
+                        return (
+                          <div
+                            key={group}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 12,
+                              padding: '4px 0',
+                            }}
+                          >
+                            <Checkbox
+                              checked={state === 'all'}
+                              indeterminate={state === 'partial'}
+                              onChange={() => toggleGroupRow(group)}
+                              style={{ whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}
+                            >
+                              <Text style={{ fontSize: 13 }} title={group}>
+                                {group}
+                              </Text>
+                            </Checkbox>
+                            <div
+                              style={{
+                                display: 'flex',
+                                gap: 10,
+                                paddingLeft: 12,
+                                borderLeft: '1px solid #f0f0f0',
+                                whiteSpace: 'nowrap',
+                              }}
+                            >
+                              {SPLIT_OPTIONS.map((s) => (
+                                <Checkbox
+                                  key={s}
+                                  checked={isPairOn(group, s)}
+                                  onChange={() => togglePair(group, s)}
+                                >
+                                  <span style={{ fontSize: 12 }}>{s}</span>
+                                </Checkbox>
+                              ))}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </Space>
+                  </div>
+                )
+              }}
+            >
+              <Button>
+                출력 필터{' '}
+                {isOutputFilterActive && (
+                  <Tag
+                    color="blue"
+                    style={{ margin: 0, marginLeft: 4 }}
+                  >
+                    {selectedOutputPairs.size}
+                  </Tag>
+                )}
+              </Button>
+            </Dropdown>
             <Dropdown
               trigger={['click']}
               dropdownRender={() => {
