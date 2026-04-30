@@ -10,6 +10,7 @@ from app.api.v1.filebrowser.router import router as filebrowser_router
 from app.api.v1.lineage.router import router as lineage_router
 from app.api.v1.manipulators.router import router as manipulators_router
 from app.api.v1.pipelines.router import router as pipelines_router
+from app.api.v1.system.router import router as system_router
 from app.api.v1.training.router import router as training_router
 
 api_router = APIRouter()
@@ -31,3 +32,6 @@ api_router.include_router(lineage_router, prefix="/lineage", tags=["lineage"])
 
 # 2차 - 학습 관리 (라우터 등록만, 구현은 2차에서)
 api_router.include_router(training_router, prefix="/training", tags=["training"])
+
+# 시스템 상태 (호스트 마운트 디스크 사용량 등)
+api_router.include_router(system_router, prefix="/system", tags=["system"])
