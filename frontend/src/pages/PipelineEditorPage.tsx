@@ -18,8 +18,9 @@ import {
   ReactFlowProvider,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { message, ConfigProvider, theme, Modal, Input, Spin } from 'antd'
+import { message, ConfigProvider, theme, Modal, Input, Spin, Radio, Select, Alert } from 'antd'
 import koKR from 'antd/locale/ko_KR'
+import { useQuery } from '@tanstack/react-query'
 
 import NodePalette from '@/components/pipeline/NodePalette'
 import EditorToolbar from '@/components/pipeline/EditorToolbar'
@@ -77,6 +78,19 @@ function PipelineEditorContent() {
   const [jsonLoadInput, setJsonLoadInput] = useState('')
   const [isJsonLoading, setIsJsonLoading] = useState(false)
   const [jsonLoadError, setJsonLoadError] = useState<string | null>(null)
+  // 저장 모달 — 사용자가 파이프라인명을 확정/변경하는 단계 (§12-2 #1).
+  // 두 모드:
+  //   'manual' (기본) — 텍스트 입력. 기본값 = `${config.name}_${split.lower()}`.
+  //                     동일 이름 + 다른 출력은 backend 가 400 으로 차단.
+  //   'select' — 같은 task_type + 같은 output_split_id 인 Pipeline 후보를 dropdown
+  //              으로 노출. 선택 시 그 이름이 concept_name 으로 전달돼 새 version
+  //              이 추가됨. 출력이 같음이 보장돼 회색지대 없음.
+  const [isSaveModalOpen, setIsSaveModalOpen] = useState(false)
+  const [pendingConfig, setPendingConfig] = useState<PipelineConfig | null>(null)
+  const [pendingOutputSplitId, setPendingOutputSplitId] = useState<string | null>(null)
+  const [saveMode, setSaveMode] = useState<'manual' | 'select'>('manual')
+  const [conceptNameInput, setConceptNameInput] = useState('')
+  const [selectedExistingPipelineId, setSelectedExistingPipelineId] = useState<string | null>(null)
 
   const {
     nodeDataMap,
@@ -197,6 +211,34 @@ function PipelineEditorContent() {
     }
   }, [nodes, edges, nodeDataMap, clearValidation, setValidationResult, applyValidationToNodes])
 
+  // 출력 split_id 산출용 — 데이터셋 그룹 캐시 (DataLoad 노드와 같은 캐시).
+  // config.name (= group name) + dataset_type + split 으로 split_id 매핑.
+  const groupsForSplitLookupQuery = useQuery({
+    queryKey: ['dataset-groups-for-pipeline-save'],
+    queryFn: () => datasetsForPipelineApi.listGroups({ page_size: 200 }).then((r) => r.data),
+    staleTime: 30_000,
+  })
+
+  // 후보 Pipeline (concept) 목록 — 같은 task_type + 같은 output_split_id.
+  // pendingOutputSplitId 가 있을 때만 fetch.
+  const existingPipelinesQuery = useQuery({
+    queryKey: ['save-modal-existing-pipelines', taskType, pendingOutputSplitId],
+    queryFn: () =>
+      pendingOutputSplitId
+        ? pipelineConceptsApi
+            .list({
+              task_type: [taskType],
+              output_split_id: [pendingOutputSplitId],
+              include_inactive: true,
+              limit: 100,
+            })
+            .then((r) => r.data)
+        : null,
+    enabled: !!pendingOutputSplitId && isSaveModalOpen,
+  })
+
+  // 저장 버튼 클릭 → 클라이언트/서버 검증 → 검증 통과 시 저장 모달 오픈.
+  // 모달 안에서 사용자가 파이프라인명을 확정한 뒤에야 실제 API 호출 (handleConfirmSave).
   const handleSave = useCallback(async () => {
     clearValidation()
     const clientErrors = validateGraphStructure(nodes, edges, nodeDataMap)
@@ -219,12 +261,68 @@ function PipelineEditorContent() {
       applyValidationToNodes(validateResult.issues)
       if (!validateResult.is_valid) {
         message.error(`검증 실패 (오류 ${validateResult.error_count}개). 저장할 수 없습니다.`)
-        setIsSaving(false)
         return
       }
-      const saveResponse = await pipelineConceptsApi.save(config)
+      // 검증 통과 → 모달 오픈 + 기본 이름 prefill (backend 자동 규칙과 동일).
+      setPendingConfig(config)
+      const splitLower = (config.output?.split ?? 'NONE').toLowerCase()
+      const splitUpper = (config.output?.split ?? 'NONE').toUpperCase()
+      const datasetType = (config.output?.dataset_type ?? '').toUpperCase()
+      setConceptNameInput(`${config.name}_${splitLower}`)
+      // 출력 split_id 매핑 — 그룹 캐시에서 (group_name + dataset_type) 매칭 후
+      // datasets[] 에서 split 매칭. 신규 그룹/Split 케이스는 미리 만들어진 게
+      // 없을 수 있어 null 그대로 두고 select 모드 비활성.
+      const groups = groupsForSplitLookupQuery.data?.items ?? []
+      const targetGroup = groups.find(
+        (g) => g.name === config.name && g.dataset_type === datasetType,
+      )
+      const targetSplitId =
+        targetGroup?.datasets?.find((d) => d.split === splitUpper)?.split_id ?? null
+      setPendingOutputSplitId(targetSplitId)
+      setSaveMode('manual')
+      setSelectedExistingPipelineId(null)
+      setIsSaveModalOpen(true)
+    } catch (err) {
+      const detail =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      message.error(detail ? `검증 실패: ${detail}` : '검증 API 호출 실패')
+      console.error('Validate API error:', err)
+    } finally {
+      setIsSaving(false)
+    }
+  }, [
+    nodes, edges, nodeDataMap, clearValidation,
+    setValidationResult, applyValidationToNodes,
+    groupsForSplitLookupQuery.data,
+  ])
+
+  const handleConfirmSave = useCallback(async () => {
+    if (!pendingConfig) return
+    let conceptName: string
+    if (saveMode === 'select') {
+      const candidates = existingPipelinesQuery.data?.items ?? []
+      const chosen = candidates.find((p) => p.id === selectedExistingPipelineId)
+      if (!chosen) {
+        message.error('기존 Pipeline 을 선택해 주세요.')
+        return
+      }
+      conceptName = chosen.name
+    } else {
+      const trimmed = conceptNameInput.trim()
+      if (!trimmed) {
+        message.error('파이프라인명을 입력해 주세요.')
+        return
+      }
+      conceptName = trimmed
+    }
+    setIsSaving(true)
+    try {
+      const saveResponse = await pipelineConceptsApi.save(pendingConfig, conceptName)
       const saveResult = saveResponse.data
       message.success(saveResult.message)
+      setIsSaveModalOpen(false)
+      setPendingConfig(null)
+      setPendingOutputSplitId(null)
       // 저장 후 파이프라인 목록으로 — 행 우측 "실행" 버튼으로 Version Resolver 진입.
       navigate('/pipelines')
     } catch (err) {
@@ -235,7 +333,17 @@ function PipelineEditorContent() {
     } finally {
       setIsSaving(false)
     }
-  }, [nodes, edges, nodeDataMap, clearValidation, setValidationResult, applyValidationToNodes, navigate])
+  }, [
+    pendingConfig, saveMode, conceptNameInput,
+    selectedExistingPipelineId, existingPipelinesQuery.data, navigate,
+  ])
+
+  const handleCancelSave = useCallback(() => {
+    setIsSaveModalOpen(false)
+    setPendingConfig(null)
+    setPendingOutputSplitId(null)
+    setSelectedExistingPipelineId(null)
+  }, [])
 
   const handleClearCanvas = useCallback(() => {
     setNodes([])
@@ -443,6 +551,99 @@ function PipelineEditorContent() {
 
         <PropertiesPanel />
       </div>
+
+      <Modal
+        title="파이프라인 저장"
+        open={isSaveModalOpen}
+        onCancel={handleCancelSave}
+        onOk={handleConfirmSave}
+        okText="저장"
+        cancelText="취소"
+        confirmLoading={isSaving}
+        okButtonProps={{
+          disabled:
+            saveMode === 'manual'
+              ? !conceptNameInput.trim()
+              : !selectedExistingPipelineId,
+        }}
+        destroyOnClose
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <Radio.Group
+            value={saveMode}
+            onChange={(e) => setSaveMode(e.target.value)}
+            optionType="button"
+            buttonStyle="solid"
+          >
+            <Radio.Button value="manual">직접 입력</Radio.Button>
+            <Radio.Button value="select" disabled={!pendingOutputSplitId}>
+              기존 Pipeline 선택
+            </Radio.Button>
+          </Radio.Group>
+
+          {saveMode === 'manual' && (
+            <>
+              <div style={{ color: '#8c8c8c', fontSize: 13 }}>
+                파이프라인명을 확인 또는 변경하세요. 같은 이름이 이미 있고
+                출력 (group/split) 도 같으면 그 Pipeline 의 새 버전으로
+                추가됩니다. 출력이 다르면 저장이 차단됩니다.
+              </div>
+              <Input
+                placeholder="파이프라인명"
+                value={conceptNameInput}
+                onChange={(e) => setConceptNameInput(e.target.value)}
+                onPressEnter={handleConfirmSave}
+                autoFocus
+              />
+            </>
+          )}
+
+          {saveMode === 'select' && (
+            <>
+              <div style={{ color: '#8c8c8c', fontSize: 13 }}>
+                같은 task type ({taskType}) + 같은 출력 (group/split) 의
+                기존 Pipeline 만 후보로 표시됩니다. 선택 시 그 Pipeline 의
+                새 버전으로 추가됩니다.
+              </div>
+              {existingPipelinesQuery.isLoading ? (
+                <Spin size="small" />
+              ) : (existingPipelinesQuery.data?.items ?? []).length === 0 ? (
+                <Alert
+                  type="info"
+                  showIcon
+                  message="후보 Pipeline 이 없습니다."
+                  description="이 출력 (group/split) 으로 저장된 Pipeline 이 아직 없어요. '직접 입력' 모드로 새로 만들어 주세요."
+                />
+              ) : (
+                <Select
+                  placeholder="기존 Pipeline 선택"
+                  value={selectedExistingPipelineId ?? undefined}
+                  onChange={(val) => setSelectedExistingPipelineId(val)}
+                  style={{ width: '100%' }}
+                  options={(existingPipelinesQuery.data?.items ?? []).map((p) => ({
+                    value: p.id,
+                    label: (
+                      <span>
+                        {p.name}
+                        {p.latest_version && (
+                          <span style={{ color: '#8c8c8c', marginLeft: 6, fontSize: 12 }}>
+                            (최신 v{p.latest_version})
+                          </span>
+                        )}
+                        {!p.is_active && (
+                          <span style={{ color: '#bfbfbf', marginLeft: 6, fontSize: 11 }}>
+                            · 비활성
+                          </span>
+                        )}
+                      </span>
+                    ),
+                  }))}
+                />
+              )}
+            </>
+          )}
+        </div>
+      </Modal>
 
       <Modal
         title="PipelineConfig JSON 불러오기"

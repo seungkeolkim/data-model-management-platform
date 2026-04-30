@@ -595,7 +595,10 @@ class PipelineService:
     # -------------------------------------------------------------------------
 
     async def save_pipeline_from_config(
-        self, config: PipelineConfig,
+        self,
+        config: PipelineConfig,
+        *,
+        concept_name: str | None = None,
     ) -> PipelineSaveResponse:
         """
         에디터 config 를 Pipeline (concept) + PipelineVersion 으로 저장.
@@ -612,6 +615,11 @@ class PipelineService:
              - 있으면 최신 version 의 config 와 비교 — 동일하면 재사용, 다르면
                major++ 신규 version
         DatasetVersion / PipelineRun 은 만들지 않는다 (실행 시점 책임).
+
+        Args:
+            concept_name: 사용자가 저장 모달에서 직접 입력한 Pipeline (concept) 이름.
+                None 이면 §12-2 자동 규칙 (`{config.name}_{split.lower()}`) 으로 생성.
+                동일 name 이 있으면 기존 concept 재사용 + 새 version 추가 (현 동작 유지).
         """
         dataset_type = config.output.dataset_type.upper()
         annotation_format = config.output.annotation_format.upper()
@@ -639,6 +647,7 @@ class PipelineService:
                 output_split_id=split_slot.id,
                 task_type=pipeline_task_type,
                 split=split,
+                concept_name=concept_name,
             )
         )
 
@@ -1079,12 +1088,17 @@ class PipelineService:
         output_split_id: str,
         task_type: str,
         split: str,
+        *,
+        concept_name: str | None = None,
     ) -> tuple["Pipeline", "PipelineVersion", bool, bool]:
         """
         Pipeline (concept) 와 PipelineVersion 을 저장 (§12-1 저장/실행 분리의 핵심 헬퍼).
 
         규칙:
-          - 개념명: `{config.name}_{split.lower()}`. 전역 UNIQUE (§12-2).
+          - 개념명: 사용자가 명시한 `concept_name` 또는 자동 `{config.name}_{split.lower()}`
+            (§12-2 — 전역 UNIQUE). 동일 name 이 이미 있으면 같은 concept 로 재사용
+            + 새 version 추가 (사용자가 의도적으로 같은 이름을 입력해 새 버전을
+            올리는 경우 자연스러운 동작).
           - Pipeline 이 없으면 생성 (family_id=NULL, output_split / task_type 고정).
           - 있으면 최신 version 의 config 와 JSON 평탄 비교 — 동일하면 재사용,
             다르면 major++ 신규 version.
@@ -1096,12 +1110,29 @@ class PipelineService:
         """
         import json
 
-        base_name = f"{config.name}_{split.lower()}"
+        # 사용자가 명시한 이름이 있으면 strip 후 사용. 없으면 자동 규칙.
+        if concept_name is not None and concept_name.strip():
+            base_name = concept_name.strip()
+        else:
+            base_name = f"{config.name}_{split.lower()}"
         existing_concept = (await self.db.execute(
             select(Pipeline)
             .options(selectinload(Pipeline.versions))
             .where(Pipeline.name == base_name)
         )).scalars().first()
+
+        # 동일 이름이 존재하지만 output_split_id 가 다르면 차단 (§12-2 회색지대 방지).
+        # 같은 이름 + 다른 출력은 부모 Pipeline.output_split 과 신규 version.config 의
+        # output 이 어긋나 실행 시점에 모순되므로 저장 거부.
+        if (
+            existing_concept is not None
+            and existing_concept.output_split_id != output_split_id
+        ):
+            raise ValueError(
+                f"같은 이름의 Pipeline ('{base_name}') 이 이미 다른 output "
+                "(group/split) 으로 등록돼 있습니다. 다른 이름을 사용하거나, "
+                "출력을 동일하게 맞추세요."
+            )
 
         new_config_dict = config.model_dump()
         new_config_json = json.dumps(new_config_dict, sort_keys=True, default=str)
@@ -1300,6 +1331,7 @@ class PipelineService:
         task_type_filter: list[str] | None = None,
         family_id: list[str] | None = None,
         family_unfiled: bool = False,
+        output_split_id: list[str] | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[list[Pipeline], int]:
@@ -1310,6 +1342,11 @@ class PipelineService:
             - family_id list 지정 → 해당 family 들 중 하나에 속하는 Pipeline
             - family_unfiled=True → family_id IS NULL 인 미분류 Pipeline 포함
             - 둘 다 비어있으면 → 필터 미적용 (전체 표시)
+
+        output_split_id (다중 IN):
+            - 지정된 split 중 하나를 output 으로 가진 Pipeline 만 반환.
+            - 저장 모달의 "기존 Pipeline 선택" 모드에서 같은 (group, split) 출력
+              Pipeline 만 후보로 제시할 때 사용 (§12-2 회색지대 차단 보조).
         """
         from sqlalchemy import or_
 
@@ -1320,6 +1357,8 @@ class PipelineService:
             filters.append(Pipeline.name.ilike(f"%{name_filter}%"))
         if task_type_filter:
             filters.append(Pipeline.task_type.in_(task_type_filter))
+        if output_split_id:
+            filters.append(Pipeline.output_split_id.in_(output_split_id))
         if family_id or family_unfiled:
             family_or_clauses = []
             if family_id:

@@ -130,6 +130,8 @@ export const pipelineConceptsApi = {
     task_type?: string[]
     family_id?: string[]
     family_unfiled?: boolean
+    /** 이 split 들 중 하나를 output 으로 가진 Pipeline 만 (다중 IN). */
+    output_split_id?: string[]
     limit?: number
     offset?: number
   }) =>
@@ -144,9 +146,14 @@ export const pipelineConceptsApi = {
   /**
    * 에디터 "저장" — Pipeline (concept) + PipelineVersion 저장 (§12-1).
    * 실행은 분리된 흐름 (`pipelineVersionsApi.submitRun`) 으로.
+   *
+   * @param conceptName 사용자가 저장 모달에서 입력한 이름. 미지정 시 backend
+   *   가 §12-2 자동 규칙 (`{config.name}_{split.lower()}`) 으로 생성.
    */
-  save: (config: PipelineConfig) =>
-    api.post<PipelineSaveResponse>('/pipelines/concepts', config),
+  save: (config: PipelineConfig, conceptName?: string) =>
+    api.post<PipelineSaveResponse>('/pipelines/concepts', config, {
+      params: conceptName ? { concept_name: conceptName } : undefined,
+    }),
 
   /** 이 concept 의 모든 version 에 걸친 run 이력 */
   listRuns: (pipelineId: string, params?: { page?: number; page_size?: number }) =>

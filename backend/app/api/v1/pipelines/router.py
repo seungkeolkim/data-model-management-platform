@@ -339,6 +339,14 @@ async def preview_schema(
 )
 async def save_pipeline_concept(
     config_dict: dict,
+    concept_name: str | None = Query(
+        None,
+        description=(
+            "사용자가 저장 모달에서 직접 입력한 Pipeline (concept) 이름. "
+            "미지정 시 §12-2 자동 규칙 (`{config.name}_{split.lower()}`) 사용. "
+            "동일 name 이 있으면 기존 concept 재사용 + 새 version 추가."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -356,7 +364,13 @@ async def save_pipeline_concept(
         first_msg = issues[0].message if issues else "config 형식이 잘못되었습니다."
         raise HTTPException(status_code=400, detail=first_msg) from exc
     service = PipelineService(db)
-    return await service.save_pipeline_from_config(config)
+    try:
+        return await service.save_pipeline_from_config(
+            config, concept_name=concept_name,
+        )
+    except ValueError as exc:
+        # _save_concept_and_version 에서 출력 mismatch 등으로 거부한 경우.
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -670,6 +684,14 @@ async def list_pipelines(
     task_type: list[str] | None = Query(None),
     family_id: list[str] | None = Query(None, description="이 family 들의 Pipeline (다중, OR)"),
     family_unfiled: bool = Query(False, description="미분류 (family_id IS NULL) 도 포함 (다른 family_id 와 OR)"),
+    output_split_id: list[str] | None = Query(
+        None,
+        description=(
+            "이 split 들 중 하나를 output 으로 가진 Pipeline 만 반환 (다중 IN). "
+            "저장 모달의 '기존 Pipeline 선택' 모드에서 같은 (group, split) 출력 "
+            "Pipeline 만 후보로 좁히기 위해 사용."
+        ),
+    ),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
@@ -682,6 +704,7 @@ async def list_pipelines(
         task_type_filter=task_type,
         family_id=family_id,
         family_unfiled=family_unfiled,
+        output_split_id=output_split_id,
         limit=limit,
         offset=offset,
     )
