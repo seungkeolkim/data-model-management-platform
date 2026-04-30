@@ -128,9 +128,14 @@ export function PipelineListPage() {
 
   /**
    * Pipeline 목록을 family 별로 그룹핑.
-   * - family_id 가 같은 것끼리 묶음
-   * - family 정렬: name ASC
-   * - "미분류" (family_id=NULL) 그룹은 항상 마지막
+   *
+   * 표시 규칙:
+   * - "미분류" (family_id=NULL) 그룹은 항상 **최상단**.
+   * - 그 외 family 는 name ASC.
+   * - **Pipeline 이 0개인 family 도 표시** (familiesQuery 전체 기반). 사용자가
+   *   비어있는 family 의 존재를 인지하고 거기로 Pipeline 을 옮길 수 있도록.
+   * - 필터가 활성 (selectedFamilyIds 또는 includeUnfiled) 일 때는 해당 family
+   *   들만 표시. 미분류는 includeUnfiled=true 일 때만.
    */
   interface PipelineGroup {
     familyId: string | null
@@ -139,28 +144,53 @@ export function PipelineListPage() {
   }
   const groupedItems: PipelineGroup[] = useMemo(() => {
     const items = listQuery.data?.items ?? []
-    const map = new Map<string | null, PipelineGroup>()
+    const families = familiesQuery.data ?? []
+    const filterActive = selectedFamilyIds.length > 0 || includeUnfiled
+
+    // family_id → 그 family 에 속한 Pipeline 들
+    const itemsByFamilyId = new Map<string | null, PipelineListItem[]>()
     for (const item of items) {
       const key = item.family_id
-      const existing = map.get(key)
-      if (existing) {
-        existing.items.push(item)
-      } else {
-        map.set(key, {
-          familyId: key,
-          familyName: item.family_name ?? '미분류',
-          items: [item],
-        })
-      }
+      if (!itemsByFamilyId.has(key)) itemsByFamilyId.set(key, [])
+      itemsByFamilyId.get(key)!.push(item)
     }
-    const sorted = Array.from(map.values()).sort((a, b) => {
-      // 미분류 (NULL) 는 항상 마지막
-      if (a.familyId === null) return 1
-      if (b.familyId === null) return -1
-      return a.familyName.localeCompare(b.familyName, 'ko')
-    })
-    return sorted
-  }, [listQuery.data])
+
+    const groups: PipelineGroup[] = []
+
+    // 미분류 — 필터 없거나 includeUnfiled 면 표시. 항상 최상단.
+    const showUnfiled = !filterActive || includeUnfiled
+    if (showUnfiled) {
+      groups.push({
+        familyId: null,
+        familyName: '미분류',
+        items: itemsByFamilyId.get(null) ?? [],
+      })
+    }
+
+    // 나머지 family — 필터 활성 시 선택된 family 만, 아니면 전체. name ASC.
+    const familiesToShow = filterActive
+      ? families.filter((f) => selectedFamilyIds.includes(f.id))
+      : families
+    const sortedFamilies = [...familiesToShow].sort((a, b) =>
+      a.name.localeCompare(b.name, 'ko'),
+    )
+    for (const f of sortedFamilies) {
+      groups.push({
+        familyId: f.id,
+        familyName: f.name,
+        items: itemsByFamilyId.get(f.id) ?? [],
+      })
+    }
+
+    return groups
+  }, [listQuery.data, familiesQuery.data, selectedFamilyIds, includeUnfiled])
+
+  // 헤더는 첫 번째 "Pipeline 이 있는" 그룹의 Table 에서만 표시 — 빈 그룹은 Table
+  // 자체를 안 그리므로 showHeader 가 첫 그룹이라도 의미 없는 경우를 회피.
+  const firstNonEmptyGroupIndex = useMemo(
+    () => groupedItems.findIndex((g) => g.items.length > 0),
+    [groupedItems],
+  )
 
   const togglePipelineActive = useMutation({
     mutationFn: async (vars: { id: string; nextValue: boolean }) => {
@@ -631,7 +661,7 @@ export function PipelineListPage() {
           <Empty description="조건에 맞는 Pipeline 이 없습니다." />
         )}
         {!listQuery.isLoading &&
-          groupedItems.map((group) => (
+          groupedItems.map((group, groupIdx) => (
             <div key={group.familyId ?? '__unfiled__'}>
               <Space style={{ marginBottom: 6 }} size={6}>
                 {group.familyId ? (
@@ -654,13 +684,29 @@ export function PipelineListPage() {
                   {group.items.length}개 Pipeline
                 </Text>
               </Space>
+              {group.items.length === 0 ? (
+                <div
+                  style={{
+                    marginBottom: 16,
+                    padding: '12px 16px',
+                    border: '1px dashed #f0f0f0',
+                    borderRadius: 6,
+                    color: '#bfbfbf',
+                    fontSize: 12,
+                    fontStyle: 'italic',
+                    background: '#fafafa',
+                  }}
+                >
+                  이 family 에 등록된 Pipeline 이 없습니다.
+                </div>
+              ) : (
               <Table<PipelineListItem>
                 rowKey="id"
                 dataSource={group.items}
                 columns={columns}
                 pagination={false}
                 size="middle"
-                showHeader={group === groupedItems[0]}
+                showHeader={groupIdx === firstNonEmptyGroupIndex}
                 rowClassName={(row) => (row.is_active ? '' : 'inactive-row')}
                 expandable={{
                   expandedRowKeys: expandedConceptId ? [expandedConceptId] : [],
@@ -713,6 +759,7 @@ export function PipelineListPage() {
                 })}
                 style={{ marginBottom: 16 }}
               />
+              )}
             </div>
           ))}
       </Space>
