@@ -49,43 +49,114 @@ export function ResizableHeaderCell({
       dragStartWidthRef.current = resizeWidth
 
       // 드래그 동안은 React state 갱신 없이 DOM 직접 조작.
-      // 이유: 매 mousemove 마다 setWidthByKey → 전 행 × 전 열 re-render 가 일어나면
-      //       특히 최좌측 컬럼처럼 우측에 따라오는 셀이 많은 경우 60fps 를 못 따라가
-      //       cursor 와 column edge 사이에 가시 가능한 지연이 생긴다.
-      // table-layout: fixed 에서는 `<colgroup>` 의 `<col>` 이 컬럼 너비의 SSOT 이고
-      // `<th>` 는 보조이므로 두 곳 모두 inline style 로 갱신.
+      // table-layout: fixed 에서는 `<colgroup>` 의 `<col>` 이 컬럼 너비의 SSOT.
       // mouseup 시점에 onResize(lastWidth) 1회 호출로 React state 와 DOM 을 일치.
+      //
+      // 중요: AntD v5 가 `scroll: { x }` 를 받으면 같은 `.ant-table-container` 안에
+      // 헤더 `<table>` 과 바디 `<table>` 을 별개로 그리고 각자 `<colgroup>` 을
+      // 갖는다. 두 colgroup 의 같은 cellIndex col 을 동시에 갱신.
+      //
+      // 또한 페이지 CSS 가 inner table 에 `width: max-content` 를 강제 — 매 mousemove
+      // 마다 브라우저가 모든 col 합을 다시 계산해야 함. 줄이기/늘리기 비대칭 (줄일 때
+      // 후행 컬럼이 viewport 안으로 끌려와 repaint 면적이 큼) 과 합쳐져 셔링크가
+      // 무거워짐. 두 가지 완화:
+      //   (1) rAF 로 mousemove → DOM 갱신 횟수를 최대 60fps 로 제한 (이상치 mouse rate
+      //       와 reflow 누적 방지).
+      //   (2) 드래그 동안은 table 의 width 를 직접 px 로 박아 max-content 동적 계산 회피.
       const handleSpan = event.currentTarget
       const thEl = handleSpan.parentElement as HTMLTableCellElement | null
-      const tableEl = thEl?.closest('table') as HTMLTableElement | null
-      const colgroupEl = tableEl?.querySelector('colgroup') ?? null
       const cellIndex = thEl ? thEl.cellIndex : -1
-      const colEl =
-        cellIndex >= 0 && colgroupEl
-          ? (colgroupEl.children[cellIndex] as HTMLElement | undefined) ?? null
-          : null
+      const containerEl =
+        thEl?.closest('.ant-table-container') as HTMLElement | null
+
+      // 같은 container 안의 모든 (헤더 / 바디) table + colgroup 수집.
+      const tableInfos: Array<{
+        tableEl: HTMLTableElement
+        colEls: HTMLElement[]
+      }> = []
+      if (cellIndex >= 0) {
+        const root: ParentNode | null =
+          containerEl ?? thEl?.closest('table') ?? null
+        if (root) {
+          const tables = Array.from(
+            root.querySelectorAll('table'),
+          ) as HTMLTableElement[]
+          for (const tableEl of tables) {
+            const colgroup = tableEl.querySelector('colgroup')
+            if (!colgroup) continue
+            const colEls = Array.from(colgroup.children) as HTMLElement[]
+            tableInfos.push({ tableEl, colEls })
+          }
+        }
+      }
+
+      // 드래그 시작 시점에 모든 col 의 현재 폭을 측정 (px). 이후 dragged column 만
+      // delta 적용. 매 frame 합을 즉시 산출해 table.style.width 에 박는다.
+      const initialColWidthsPerTable: number[][] = tableInfos.map(({ colEls }) =>
+        colEls.map((c) => {
+          const styled = parseFloat(c.style.width || '')
+          if (!Number.isNaN(styled) && styled > 0) return styled
+          // colgroup col 에 inline width 가 없으면 실제 렌더 폭을 측정.
+          return c.getBoundingClientRect().width
+        }),
+      )
 
       // 드래그 실제 발생 여부 + 마지막으로 적용한 폭. mouseup 에서 사용.
       let didActuallyDrag = false
       let lastNextWidth = dragStartWidthRef.current
 
-      const handleMouseMove = (moveEvent: MouseEvent) => {
-        const deltaPx = moveEvent.clientX - dragStartClientXRef.current
+      // rAF 스케줄러 — 다중 mousemove 를 한 frame 으로 coalesce.
+      let pendingClientX = event.clientX
+      let rafId: number | null = null
+
+      const flushPending = () => {
+        rafId = null
+        const deltaPx = pendingClientX - dragStartClientXRef.current
         if (deltaPx !== 0) didActuallyDrag = true
         const nextWidth = Math.max(
           MINIMUM_COLUMN_WIDTH_PX,
           dragStartWidthRef.current + deltaPx,
         )
         lastNextWidth = nextWidth
-        // DOM 직접 갱신 — React 재렌더 없이 즉시 layout 반영.
-        if (colEl) colEl.style.width = `${nextWidth}px`
-        if (thEl) thEl.style.width = `${nextWidth}px`
+        const widthPx = `${nextWidth}px`
+
+        // 각 (헤더 / 바디) table 의 cellIndex col 갱신 + table 자체의 폭을
+        // 합으로 직접 박아 max-content 재계산 회피.
+        for (let i = 0; i < tableInfos.length; i++) {
+          const { tableEl, colEls } = tableInfos[i]
+          const target = colEls[cellIndex]
+          if (target) target.style.width = widthPx
+          const initial = initialColWidthsPerTable[i]
+          let sum = 0
+          for (let j = 0; j < initial.length; j++) {
+            sum += j === cellIndex ? nextWidth : initial[j]
+          }
+          tableEl.style.width = `${sum}px`
+        }
+        if (thEl) thEl.style.width = widthPx
+      }
+
+      const handleMouseMove = (moveEvent: MouseEvent) => {
+        pendingClientX = moveEvent.clientX
+        if (rafId !== null) return
+        rafId = window.requestAnimationFrame(flushPending)
       }
       const handleMouseUp = () => {
         window.removeEventListener('mousemove', handleMouseMove)
         window.removeEventListener('mouseup', handleMouseUp)
+        // 보류 중인 frame 이 있으면 즉시 한 번 더 flush 해 최종 폭 반영.
+        if (rafId !== null) {
+          window.cancelAnimationFrame(rafId)
+          flushPending()
+        }
         document.body.style.cursor = ''
         document.body.style.userSelect = ''
+        // 인라인 table.style.width 는 React state 동기화 후 자동으로 무시되므로
+        // 굳이 비울 필요 없음 (다음 render 에서 width 가 제거되거나 재설정됨).
+        // 단, max-content 재계산이 필요한 페이지를 위해 명시적으로 제거.
+        for (const { tableEl } of tableInfos) {
+          tableEl.style.width = ''
+        }
         // 최종 폭을 React state 에 1회 동기화. 안 하면 다음 re-render 때 DOM 이 원복된다.
         onResize(lastNextWidth)
 

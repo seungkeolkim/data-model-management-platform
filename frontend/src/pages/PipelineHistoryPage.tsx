@@ -285,7 +285,24 @@ export default function PipelineHistoryPage() {
   ]
 
   return (
-    <div>
+    <div className="pipeline-history-page">
+      {/*
+        AntD 기본은 `.ant-table-content > table { width: 100% }` 라 컨테이너 폭이
+        컬럼 합보다 넓을 때 잉여가 `table-layout: fixed` 컬럼들에 비례 분배된다.
+        결과적으로 set width 와 실제 render width 가 어긋나고, 가장 넓은 컬럼
+        (여기서는 파이프라인명) 이 잉여의 가장 큰 절대량을 받아 우측 공백이
+        길어지고, 드래그로 줄여도 잉여 분배가 즉시 메꿔 시각적으로 안 줄어든다.
+        → 본 페이지에 한해 inner table 폭을 max-content 로 고정해 분배 차단.
+        min-width 는 0 으로 내려 컨테이너가 더 넓어도 table 이 늘지 않게 함.
+        남는 공간은 wrapper (.ant-table-content) 우측 여백.
+      */}
+      <style>{`
+        .pipeline-history-page .ant-table-content > table,
+        .pipeline-history-page .ant-table-body > table {
+          width: max-content !important;
+          min-width: 0 !important;
+        }
+      `}</style>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <Title level={4} style={{ margin: 0 }}>
           파이프라인 실행 이력

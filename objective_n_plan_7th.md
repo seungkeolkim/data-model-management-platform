@@ -977,6 +977,72 @@ append, extra 최초/보존 분기, list 입력 거부, deep copy 격리).
 - auto-suggest 결과를 DB 에 영속시킬지, UI 휘발성으로 둘지
 - per-class weight / class imbalance 대응을 loss 별로 어떻게 얹을지 (현 논의 범위 밖)
 
+### 6-3. AntD Table 가변 폭 컬럼 — 리사이즈 성능 / 폭 정합 규약 (확정 · 2026-04-29 · v7.13)
+
+`useResizableColumnWidths` 훅 (frontend/src/components/common/ResizableTableColumns.tsx)
+을 쓰는 모든 페이지가 반드시 따라야 하는 규약. 누락 시 사용자가 가장 자주
+호소하는 두 증상이 같이 나타난다 — "넓은 컬럼이 컨텐츠보다 부풀려져 있다",
+"드래그로 축소가 매끄럽지 않다 / 줄어들지 않는다".
+
+**1. 페이지에 inner table 폭 강제 CSS 를 박아라.**
+
+`scroll: { x: ... }` 가 켜진 AntD Table 은 inner `<table>` 에 `width: 100%` 를
+적용해 컨테이너를 채우고, `table-layout: fixed` 컬럼들에 잉여 폭을 비례
+분배한다. 결과적으로:
+- 가장 넓은 컬럼이 잉여의 최대 절대량을 받아 우측 공백이 부풀려짐
+- col.style.width 를 줄여도 잉여 분배가 즉시 메꿔 시각적으로 안 줄어듦
+- 매 mousemove 마다 11개 (예시) 컬럼의 잉여 분배 재계산 → 무거움
+
+페이지 wrapper 에 클래스 (`pipeline-history-page` / `dataset-list-page` 등) 를
+주고 다음 CSS 를 박는다:
+
+```css
+.<page-class> .ant-table-content > table,
+.<page-class> .ant-table-body > table {
+  width: max-content !important;
+  min-width: 0 !important;
+}
+```
+
+이러면 table 폭은 정확히 컬럼 폭 합 — 잉여는 wrapper 우측 여백으로 흘러간다.
+
+**2. 훅이 자동으로 수행하는 최적화 (페이지에서 추가 작업 불필요).**
+
+(a) **drag 동안 React state 갱신 금지** — 매 mousemove 마다 setState 하면
+    전 행 × 전 열 re-render → 100 행 / 11 열 규모에서 60fps 못 따라감.
+    drag 동안은 colgroup `<col>` 과 `<th>` 의 `style.width` 만 직접 갱신하고,
+    mouseup 시점에 onResize(lastWidth) 1회 호출로 React state 와 sync.
+
+(b) **헤더 / 바디 split-table 동시 갱신** — `scroll: { x }` 켜진 AntD 는
+    같은 `.ant-table-container` 안에 헤더 `<table>` 과 바디 `<table>` 을
+    별도로 그리고 각자 `<colgroup>` 을 갖는다. 핸들이 속한 헤더만 갱신하면
+    바디는 mouseup 까지 정지해 묵직함을 체감. 훅은 container 안의 모든
+    colgroup 의 같은 cellIndex col 을 한 번에 갱신.
+
+(c) **rAF coalesce + table.style.width 직접 박기** — mousemove 가 120Hz+
+    로 fire 돼도 frame 당 1회로 묶고, 매 frame 합을 즉시 계산해
+    `table.style.width = sum + 'px'` 로 박는다. CSS `width: max-content` 의
+    동적 합산 비용 회피. mouseup 에서 inline width 를 비워 페이지 CSS 의
+    `width: max-content !important` 가 다시 적용되도록.
+
+(d) **drag 후 click swallow** — mousedown 후 가로로 끌면 mouseup 이
+    부모 `<th>` 에서 일어나기 쉽고, AntD 의 정렬 핸들러가 그 click 을
+    받아 정렬 토글이 발생. 훅은 실제로 deltaPx ≠ 0 가 한 번이라도
+    있었던 경우에만 capture 단계에서 다음 click 을 1회 차단 + 100ms
+    safety timeout.
+
+**3. 컬럼 최소 폭 floor 는 0.**
+
+훅의 `MINIMUM_COLUMN_WIDTH_PX = 0`. 사용자가 의도한 폭 조정을 가로막지
+않는다. 너무 줄여서 핸들이 안 잡히면 옆 컬럼의 우측 핸들로 회복 가능.
+
+**적용 사례.**
+- `frontend/src/pages/PipelineHistoryPage.tsx`
+- `frontend/src/pages/DatasetListPage.tsx`
+
+이 규약을 따르지 않은 페이지에 사용자가 "느림 / 묵직" 을 보고하면, 거의 확실히
+1번 (inner table 폭 강제 CSS) 누락이 원인이다.
+
 ---
 
 ## 6. 핵심 파일 맵
