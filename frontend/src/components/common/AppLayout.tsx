@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Outlet, useLocation, useNavigate } from 'react-router-dom'
+import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { Button, Layout, Menu, Typography, Tag } from 'antd'
 import {
   DatabaseOutlined,
@@ -143,14 +143,26 @@ export default function AppLayout() {
           }}
         >
           {!siderCollapsed && (
-            <div style={{ cursor: 'pointer', flex: 1 }} onClick={() => navigate('/')}>
+            // Link 로 렌더해 anchor 태그가 되도록 한다.
+            // 좌클릭은 React Router 가 SPA navigate 로 가로채고,
+            // 우클릭(새 탭에서 열기) / 가운데 클릭(새 탭) / Ctrl·Cmd+클릭은
+            // 브라우저 기본 동작이 그대로 살아 새 창·탭으로 열린다.
+            // 색상/밑줄은 자식 Title·서브텍스트 스타일을 보존하기 위해 초기화.
+            <Link
+              to="/"
+              style={{
+                flex: 1,
+                color: 'inherit',
+                textDecoration: 'none',
+              }}
+            >
               <Title level={5} style={{ margin: 0, color: '#1677ff' }}>
                 🤖 ML Platform
               </Title>
               <div style={{ fontSize: 11, color: '#999', marginTop: 2 }}>
                 v0.1.0 · 데이터 관리
               </div>
-            </div>
+            </Link>
           )}
           <Button
             type="text"
