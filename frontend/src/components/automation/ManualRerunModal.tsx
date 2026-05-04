@@ -1,29 +1,38 @@
 import { useState } from 'react'
-import { Modal, Space, Button, Typography, Alert, Result } from 'antd'
-import { rerunPipelineManually, type ManualRerunMode, type ManualRerunResult } from '@/api/automation'
+import { Modal, Space, Button, Typography, Alert, Result, Tag } from 'antd'
+import {
+  rerunAutomationManually,
+  type ManualRerunMode,
+  type ManualRerunResult,
+} from '@/api/automation'
 
 const { Text, Paragraph } = Typography
 
 interface ManualRerunModalProps {
   open: boolean
-  pipelineId: string
+  /** 재실행 대상 PipelineVersion.id — automation 이 version 단위로 붙으므로 키도 versionId. */
+  versionId: string
+  /** UI 표시용 — concept name */
   pipelineName: string
+  /** UI 표시용 — "1.0" 등 */
+  pipelineVersion: string
   onClose: () => void
 }
 
 /**
- * 수동 재실행 확인 모달 (023 §G-29).
+ * 수동 재실행 확인 모달 (027 §6 / 028 §1 기준).
  *
  * 2-버튼 UX — 사용자가 delta 검사 유무를 명시적으로 선택.
  *   - `변경사항 존재시 재실행` (if_delta) : 상류 변화 있으면 dispatch, 없으면 no-delta skip 안내
  *   - `강제 최신 재실행` (force_latest)    : delta 무시, 항상 dispatch
  *
- * 실행 결과는 async dispatch 후 Result 화면으로 교체 — 즉시 결과 기다리지 않음 (§G-29).
+ * 실행 결과는 async dispatch 후 Result 화면으로 교체 — 즉시 결과 기다리지 않음.
  */
 export default function ManualRerunModal({
   open,
-  pipelineId,
+  versionId,
   pipelineName,
+  pipelineVersion,
   onClose,
 }: ManualRerunModalProps) {
   const [submitting, setSubmitting] = useState<ManualRerunMode | null>(null)
@@ -38,7 +47,7 @@ export default function ManualRerunModal({
   const handleSubmit = async (mode: ManualRerunMode) => {
     setSubmitting(mode)
     try {
-      const response = await rerunPipelineManually(pipelineId, mode)
+      const response = await rerunAutomationManually(versionId, mode)
       setResult(response)
     } finally {
       setSubmitting(null)
@@ -64,7 +73,10 @@ export default function ManualRerunModal({
       ) : (
         <>
           <Paragraph>
-            대상 파이프라인: <Text strong>{pipelineName}</Text>
+            대상 파이프라인: <Text strong>{pipelineName}</Text>{' '}
+            <Tag color="purple" style={{ fontSize: 11 }}>
+              v{pipelineVersion}
+            </Tag>
           </Paragraph>
           <Alert
             type="warning"

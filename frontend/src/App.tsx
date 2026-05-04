@@ -52,11 +52,11 @@ export default function App() {
               element={<PipelineVersionDetailPage />}
             />
 
-            {/* Automation (목업) — 023 §6 기반 파이프라인 자동화 관리 */}
+            {/* Automation (목업) — v7.13 baseline 자료구조 (PipelineVersion 단위) */}
             <Route path="automation" element={<AutomationPage />} />
             <Route path="automation/history" element={<AutomationHistoryPage />} />
             <Route
-              path="automation/pipelines/:pipelineId"
+              path="automation/versions/:versionId"
               element={<AutomationPipelineDetailPage />}
             />
 

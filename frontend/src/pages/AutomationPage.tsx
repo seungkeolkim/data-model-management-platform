@@ -8,16 +8,16 @@ import AutomationSectionNav from '@/components/automation/AutomationSectionNav'
 const { Title, Text } = Typography
 
 /**
- * Automation 관리 페이지 (목업, 023 §6-2).
+ * Automation 관리 페이지 (목업, v7.13 baseline).
  *
- * 레이아웃 (2026-04-23 변경): 전폭 Automation 목록. "의존 그래프" 는 상단 버튼으로 우측 Drawer 슬라이드.
- * 이전 (2-column 좌우 분할) 에서는 목록 컬럼이 많아질 때 공간이 빠듯해져 사용자 요청으로 전환.
+ * 레이아웃: 전폭 Automation 목록. "의존 그래프" 는 상단 버튼으로 우측 Drawer 슬라이드.
  *
- * master-detail UX: 목록 행 클릭 = **선택** (Drawer 내부 DAG 에서 해당 노드 강조, 이웃 외 흐리게).
- * 상세 페이지 이동은 목록 행 끝의 "상세 →" 버튼으로만.
+ * master-detail UX: 목록 의 expand 안 version 행 클릭 = **선택** (Drawer 내부 DAG 에서 해당 version
+ * 노드 강조, 이웃 외 흐리게). concept 행 클릭은 expand 토글만 — DAG 가 version 단위라 concept 단위
+ * 선택은 의미가 모호하다. 상세 페이지 이동은 version 행 끝의 "상세 →" 버튼으로만.
  */
 export default function AutomationPage() {
-  const [selectedPipelineId, setSelectedPipelineId] = useState<string | null>(null)
+  const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null)
   const [isDagOpen, setIsDagOpen] = useState(false)
 
   return (
@@ -56,8 +56,8 @@ export default function AutomationPage() {
       />
       <AutomationSectionNav />
       <AutomationPipelineList
-        selectedPipelineId={selectedPipelineId}
-        onSelectPipeline={setSelectedPipelineId}
+        selectedVersionId={selectedVersionId}
+        onSelectVersion={setSelectedVersionId}
       />
       {/*
         mask={false} 로 배경 overlay 제거 — 메인 목록이 disable 되지 않고 계속 조작 가능.
@@ -72,7 +72,7 @@ export default function AutomationPage() {
         mask={false}
         destroyOnClose={false}
       >
-        <AutomationChainingDag selectedPipelineId={selectedPipelineId} />
+        <AutomationChainingDag selectedVersionId={selectedVersionId} />
       </Drawer>
     </div>
   )

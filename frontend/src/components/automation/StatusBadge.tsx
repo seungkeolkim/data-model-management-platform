@@ -17,6 +17,8 @@ export const AUTOMATION_STATUS_LABEL: Record<AutomationStatus, string> = {
 export const AUTOMATION_ERROR_REASON_LABEL: Record<AutomationErrorReason, string> = {
   CYCLE_DETECTED: '사이클 감지됨',
   INPUT_GROUP_NOT_FOUND: '입력 그룹 없음',
+  // 027 §6-4 — automation 이 가리키던 PipelineVersion 이 비활성화되면 자동 전환되는 사유.
+  PIPELINE_DELETED: '대상 Pipeline 비활성',
 }
 
 export function StatusBadge({ status }: { status: AutomationStatus }) {
@@ -85,6 +87,23 @@ export function TaskTypeTag({
   return (
     <Tag color={TASK_TYPE_COLOR[taskType]} style={{ fontSize: variant === 'short' ? 10 : 12 }}>
       {label}
+    </Tag>
+  )
+}
+
+// =============================================================================
+// PipelineVersion 태그 — concept name 옆에 v1.0 형태로 노출
+// =============================================================================
+
+/**
+ * "v1.0" / "v2.0" 같은 version 라벨 태그. 목록 행, DAG 노드, 상세 헤더에서 공용.
+ * 같은 concept 안의 여러 version 을 시각적으로 구분하기 위해 옅은 보라색 단일 색상 사용.
+ * Pipeline.name 자체와 시각적 분리되도록 background tag 형태.
+ */
+export function VersionTag({ version }: { version: string }) {
+  return (
+    <Tag color="purple" style={{ fontSize: 11, marginLeft: 0 }}>
+      v{version}
     </Tag>
   )
 }

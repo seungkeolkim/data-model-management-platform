@@ -2,26 +2,28 @@ import { useQuery } from '@tanstack/react-query'
 import { Card, Table, Tag, Typography, Alert } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { getUpstreamDeltas } from '@/api/automation'
-import type { UpstreamGroupDelta } from '@/types/automation'
+import type { UpstreamSplitDelta } from '@/types/automation'
 
 const { Text } = Typography
 
 /**
- * 상류 DatasetGroup delta 표 (023 §6-4).
+ * 상류 DatasetSplit delta 표 (027 §6 / 028 §1 기준).
  *
- * 각 상류 그룹별로 "현재 최신 버전 vs automation_last_seen_input_versions" 를 비교해
- * delta 여부를 가시화한다. 목업은 Pipeline.input 만 상류로 취급 — 실 구현에서는 chaining 상류
- * 체인 전체로 확장 예정.
+ * 각 상류 split 별로 "현재 최신 버전 vs automation.last_seen_input_versions" 를 비교해 delta 여부를
+ * 가시화한다. v7.13 baseline 에서 자료구조가 group → split → version 으로 분리됐으므로 표 단위도
+ * split 행이 됐다 (group + split 표시).
+ *
+ * `versionId` 는 PipelineVersion.id — automation 이 version 단위로 붙으므로 자연스럽게 versionId 키로 조회.
  */
-export default function UpstreamDeltaList({ pipelineId }: { pipelineId: string }) {
+export default function UpstreamDeltaList({ versionId }: { versionId: string }) {
   const { data, isLoading, error } = useQuery({
-    queryKey: ['automation', 'upstream-deltas', pipelineId],
-    queryFn: () => getUpstreamDeltas(pipelineId),
+    queryKey: ['automation', 'upstream-deltas', versionId],
+    queryFn: () => getUpstreamDeltas(versionId),
   })
 
-  const columns: ColumnsType<UpstreamGroupDelta> = [
+  const columns: ColumnsType<UpstreamSplitDelta> = [
     {
-      title: '상류 그룹',
+      title: '상류 그룹 / split',
       key: 'group',
       render: (_, delta) => (
         <div>
@@ -58,13 +60,13 @@ export default function UpstreamDeltaList({ pipelineId }: { pipelineId: string }
   ]
 
   return (
-    <Card title="상류 DatasetGroup" size="small">
+    <Card title="상류 DatasetSplit" size="small">
       {error && (
         <Alert type="error" message="상류 delta 로드 실패" description={(error as Error).message} />
       )}
-      <Table<UpstreamGroupDelta>
+      <Table<UpstreamSplitDelta>
         size="small"
-        rowKey="group_id"
+        rowKey="split_id"
         loading={isLoading}
         columns={columns}
         dataSource={data ?? []}

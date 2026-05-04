@@ -2,8 +2,12 @@ import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Card, Table, Tag, Typography, Alert } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
-import { listExecutions } from '@/api/automation'
-import type { PipelineExecutionSummary, AutomationTriggerSource } from '@/types/automation'
+import { listRuns } from '@/api/automation'
+import type {
+  AutomationTriggerSource,
+  PipelineRun,
+  PipelineRunStatus,
+} from '@/types/automation'
 
 const { Text } = Typography
 
@@ -13,7 +17,7 @@ const TRIGGER_SOURCE_LABEL: Record<AutomationTriggerSource, string> = {
   manual_rerun: '수동 재실행',
 }
 
-const STATUS_COLOR: Record<PipelineExecutionSummary['status'], string> = {
+const STATUS_COLOR: Record<PipelineRunStatus, string> = {
   PENDING: 'default',
   RUNNING: 'processing',
   DONE: 'success',
@@ -22,7 +26,7 @@ const STATUS_COLOR: Record<PipelineExecutionSummary['status'], string> = {
   SKIPPED_UPSTREAM_FAILED: 'default',
 }
 
-const STATUS_LABEL: Record<PipelineExecutionSummary['status'], string> = {
+const STATUS_LABEL: Record<PipelineRunStatus, string> = {
   PENDING: 'Pending',
   RUNNING: 'Running',
   DONE: 'Done',
@@ -32,21 +36,22 @@ const STATUS_LABEL: Record<PipelineExecutionSummary['status'], string> = {
 }
 
 /**
- * 파이프라인 상세 Automation 탭의 "최근 automation 실행 N 건 요약" (023 §6-4).
+ * 파이프라인 상세 Automation 탭의 "최근 automation 실행 N 건 요약".
  *
- * 현 탭에서는 해당 파이프라인의 실행만 필터하고, automation 경로 (trigger_kind !== manual_from_editor)
- * 만 보여준다. manual_from_editor 는 데이터 변형 탭 이력에서 확인.
+ * v7.13 baseline 에서 자료구조가 PipelineVersion 단위로 격하됐으므로 이 컴포넌트도 versionId 키로
+ * 동작한다. automation 경로 실행만 (trigger_kind !== manual_from_editor) 노출 — manual 실행은
+ * 데이터 변형 탭의 실행 이력에서 확인.
  */
-export default function RecentAutomationRuns({ pipelineId }: { pipelineId: string }) {
+export default function RecentAutomationRuns({ versionId }: { versionId: string }) {
   const { data, isLoading, error } = useQuery({
-    queryKey: ['automation', 'recent-runs', pipelineId],
-    queryFn: () => listExecutions({ pipeline_id: pipelineId }),
+    queryKey: ['automation', 'recent-runs', versionId],
+    queryFn: () => listRuns({ pipeline_version_id: versionId }),
   })
 
   // automation 경로만 필터. 최근순 정렬. 상위 5건만 요약.
   const recentRuns = useMemo(() => {
     const automationOnly = (data ?? []).filter(
-      (execution) => execution.trigger_kind !== 'manual_from_editor',
+      (run) => run.trigger_kind !== 'manual_from_editor',
     )
     return [...automationOnly]
       .sort((first, second) => {
@@ -57,14 +62,14 @@ export default function RecentAutomationRuns({ pipelineId }: { pipelineId: strin
       .slice(0, 5)
   }, [data])
 
-  const columns: ColumnsType<PipelineExecutionSummary> = [
+  const columns: ColumnsType<PipelineRun> = [
     {
       title: '시작 시각',
       key: 'started_at',
-      render: (_, execution) =>
-        execution.started_at ? (
+      render: (_, run) =>
+        run.started_at ? (
           <Text style={{ fontSize: 12 }}>
-            {new Date(execution.started_at).toLocaleString('ko-KR')}
+            {new Date(run.started_at).toLocaleString('ko-KR')}
           </Text>
         ) : (
           <Text type="secondary">—</Text>
@@ -73,10 +78,10 @@ export default function RecentAutomationRuns({ pipelineId }: { pipelineId: strin
     {
       title: 'Source',
       key: 'source',
-      render: (_, execution) =>
-        execution.automation_trigger_source ? (
+      render: (_, run) =>
+        run.automation_trigger_source ? (
           <Tag style={{ fontSize: 11 }}>
-            {TRIGGER_SOURCE_LABEL[execution.automation_trigger_source]}
+            {TRIGGER_SOURCE_LABEL[run.automation_trigger_source]}
           </Tag>
         ) : (
           <Text type="secondary">—</Text>
@@ -85,16 +90,14 @@ export default function RecentAutomationRuns({ pipelineId }: { pipelineId: strin
     {
       title: '상태',
       key: 'status',
-      render: (_, execution) => (
-        <Tag color={STATUS_COLOR[execution.status]}>{STATUS_LABEL[execution.status]}</Tag>
-      ),
+      render: (_, run) => <Tag color={STATUS_COLOR[run.status]}>{STATUS_LABEL[run.status]}</Tag>,
     },
     {
       title: '출력 버전',
       key: 'output_version',
-      render: (_, execution) =>
-        execution.output_dataset_version ? (
-          <Tag color="blue">{execution.output_dataset_version}</Tag>
+      render: (_, run) =>
+        run.output_dataset_version ? (
+          <Tag color="blue">{run.output_dataset_version}</Tag>
         ) : (
           <Text type="secondary">—</Text>
         ),
@@ -106,7 +109,7 @@ export default function RecentAutomationRuns({ pipelineId }: { pipelineId: strin
       {error && (
         <Alert type="error" message="실행 이력 로드 실패" description={(error as Error).message} />
       )}
-      <Table<PipelineExecutionSummary>
+      <Table<PipelineRun>
         size="small"
         rowKey="id"
         loading={isLoading}

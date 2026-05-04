@@ -12,13 +12,15 @@ import {
   Button,
 } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
-import { listExecutions, listExecutionBatches } from '@/api/automation'
+import { listExecutionBatches, listRuns } from '@/api/automation'
 import type {
-  PipelineExecutionSummary,
-  TriggerKind,
   AutomationTriggerSource,
   ExecutionBatch,
+  PipelineRun,
+  PipelineRunStatus,
+  TriggerKind,
 } from '@/types/automation'
+import { VersionTag } from './StatusBadge'
 
 const { Text } = Typography
 
@@ -32,7 +34,7 @@ const TRIGGER_SOURCE_LABEL: Record<AutomationTriggerSource, string> = {
   triggering: 'triggering',
   manual_rerun: 'manual_rerun',
 }
-const STATUS_COLOR: Record<PipelineExecutionSummary['status'], string> = {
+const STATUS_COLOR: Record<PipelineRunStatus, string> = {
   PENDING: 'default',
   RUNNING: 'processing',
   DONE: 'success',
@@ -40,7 +42,7 @@ const STATUS_COLOR: Record<PipelineExecutionSummary['status'], string> = {
   SKIPPED_NO_DELTA: 'gold',
   SKIPPED_UPSTREAM_FAILED: 'volcano',
 }
-const STATUS_LABEL: Record<PipelineExecutionSummary['status'], string> = {
+const STATUS_LABEL: Record<PipelineRunStatus, string> = {
   PENDING: 'Pending',
   RUNNING: 'Running',
   DONE: 'Done',
@@ -50,20 +52,23 @@ const STATUS_LABEL: Record<PipelineExecutionSummary['status'], string> = {
 }
 
 /**
- * 실행 이력 테이블 — batch 그룹핑 + automation 필터 (023 §6-3 / §F-23~27).
+ * 실행 이력 테이블 — v7.13 baseline (PipelineRun 단위) + automation batch 그룹핑.
+ *
+ * 027 §14-3 / 028 §1-5 의 "파이프라인명 / 버전 / Output 그룹 / Split / Output 버전" 5컬럼 분리 패턴을
+ * 그대로 적용한다. 5컬럼이 평탄화 응답 (`pipeline_name` / `pipeline_version` /
+ * `output_dataset_group_name` / `output_dataset_split` / `output_dataset_version`) 으로 직접 매핑된다.
  *
  * 행 구조:
- *   - Batch 부모 행: automation_batch_id 로 묶인 체인 1건. 펼치면 children 에 토폴로지 순서로 실행 표시.
- *   - 단발 실행 행: batch 에 속하지 않는 execution 한 건.
+ *   - Batch 부모 행 — automation_batch_id 로 묶인 체인 1건. 펼치면 children 에 토폴로지 순서로 run 표시.
+ *   - 단발 run 행 — batch 에 속하지 않는 run.
  *
- * 필터는 execution 단위로 매칭하고, batch 의 children 이 필터로 다 걸러지면 batch 도 숨긴다.
+ * 필터는 run 단위로 매칭하고, batch 의 children 이 필터로 다 걸러지면 batch 도 숨긴다.
  */
 export default function ExecutionHistoryTable() {
-  const { data: executions, isLoading: execLoading, error: execError, refetch: refetchExec } =
-    useQuery({
-      queryKey: ['automation', 'executions'],
-      queryFn: () => listExecutions(),
-    })
+  const { data: runs, isLoading: runsLoading, error: runsError, refetch: refetchRuns } = useQuery({
+    queryKey: ['automation', 'runs'],
+    queryFn: () => listRuns(),
+  })
   const { data: batches, isLoading: batchLoading, error: batchError, refetch: refetchBatches } =
     useQuery({
       queryKey: ['automation', 'execution-batches'],
@@ -72,11 +77,11 @@ export default function ExecutionHistoryTable() {
 
   const [kindFilter, setKindFilter] = useState<TriggerKind[]>([])
   const [sourceFilter, setSourceFilter] = useState<AutomationTriggerSource[]>([])
-  const [statusFilter, setStatusFilter] = useState<PipelineExecutionSummary['status'][]>([])
+  const [statusFilter, setStatusFilter] = useState<PipelineRunStatus[]>([])
 
   const rows = useMemo(
-    () => buildRows(executions ?? [], batches ?? [], { kindFilter, sourceFilter, statusFilter }),
-    [executions, batches, kindFilter, sourceFilter, statusFilter],
+    () => buildRows(runs ?? [], batches ?? [], { kindFilter, sourceFilter, statusFilter }),
+    [runs, batches, kindFilter, sourceFilter, statusFilter],
   )
 
   const columns: ColumnsType<HistoryRow> = [
@@ -90,7 +95,18 @@ export default function ExecutionHistoryTable() {
             <Text style={{ fontSize: 11, color: '#8c8c8c' }}>{row.batch.batch_id}</Text>
           </Space>
         ) : (
-          <Text strong>{row.execution.pipeline_name}</Text>
+          <Text strong>{row.run.pipeline_name}</Text>
+        ),
+    },
+    {
+      title: '버전',
+      key: 'pipeline_version',
+      width: 90,
+      render: (_, row) =>
+        row.kind === 'batch' ? (
+          <Text type="secondary">—</Text>
+        ) : (
+          <VersionTag version={row.run.pipeline_version} />
         ),
     },
     {
@@ -100,7 +116,7 @@ export default function ExecutionHistoryTable() {
         row.kind === 'batch' ? (
           <Tag>automation batch</Tag>
         ) : (
-          <Tag style={{ fontSize: 11 }}>{TRIGGER_KIND_LABEL[row.execution.trigger_kind]}</Tag>
+          <Tag style={{ fontSize: 11 }}>{TRIGGER_KIND_LABEL[row.run.trigger_kind]}</Tag>
         ),
     },
     {
@@ -110,9 +126,9 @@ export default function ExecutionHistoryTable() {
         if (row.kind === 'batch') {
           return <Tag color="geekblue">{TRIGGER_SOURCE_LABEL[row.batch.trigger_source]}</Tag>
         }
-        return row.execution.automation_trigger_source ? (
+        return row.run.automation_trigger_source ? (
           <Tag color="geekblue" style={{ fontSize: 11 }}>
-            {TRIGGER_SOURCE_LABEL[row.execution.automation_trigger_source]}
+            {TRIGGER_SOURCE_LABEL[row.run.automation_trigger_source]}
           </Tag>
         ) : (
           <Text type="secondary">—</Text>
@@ -126,15 +142,15 @@ export default function ExecutionHistoryTable() {
         if (row.kind === 'batch') {
           return <Text type="secondary">(batch)</Text>
         }
-        const versions = row.execution.triggered_input_versions
+        const versions = row.run.triggered_input_versions_display
         const entries = Object.entries(versions)
         if (entries.length === 0) return <Text type="secondary">—</Text>
         return (
           <Space size={4} wrap>
-            {entries.map(([groupName, version]) => (
-              <Tooltip key={groupName} title={`${groupName} = ${version}`}>
+            {entries.map(([label, version]) => (
+              <Tooltip key={label} title={`${label} = ${version}`}>
                 <Tag color="blue" style={{ fontSize: 11 }}>
-                  {groupName}@{version}
+                  {label}@{version}
                 </Tag>
               </Tooltip>
             ))}
@@ -147,12 +163,10 @@ export default function ExecutionHistoryTable() {
       key: 'status',
       render: (_, row) => {
         if (row.kind === 'batch') {
-          return <Tag>{row.batch.executions.length}건</Tag>
+          return <Tag>{row.batch.runs.length}건</Tag>
         }
         return (
-          <Tag color={STATUS_COLOR[row.execution.status]}>
-            {STATUS_LABEL[row.execution.status]}
-          </Tag>
+          <Tag color={STATUS_COLOR[row.run.status]}>{STATUS_LABEL[row.run.status]}</Tag>
         )
       },
     },
@@ -160,7 +174,7 @@ export default function ExecutionHistoryTable() {
       title: '시작 시각',
       key: 'started_at',
       render: (_, row) => {
-        const started = row.kind === 'batch' ? row.batch.created_at : row.execution.started_at
+        const started = row.kind === 'batch' ? row.batch.created_at : row.run.started_at
         return started ? (
           <Text style={{ fontSize: 12 }}>{new Date(started).toLocaleString('ko-KR')}</Text>
         ) : (
@@ -179,19 +193,44 @@ export default function ExecutionHistoryTable() {
       key: 'duration',
       render: (_, row) => {
         if (row.kind === 'batch') return <Text type="secondary">—</Text>
-        const duration = row.execution.duration_seconds
+        const duration = row.run.duration_seconds
         if (duration === null) return <Text type="secondary">—</Text>
         return <Text style={{ fontSize: 12 }}>{formatDurationSeconds(duration)}</Text>
       },
     },
     {
-      title: '결과 버전',
+      title: 'Output 그룹',
+      key: 'output_group',
+      render: (_, row) => {
+        if (row.kind === 'batch') return <Text type="secondary">—</Text>
+        return row.run.output_dataset_group_name ? (
+          <Text style={{ fontSize: 12 }}>{row.run.output_dataset_group_name}</Text>
+        ) : (
+          <Text type="secondary">—</Text>
+        )
+      },
+    },
+    {
+      title: 'Split',
+      key: 'output_split',
+      width: 80,
+      render: (_, row) => {
+        if (row.kind === 'batch') return <Text type="secondary">—</Text>
+        return row.run.output_dataset_split ? (
+          <Tag style={{ fontSize: 10 }}>{row.run.output_dataset_split}</Tag>
+        ) : (
+          <Text type="secondary">—</Text>
+        )
+      },
+    },
+    {
+      title: 'Output 버전',
       key: 'output_version',
       render: (_, row) =>
         row.kind === 'batch' ? (
           <Text type="secondary">—</Text>
-        ) : row.execution.output_dataset_version ? (
-          <Tag color="blue">{row.execution.output_dataset_version}</Tag>
+        ) : row.run.output_dataset_version ? (
+          <Tag color="blue">{row.run.output_dataset_version}</Tag>
         ) : (
           <Text type="secondary">—</Text>
         ),
@@ -226,7 +265,7 @@ export default function ExecutionHistoryTable() {
               ['polling', 'triggering', 'manual_rerun'] as AutomationTriggerSource[]
             ).map((source) => ({ value: source, label: TRIGGER_SOURCE_LABEL[source] }))}
           />
-          <Select<PipelineExecutionSummary['status'][]>
+          <Select<PipelineRunStatus[]>
             mode="multiple"
             allowClear
             placeholder="상태"
@@ -241,7 +280,7 @@ export default function ExecutionHistoryTable() {
                 'FAILED',
                 'SKIPPED_NO_DELTA',
                 'SKIPPED_UPSTREAM_FAILED',
-              ] as PipelineExecutionSummary['status'][]
+              ] as PipelineRunStatus[]
             ).map((status) => ({ value: status, label: STATUS_LABEL[status] }))}
           />
           <Button
@@ -257,7 +296,7 @@ export default function ExecutionHistoryTable() {
           <Button
             size="small"
             onClick={() => {
-              refetchExec()
+              refetchRuns()
               refetchBatches()
             }}
           >
@@ -266,18 +305,18 @@ export default function ExecutionHistoryTable() {
         </Space>
       }
     >
-      {(execError || batchError) && (
+      {(runsError || batchError) && (
         <Alert
           type="error"
           message="이력 로드 실패"
-          description={((execError ?? batchError) as Error).message}
+          description={((runsError ?? batchError) as Error).message}
           style={{ marginBottom: 12 }}
         />
       )}
       <Table<HistoryRow>
         size="small"
         rowKey="key"
-        loading={execLoading || batchLoading}
+        loading={runsLoading || batchLoading}
         columns={columns}
         dataSource={rows}
         pagination={{ pageSize: 20, size: 'small' }}
@@ -303,36 +342,36 @@ type HistoryRow =
     }
   | {
       key: string
-      kind: 'execution'
-      execution: PipelineExecutionSummary
+      kind: 'run'
+      run: PipelineRun
       children?: undefined
     }
 
 interface FilterState {
   kindFilter: TriggerKind[]
   sourceFilter: AutomationTriggerSource[]
-  statusFilter: PipelineExecutionSummary['status'][]
+  statusFilter: PipelineRunStatus[]
 }
 
-function matchesFilters(execution: PipelineExecutionSummary, filters: FilterState): boolean {
-  if (filters.kindFilter.length && !filters.kindFilter.includes(execution.trigger_kind)) {
+function matchesFilters(run: PipelineRun, filters: FilterState): boolean {
+  if (filters.kindFilter.length && !filters.kindFilter.includes(run.trigger_kind)) {
     return false
   }
   if (
     filters.sourceFilter.length &&
-    (execution.automation_trigger_source === null ||
-      !filters.sourceFilter.includes(execution.automation_trigger_source))
+    (run.automation_trigger_source === null ||
+      !filters.sourceFilter.includes(run.automation_trigger_source))
   ) {
     return false
   }
-  if (filters.statusFilter.length && !filters.statusFilter.includes(execution.status)) {
+  if (filters.statusFilter.length && !filters.statusFilter.includes(run.status)) {
     return false
   }
   return true
 }
 
 function buildRows(
-  allExecutions: PipelineExecutionSummary[],
+  allRuns: PipelineRun[],
   batches: ExecutionBatch[],
   filters: FilterState,
 ): HistoryRow[] {
@@ -340,34 +379,34 @@ function buildRows(
   const filteredBatches = batches
     .map((batch) => ({
       ...batch,
-      executions: batch.executions.filter((execution) => matchesFilters(execution, filters)),
+      runs: batch.runs.filter((run) => matchesFilters(run, filters)),
     }))
-    .filter((batch) => batch.executions.length > 0)
+    .filter((batch) => batch.runs.length > 0)
 
-  // batch 에 포함된 exec id 는 단발 목록에서 제외.
-  const batchExecIds = new Set<string>()
+  // batch 에 포함된 run id 는 단발 목록에서 제외.
+  const batchRunIds = new Set<string>()
   for (const batch of batches) {
-    for (const execution of batch.executions) batchExecIds.add(execution.id)
+    for (const run of batch.runs) batchRunIds.add(run.id)
   }
 
-  const singleExecutions = allExecutions
-    .filter((execution) => !batchExecIds.has(execution.id))
-    .filter((execution) => matchesFilters(execution, filters))
+  const singleRuns = allRuns
+    .filter((run) => !batchRunIds.has(run.id))
+    .filter((run) => matchesFilters(run, filters))
 
   const batchRows: HistoryRow[] = filteredBatches.map((batch) => ({
     key: `batch-${batch.batch_id}`,
     kind: 'batch',
     batch,
-    children: batch.executions.map((execution) => ({
-      key: `exec-${execution.id}`,
-      kind: 'execution',
-      execution,
+    children: batch.runs.map((run) => ({
+      key: `run-${run.id}`,
+      kind: 'run',
+      run,
     })),
   }))
-  const singleRows: HistoryRow[] = singleExecutions.map((execution) => ({
-    key: `exec-${execution.id}`,
-    kind: 'execution',
-    execution,
+  const singleRows: HistoryRow[] = singleRuns.map((run) => ({
+    key: `run-${run.id}`,
+    kind: 'run',
+    run,
   }))
 
   return [...batchRows, ...singleRows]
@@ -377,7 +416,7 @@ function getSortTime(row: HistoryRow): number {
   if (row.kind === 'batch') {
     return Date.parse(row.batch.created_at)
   }
-  return row.execution.started_at ? Date.parse(row.execution.started_at) : 0
+  return row.run.started_at ? Date.parse(row.run.started_at) : 0
 }
 
 function formatDurationSeconds(seconds: number): string {
